@@ -1,0 +1,42 @@
+# Project specific
+CODEX.md
+publish_git.py
+publish_to_github.bat
+graphify-out/
+saves/
+
+# IDEs and Editors
+.idea/
+.claude/
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.venv
+venv/
+ENV/
