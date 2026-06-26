@@ -359,7 +359,7 @@ class NodeEditorWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("RealityCapture Node Editor")
+        self.setWindowTitle("NodeRC Editor")
         self.setGeometry(100, 100, 1280, 800)
         self.setStyleSheet(f"QMainWindow{{background:{WINDOW_BACKGROUND_COLOR};}}")
 
