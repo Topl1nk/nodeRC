@@ -1,5 +1,7 @@
 # NodeRC
 
+![Screenshot](doc/images/screenshot.png)
+
 [English](README.md) | [Українська](doc/README.uk.md) | [Español](doc/README.es.md) | [中文](doc/README.zh.md) | [Français](doc/README.fr.md) | [Deutsch](doc/README.de.md) | [日本語](doc/README.ja.md) | [हिन्दी](doc/README.hi.md) | [Português](doc/README.pt.md) | [العربية](doc/README.ar.md)
 
 NodeRC is a visual node-based editor written in Python using PyQt5. The project allows you to create, connect, and manage nodes on an interactive canvas, providing a user-friendly interface for visual programming or logic graph construction.

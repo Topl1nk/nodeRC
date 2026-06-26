@@ -1,5 +1,7 @@
 # NodeRC
 
+![Screenshot](images/screenshot.png)
+
 [English](README.md) | [Русский](README.ru.md) | [Español](README.es.md) | [中文](README.zh.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [日本語](README.ja.md) | [हिन्दी](README.hi.md) | [Português](README.pt.md) | [العربية](README.ar.md)
 
 NodeRC पायथन और PyQt5 का उपयोग करके लिखा गया एक विज़ुअल नोड-आधारित संपादक है। प्रोजेक्ट आपको एक इंटरैक्टिव कैनवस पर नोड्स बनाने, जोड़ने और प्रबंधित करने की अनुमति देता है, जिससे विज़ुअल प्रोग्रामिंग या लॉजिक ग्राफ़ निर्माण के लिए उपयोगकर्ता के अनुकूल इंटरफ़ेस मिलता है।

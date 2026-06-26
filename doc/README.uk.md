@@ -1,5 +1,7 @@
 # NodeRC
 
+![Screenshot](images/screenshot.png)
+
 [English](../README.md) | [Українська](README.uk.md) | [Español](README.es.md) | [中文](README.zh.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [日本語](README.ja.md) | [हिन्दी](README.hi.md) | [Português](README.pt.md) | [العربية](README.ar.md)
 
 NodeRC — це візуальний нодовий редактор, написаний на Python з використанням PyQt5. Проєкт дозволяє створювати, зв'язувати та керувати нодами (вузлами) на інтерактивному полотні, забезпечуючи зручний інтерфейс для візуального програмування або побудови графів логіки.

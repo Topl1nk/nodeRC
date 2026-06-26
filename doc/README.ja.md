@@ -1,5 +1,7 @@
 # NodeRC
 
+![Screenshot](images/screenshot.png)
+
 [English](README.md) | [Русский](README.ru.md) | [Español](README.es.md) | [中文](README.zh.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [日本語](README.ja.md) | [हिन्दी](README.hi.md) | [Português](README.pt.md) | [العربية](README.ar.md)
 
 NodeRCは、PyQt5を使用したPythonで書かれたビジュアルノードベースのエディタです。このプロジェクトでは、インタラクティブなキャンバス上でノードを作成、接続、管理でき、ビジュアルプログラミングやロジックグラフの構築に使いやすいインターフェイスを提供します。

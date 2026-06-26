@@ -1,5 +1,7 @@
 # NodeRC
 
+![Screenshot](images/screenshot.png)
+
 [English](README.md) | [Русский](README.ru.md) | [Español](README.es.md) | [中文](README.zh.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [日本語](README.ja.md) | [हिन्दी](README.hi.md) | [Português](README.pt.md) | [العربية](README.ar.md)
 
 مشروع NodeRC هو محرر مرئي يعتمد على العقد (Nodes) تمت برمجته بلغة Python باستخدام PyQt5. يتيح لك المشروع إنشاء وتوصيل وإدارة العقد على لوحة تفاعلية، مما يوفر واجهة سهلة الاستخدام للبرمجة المرئية أو بناء المخططات المنطقية.
