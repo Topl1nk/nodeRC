@@ -1,6 +1,6 @@
 # NodeRC
 
-[English](README.md) | [Русский](README.ru.md) | [Español](README.es.md) | [中文](README.zh.md)
+[English](README.md) | [Русский](README.ru.md) | [Español](README.es.md) | [中文](README.zh.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [日本語](README.ja.md) | [हिन्दी](README.hi.md) | [Português](README.pt.md) | [العربية](README.ar.md)
 
 NodeRC 是一个使用 PyQt5 用 Python 编写的基于节点的可视化编辑器。该项目允许您在交互式画布上创建、连接和管理节点，为可视化编程或逻辑图构建提供用户友好的界面。
 
