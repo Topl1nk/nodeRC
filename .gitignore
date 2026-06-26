@@ -1,7 +1,5 @@
 # Project specific
 CODEX.md
-publish_git.py
-publish_to_github.bat
 graphify-out/
 saves/
 
@@ -40,3 +38,10 @@ htmlcov/
 .venv
 venv/
 ENV/
+
+# Build and Release
+build_release.ps1
+release.bat
+nodeRC.spec
+nodeRC_Release/
+nodeRC_Release.zip
