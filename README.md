@@ -4,7 +4,7 @@
 
 [English](README.md) | [Українська](doc/README.uk.md) | [Español](doc/README.es.md) | [中文](doc/README.zh.md) | [Français](doc/README.fr.md) | [Deutsch](doc/README.de.md) | [日本語](doc/README.ja.md) | [हिन्दी](doc/README.hi.md) | [Português](doc/README.pt.md) | [العربية](doc/README.ar.md)
 
-NodeRC is a visual node-based editor written in Python using PyQt5. The project allows you to create, connect, and manage nodes on an interactive canvas, providing a user-friendly interface for visual programming or logic graph construction.
+NodeRC is an unofficial node-based visual interface and editor for RealityCapture / RealityScan CLI commands. Written in Python using PyQt5, the project allows you to visually connect and manage command nodes on an interactive canvas, providing a user-friendly interface for workflow automation.
 
 ## Features
 
@@ -54,3 +54,7 @@ python nodeRC.py
 ## License
 
 This project is distributed "as is". See the project files for more information.
+
+## Disclaimer
+
+This project is an independent, unofficial open-source tool and is not affiliated with, endorsed by, sponsored by, or associated with Capturing Reality, Epic Games, or any of their affiliates. "RealityCapture" and "RealityScan" are trademarks or registered trademarks of Epic Games, Inc. or its affiliates.

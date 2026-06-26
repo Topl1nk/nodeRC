@@ -2,9 +2,9 @@
 
 ![Screenshot](images/Screenshot.png)
 
-[English](README.md) | [Русский](README.ru.md) | [Español](README.es.md) | [中文](README.zh.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [日本語](README.ja.md) | [हिन्दी](README.hi.md) | [Português](README.pt.md) | [العربية](README.ar.md)
+[English](../README.md) | [Українська](README.uk.md) | [Español](README.es.md) | [中文](README.zh.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [日本語](README.ja.md) | [हिन्दी](README.hi.md) | [Português](README.pt.md) | [العربية](README.ar.md)
 
-NodeRC पायथन और PyQt5 का उपयोग करके लिखा गया एक विज़ुअल नोड-आधारित संपादक है। प्रोजेक्ट आपको एक इंटरैक्टिव कैनवस पर नोड्स बनाने, जोड़ने और प्रबंधित करने की अनुमति देता है, जिससे विज़ुअल प्रोग्रामिंग या लॉजिक ग्राफ़ निर्माण के लिए उपयोगकर्ता के अनुकूल इंटरफ़ेस मिलता है।
+NodeRC, RealityCapture / RealityScan CLI कमांड्स के लिए एक अनौपचारिक नोड-आधारित विज़ुअल इंटरफ़ेस और संपादक है। पायथन और PyQt5 का उपयोग करके विकसित किया गया यह प्रोजेक्ट, आपको एक इंटरैक्टिव कैनवास पर कमांड नोड्स को विज़ुअली जोड़ने और प्रबंधित करने की अनुमति देता है, जिससे वर्कफ़्लो ऑटोमेशन के लिए उपयोगकर्ता के अनुकूल इंटरफ़ेस मिलता है।
 
 ## विशेषताएँ
 
@@ -54,3 +54,7 @@ python nodeRC.py
 ## लाइसेंस
 
 इस परियोजना को "जैसा है" वितरित किया गया है। अधिक जानकारी के लिए प्रोजेक्ट फ़ाइलें देखें।
+
+## अस्वीकरण
+
+यह प्रोजेक्ट एक स्वतंत्र, अनौपचारिक ओपन-सोर्स टूल है और Capturing Reality, Epic Games, या उनके किसी भी सहयोगी के साथ संबद्ध, समर्थित, प्रायोजित या जुड़ा हुआ नहीं है। "RealityCapture" और "RealityScan" Epic Games, Inc. या उसके सहयोगियों के ट्रेडमार्क या पंजीकृत ट्रेडमार्क हैं।

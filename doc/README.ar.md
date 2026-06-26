@@ -2,9 +2,9 @@
 
 ![Screenshot](images/Screenshot.png)
 
-[English](README.md) | [Русский](README.ru.md) | [Español](README.es.md) | [中文](README.zh.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [日本語](README.ja.md) | [हिन्दी](README.hi.md) | [Português](README.pt.md) | [العربية](README.ar.md)
+[English](../README.md) | [Українська](README.uk.md) | [Español](README.es.md) | [中文](README.zh.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [日本語](README.ja.md) | [हिन्दी](README.hi.md) | [Português](README.pt.md) | [العربية](README.ar.md)
 
-مشروع NodeRC هو محرر مرئي يعتمد على العقد (Nodes) تمت برمجته بلغة Python باستخدام PyQt5. يتيح لك المشروع إنشاء وتوصيل وإدارة العقد على لوحة تفاعلية، مما يوفر واجهة سهلة الاستخدام للبرمجة المرئية أو بناء المخططات المنطقية.
+مشروع NodeRC هو واجهة مرئية ومحرر غير رسمي يعتمد على العقد (Nodes) لأوامر واجهة سطر الأوامر (CLI) لبرنامجي RealityCapture / RealityScan. تمت برمجة المشروع بلغة Python باستخدام PyQt5، ويتيح لك توصيل وإدارة عقد الأوامر بشكل مرئي على لوحة تفاعلية، مما يوفر واجهة سهلة الاستخدام لأتمتة سير العمل.
 
 ## الميزات
 
@@ -54,3 +54,7 @@ python nodeRC.py
 ## الترخيص
 
 يتم توزيع هذا المشروع "كما هو". راجع ملفات المشروع للحصول على مزيد من المعلومات.
+
+## إخلاء المسؤولية
+
+هذا المشروع عبارة عن أداة مستقلة وغير رسمية مفتوحة المصدر، وليس تابعاً لشركات Capturing Reality أو Epic Games أو أي من الشركات التابعة لها، ولا يحظى بدعمها أو رعايتها أو يرتبط بها بأي شكل من الأشكال. "RealityCapture" و "RealityScan" هما علامتان تجاريتان أو علامات تجارية مسجلة لشركة Epic Games, Inc. أو الشركات التابعة لها.

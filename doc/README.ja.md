@@ -2,9 +2,9 @@
 
 ![Screenshot](images/Screenshot.png)
 
-[English](README.md) | [Русский](README.ru.md) | [Español](README.es.md) | [中文](README.zh.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [日本語](README.ja.md) | [हिन्दी](README.hi.md) | [Português](README.pt.md) | [العربية](README.ar.md)
+[English](../README.md) | [Українська](README.uk.md) | [Español](README.es.md) | [中文](README.zh.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [日本語](README.ja.md) | [हिन्दी](README.hi.md) | [Português](README.pt.md) | [العربية](README.ar.md)
 
-NodeRCは、PyQt5を使用したPythonで書かれたビジュアルノードベースのエディタです。このプロジェクトでは、インタラクティブなキャンバス上でノードを作成、接続、管理でき、ビジュアルプログラミングやロジックグラフの構築に使いやすいインターフェイスを提供します。
+NodeRCは、RealityCapture / RealityScanのCLIコマンド用の非公式なノードベースのビジュアルインターフェイスおよびエディタです。PythonとPyQt5を使用して開発されており、インタラクティブなキャンバス上でコマンドノードを視覚的に接続・管理し、ワークフロー自動化のための使いやすいインターフェイスを提供します。
 
 ## 特徴
 
@@ -54,3 +54,7 @@ python nodeRC.py
 ## ライセンス
 
 このプロジェクトは「現状有姿」で配布されています。詳細についてはプロジェクトファイルを参照してください。
+
+## 免責事項
+
+このプロジェクトは、独立した非公式のオープンソースツールであり、Capturing Reality、Epic Games、またはそれらの関連会社と提携、承認、後援、または関連していません。「RealityCapture」および「RealityScan」は、Epic Games, Inc.またはその関連会社の商標または登録商標です。
