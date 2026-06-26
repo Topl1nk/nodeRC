@@ -1,45 +1,47 @@
 # NodeRC
 
-NodeRC - это визуальный нодовый редактор, написанный на Python с использованием PyQt5. Проект позволяет создавать, связывать и управлять нодами (узлами) на интерактивном холсте, обеспечивая удобный интерфейс для визуального программирования или построения графов логики.
+[English](README.md) | [Русский](README.ru.md) | [Español](README.es.md) | [中文](README.zh.md)
 
-## Особенности
-- **Интерактивный холст (Canvas):** Бесконечное рабочее пространство с поддержкой панорамирования и масштабирования.
-- **Нодовая архитектура:** Различные типы нод с поддержкой входящих и исходящих соединений (сокетов).
-- **Динамические соединения:** Визуальное связывание портов выполнения и портов данных.
-- **Система конфигурации:** Настраиваемые цвета, размеры и стили через централизованный файл конфигурации.
-- **Меню поиска:** Удобное меню для быстрого добавления новых нод на холст.
+NodeRC is a visual node-based editor written in Python using PyQt5. The project allows you to create, connect, and manage nodes on an interactive canvas, providing a user-friendly interface for visual programming or logic graph construction.
 
-## Требования
+## Features
+- **Interactive Canvas:** An infinite workspace with panning and zooming support.
+- **Node Architecture:** Various types of nodes supporting incoming and outgoing connections (sockets).
+- **Dynamic Connections:** Visual linking of execution ports and data ports.
+- **Configuration System:** Customizable colors, sizes, and styles through a centralized configuration file.
+- **Search Menu:** A convenient menu for quickly adding new nodes to the canvas.
+
+## Requirements
 - Python 3.7+
 - PyQt5
 
-## Установка
+## Installation
 
-1. Клонируйте репозиторий:
+1. Clone the repository:
    ```bash
-   git clone <URL_репозитория>
+   git clone <repository_URL>
    cd nodeRC
    ```
 
-2. Установите зависимости:
+2. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
 
-## Запуск
-Для запуска редактора выполните:
+## Usage
+To start the editor, run:
 ```bash
 python nodeRC.py
 ```
 
-## Структура проекта
-- `nodeRC.py` - Главная точка входа.
-- `canvas.py` - Логика интерактивного холста и управления графом.
-- `nodes.py` - Базовые и специализированные классы нод и сокетов.
-- `configuration.py` - Файл конфигурации (цвета, стили, параметры UI).
-- `search_menu.py` - Диалоговое окно для поиска и добавления нод.
-- `diagnostics.py` - Логирование и обработка исключений.
-- `rc_documentation_extractor.py` - Утилита для извлечения документации команд.
+## Project Structure
+- `nodeRC.py` - Main entry point.
+- `canvas.py` - Interactive canvas logic and graph management.
+- `nodes.py` - Base and specialized classes for nodes and sockets.
+- `configuration.py` - Configuration file (colors, styles, UI parameters).
+- `search_menu.py` - Dialog for searching and adding nodes.
+- `diagnostics.py` - Logging and exception handling.
+- `rc_documentation_extractor.py` - Utility for extracting command documentation.
 
-## Лицензия
-Проект распространяется "как есть". См. файлы проекта для дополнительной информации.
+## License
+This project is distributed "as is". See the project files for more information.
