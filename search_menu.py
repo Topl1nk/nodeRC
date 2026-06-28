@@ -64,6 +64,11 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
     background: none;
 }}
+QFrame#descFrame {{
+    border-top: 1px solid {NODE_BORDER_COLOR};
+    border-bottom: 1px solid {NODE_BORDER_COLOR};
+    background: transparent;
+}}
 """
 
 class SearchMenuDialog(QDialog):
@@ -110,6 +115,7 @@ class SearchMenuDialog(QDialog):
 
         # Block 2: Description
         self.desc_frame = QFrame()
+        self.desc_frame.setObjectName("descFrame")
         desc_layout = QVBoxLayout(self.desc_frame)
         desc_layout.setContentsMargins(0, 0, 0, 0)
         
@@ -228,7 +234,7 @@ class SearchMenuDialog(QDialog):
                     parent_item = QTreeWidgetItem(sec_item, [subsec_name])
                     
                 for cmd in commands:
-                    item = QTreeWidgetItem(parent_item, [f"  > {cmd['display']}"])
+                    item = QTreeWidgetItem(parent_item, [f"  • {cmd['display']}"])
                     item.setData(0, Qt.UserRole, cmd)
                     self._all_items.append(item)
 

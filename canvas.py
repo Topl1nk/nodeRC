@@ -67,6 +67,7 @@ class GraphicsView(QGraphicsView):
 
         self._panning     = False
         self._pan_origin: Optional[QPoint] = None
+        self._suppress_redelivered_click = False
 
         self._scrollbar_toggle_btn = QPushButton("⊞", self)
         self._scrollbar_toggle_btn.setFixedSize(22, 22)
@@ -116,6 +117,8 @@ class GraphicsView(QGraphicsView):
             self._pan_origin = event.pos()
             self.viewport().setCursor(Qt.ClosedHandCursor)
             event.accept()
+        elif self._suppress_redelivered_click:
+            event.accept()  # swallow — will be cleared on the paired release
         else:
             super().mousePressEvent(event)
 
@@ -125,6 +128,9 @@ class GraphicsView(QGraphicsView):
             self._pan_origin = None
             self.viewport().setCursor(Qt.ArrowCursor)
             event.accept()
+        elif self._suppress_redelivered_click:
+            self._suppress_redelivered_click = False
+            event.accept()  # swallow the paired release and clear the flag
         else:
             super().mouseReleaseEvent(event)
 
@@ -270,10 +276,17 @@ class NodeScene(QGraphicsScene):
 
     def mouseReleaseEvent(self, event):
         if self._drag_active:
-            target = self._find_compatible_socket(event.scenePos())
+            target        = self._find_compatible_socket(event.scenePos())
+            source_socket = self._drag_source
+            original_dest = self._drag_original_dest
+            # Cancel BEFORE exec_(): while exec_() runs its own event loop, Qt
+            # re-delivers the click-outside event back to the scene.  If _drag_active
+            # were still True at that point, mouseReleaseEvent would call
+            # _show_node_creation_menu a second time (at the click position).
+            self._cancel_connection_drag()
             if target:
-                out_sock = self._drag_source if self._drag_source.sock_def.kind == "output" else target
-                in_sock  = target if self._drag_source.sock_def.kind == "output" else self._drag_source
+                out_sock = source_socket if source_socket.sock_def.kind == "output" else target
+                in_sock  = target if source_socket.sock_def.kind == "output" else source_socket
                 self._enforce_connection_rules(out_sock, in_sock)
                 conn = Connection(out_sock, in_sock)
                 super().addItem(conn)
@@ -285,10 +298,9 @@ class NodeScene(QGraphicsScene):
                 if self.nodeEditorWindow:
                     self._show_node_creation_menu(
                         event.scenePos(), event.screenPos(),
-                        source_socket=self._drag_source,
-                        original_dest=self._drag_original_dest
+                        source_socket=source_socket,
+                        original_dest=original_dest
                     )
-            self._cancel_connection_drag()
         else:
             super().mouseReleaseEvent(event)
             moved = False
@@ -352,7 +364,16 @@ class NodeScene(QGraphicsScene):
         dialog = SearchMenuDialog(win.command_categories, win)
         dialog.set_anchor_pos(screen_pos)
 
-        if dialog.exec_() == QDialog.Accepted:
+        result = dialog.exec_()
+
+        # Qt.Popup re-delivers the closing click to the view below.
+        # QApplication.mouseButtons() is non-zero only when dismissed by a click
+        # outside (user still holds LMB) — not by Escape or item activation.
+        view = self.views()[0] if self.views() else None
+        if view and result != QDialog.Accepted and bool(QApplication.mouseButtons() & Qt.LeftButton):
+            view._suppress_redelivered_click = True
+
+        if result == QDialog.Accepted:
             win._block_undo_push = True
             try:
                 payload = dialog.payload
@@ -433,6 +454,23 @@ class NodeEditorWindow(QMainWindow):
         self.history: List[dict] = []
         self.history_index: int = -1
         self.push_undo_state()
+
+        self._apply_windows_theme()
+
+    def _apply_windows_theme(self):
+        import sys
+        if sys.platform == "win32":
+            try:
+                from ctypes import windll, byref, sizeof, c_int
+                hwnd = int(self.winId())
+                # Use immersive dark mode (attribute 20)
+                windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, byref(c_int(1)), sizeof(c_int))
+                # Set title bar background color (attribute 35) to #04152B (COLORREF 0x002B1504)
+                windll.dwmapi.DwmSetWindowAttribute(hwnd, 35, byref(c_int(0x002B1504)), sizeof(c_int))
+                # Set title bar text color (attribute 36) to #FFFFFF (COLORREF 0x00FFFFFF)
+                windll.dwmapi.DwmSetWindowAttribute(hwnd, 36, byref(c_int(0x00FFFFFF)), sizeof(c_int))
+            except Exception:
+                pass
 
     def _load_command_database(self):
         if os.path.exists(COMMAND_DB_JSON):

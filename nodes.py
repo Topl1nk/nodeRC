@@ -21,7 +21,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import (
     QPen, QBrush, QColor, QPainterPath, QFont, QPainter, QPolygonF,
-    QDoubleValidator, QPalette,
+    QDoubleValidator, QPalette, QTextCursor,
 )
 from PyQt5.QtCore import QRectF, Qt, QPointF
 
@@ -117,7 +117,8 @@ _PUSHBTN_QSS = (
 )
 
 _VECTOR_TOGGLE_QSS = (
-    "QToolButton{font:bold 8pt;padding:0px 2px;border:none;background:transparent;}"
+    f"QToolButton{{color:{TEXT_MUTED_COLOR};font:bold 8pt;padding:0px 2px;border:none;background:transparent;}}"
+    f"QToolButton:hover{{color:{NODE_SELECTED_COLOR};}}"
 )
 
 _VECTOR_AXIS_LABEL_QSS = f"color:{VECTOR_AXIS_LABEL_COLOR};font:9pt Consolas;"
@@ -157,12 +158,13 @@ class NodeDef:
     sockets: List[SocketDef] = field(default_factory=list)
     width: int = NODE_DEFAULT_WIDTH
     has_footer: bool = False
+    extra_rows: int = 0     # additional body rows reserved for buttons/widgets
 
     @property
     def body_height(self) -> int:
         param_rows = [s.row for s in self.sockets if not s.is_exec]
         rows = max(param_rows, default=-1) + 1
-        return NODE_HEADER_HEIGHT + rows * NODE_ROW_HEIGHT + (
+        return NODE_HEADER_HEIGHT + (rows + self.extra_rows) * NODE_ROW_HEIGHT + (
             NODE_FOOTER_HEIGHT if self.has_footer else NODE_BOTTOM_PAD
         )
 
@@ -319,12 +321,8 @@ class MetaNode(QGraphicsObject):
         d = self.node_def
         self._vector_buttons.clear()
 
-        title_item = QGraphicsTextItem(self)
-        title_item.setHtml(d.title)
-        title_item.setPos(
-            NODE_HORIZONTAL_PAD,
-            (NODE_HEADER_HEIGHT - title_item.boundingRect().height()) / 2.0,
-        )
+        self.title_item = self._build_title_item(d.title)
+        self._center_title()
 
         for socket_def in d.sockets:
             socket = SocketItem(socket_def, socket_def.row, d, self)
@@ -364,6 +362,17 @@ class MetaNode(QGraphicsObject):
                 label.setDefaultTextColor(QColor(socket_def.color))
         self.update_vector_buttons_visibility()
 
+    def _build_title_item(self, html: str) -> QGraphicsTextItem:
+        item = QGraphicsTextItem(self)
+        item.setHtml(html)
+        return item
+
+    def _center_title(self):
+        self.title_item.setPos(
+            NODE_HORIZONTAL_PAD,
+            (NODE_HEADER_HEIGHT - self.title_item.boundingRect().height()) / 2.0,
+        )
+
     def boundingRect(self) -> QRectF:
         d = self.node_def
         return QRectF(
@@ -372,22 +381,35 @@ class MetaNode(QGraphicsObject):
             d.body_height + NODE_SHADOW_OFFSET_Y + NODE_SHADOW_BLUR,
         )
 
+    @staticmethod
+    def _blend_white(hex_color: str, t: float = 0.18) -> QColor:
+        """Linearly blend hex_color toward white by factor t (0=original, 1=white)."""
+        c = QColor(hex_color)
+        r = int(c.red()   + (255 - c.red())   * t)
+        g = int(c.green() + (255 - c.green()) * t)
+        b = int(c.blue()  + (255 - c.blue())  * t)
+        return QColor(r, g, b)
+
     def paint(self, painter: QPainter, option, widget=None):
         if option.state & QStyle.State_Selected:
             option.state &= ~QStyle.State_Selected
         painter.setRenderHint(QPainter.Antialiasing)
         d    = self.node_def
         body = QRectF(0, 0, d.width, d.body_height)
+        selected = self.isSelected()
+
+        body_color   = self._blend_white(d.body_color,   0.15) if selected else QColor(d.body_color)
+        header_color = self._blend_white(d.header_color, 0.20) if selected else QColor(d.header_color)
 
         painter.setPen(
-            QPen(QColor(NODE_SELECTED_COLOR), 2.0) if self.isSelected()
+            QPen(QColor(NODE_SELECTED_COLOR), 2.0) if selected
             else QPen(QColor(NODE_BORDER_COLOR), 1.0)
         )
-        painter.setBrush(QBrush(QColor(d.body_color)))
+        painter.setBrush(QBrush(body_color))
         painter.drawRect(body)
 
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QBrush(QColor(d.header_color)))
+        painter.setBrush(QBrush(header_color))
         painter.drawRect(QRectF(0, 0, d.width, NODE_HEADER_HEIGHT))
 
         painter.setPen(QPen(QColor(NODE_BORDER_COLOR), 1))
@@ -404,12 +426,13 @@ class MetaNode(QGraphicsObject):
             return QPointF(x, y)
         if change == QGraphicsItem.ItemPositionHasChanged and self.scene():
             self._refresh_connections()
-            self.scene().recalculate_scene_rect()
         return super().itemChange(change, value)
 
     def mouseReleaseEvent(self, event):
         super().mouseReleaseEvent(event)
         scene = self.scene()
+        if scene:
+            scene.recalculate_scene_rect()
         if not scene or not hasattr(scene, 'nodeEditorWindow'): return
         win = scene.nodeEditorWindow
         if not win: return
@@ -565,7 +588,8 @@ def _start_node_def() -> NodeDef:
             color=exec_schema["socket"], is_exec=True,
         )],
         width=185,
-        has_footer=True,
+        has_footer=False,
+        extra_rows=3,       # Launch + Open + Save buttons
     )
 
 
@@ -638,23 +662,42 @@ def _param_node_def(label: str, param_type: str, width: int = 200) -> NodeDef:
 class StartNode(MetaNode):
     def __init__(self):
         super().__init__(_start_node_def())
-        launch_button = QPushButton("> Launch")
-        launch_button.setStyleSheet(_PUSHBTN_QSS)
-        launch_button.clicked.connect(self._request_chain_execution)
-        proxy = QGraphicsProxyWidget(self)
-        proxy.setWidget(launch_button)
         param_rows = [s.row for s in self.node_def.sockets if not s.is_exec]
         rows = max(param_rows, default=-1) + 1
-        proxy.setPos(
-            NODE_HORIZONTAL_PAD,
-            NODE_HEADER_HEIGHT + rows * NODE_ROW_HEIGHT + NODE_WIDGET_V_OFFSET,
-        )
+        btn_w = self.node_def.width - NODE_HORIZONTAL_PAD * 2
+
+        def _add_btn(label: str, tooltip: str, callback, row_offset: int):
+            btn = QPushButton(label)
+            btn.setStyleSheet(_PUSHBTN_QSS)
+            btn.setFixedWidth(btn_w)
+            btn.setToolTip(tooltip)
+            btn.clicked.connect(callback)
+            proxy = QGraphicsProxyWidget(self)
+            proxy.setWidget(btn)
+            y = NODE_HEADER_HEIGHT + (rows + row_offset) * NODE_ROW_HEIGHT + NODE_WIDGET_V_OFFSET
+            proxy.setPos(NODE_HORIZONTAL_PAD, y)
+
+        _add_btn("> Launch", "", self._request_chain_execution, 0)
+        _add_btn("Open",     "Ctrl+O", self._request_open,            1)
+        _add_btn("Save",     "Ctrl+S", self._request_save,            2)
 
     def _request_chain_execution(self):
         scene = self.scene()
         win = getattr(scene, 'nodeEditorWindow', None) if scene else None
         if win:
             win.execute_chain()
+
+    def _request_open(self):
+        scene = self.scene()
+        win = getattr(scene, 'nodeEditorWindow', None) if scene else None
+        if win:
+            win.load_project()
+
+    def _request_save(self):
+        scene = self.scene()
+        win = getattr(scene, 'nodeEditorWindow', None) if scene else None
+        if win:
+            win.save_project()
 
 
 class CommandNode(MetaNode):
@@ -719,10 +762,83 @@ class NodeComboBox(QComboBox):
         self.node.setZValue(0)
 
 
+class _EditableTitleItem(QGraphicsTextItem):
+    """Header title that edits in place; commits on Enter/focus-out, reverts on Esc."""
+
+    def __init__(self, node: '_BaseParamNode'):
+        super().__init__(node)
+        self._node = node
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            self._node._commit_rename()
+            event.accept()
+        elif event.key() == Qt.Key_Escape:
+            self._node._cancel_rename()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+    def focusOutEvent(self, event):
+        super().focusOutEvent(event)
+        self._node._commit_rename()
+
+
 class _BaseParamNode(MetaNode):
     def __init__(self, node_def: NodeDef):
         super().__init__(node_def)
         self._update_scheduled = False
+
+    def _build_title_item(self, html: str) -> QGraphicsTextItem:
+        item = _EditableTitleItem(self)
+        item.setHtml(html)
+        return item
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._begin_rename()
+            event.accept()
+        else:
+            super().mouseDoubleClickEvent(event)
+
+    def _begin_rename(self):
+        item = self.title_item
+        self._rename_backup = item.toPlainText()
+        item.setDefaultTextColor(QColor(TEXT_COLOR))
+        item.setFont(QFont("Consolas", 9))
+        item.setPlainText(self._rename_backup)
+        item.setTextInteractionFlags(Qt.TextEditorInteraction)
+        item.setFocus(Qt.MouseFocusReason)
+        cursor = item.textCursor()
+        cursor.select(QTextCursor.Document)
+        item.setTextCursor(cursor)
+
+    def _commit_rename(self):
+        item = self.title_item
+        if item.textInteractionFlags() == Qt.NoTextInteraction:
+            return
+        item.setTextInteractionFlags(Qt.NoTextInteraction)
+        name = item.toPlainText().strip() or self._rename_backup
+        self._apply_title(name)
+        creation_data = dict(getattr(self, "creation_data", {}) or {})
+        creation_data.setdefault("param_type", self.TYPE_ID)
+        creation_data["display"] = name
+        self.creation_data = creation_data
+        scene = self.scene()
+        win = getattr(scene, 'nodeEditorWindow', None) if scene else None
+        if win:
+            win.push_undo_state()
+
+    def _cancel_rename(self):
+        item = self.title_item
+        if item.textInteractionFlags() == Qt.NoTextInteraction:
+            return
+        item.setTextInteractionFlags(Qt.NoTextInteraction)
+        self._apply_title(self._rename_backup)
+
+    def _apply_title(self, text: str):
+        self.title_item.setHtml(_html_title(text))
+        self._center_title()
 
     def itemChange(self, change, value):
         result = super().itemChange(change, value)
@@ -730,7 +846,57 @@ class _BaseParamNode(MetaNode):
             self._update_scheduled = True
             from PyQt5.QtCore import QTimer
             QTimer.singleShot(100, self._on_scene_loaded)
+        if change == QGraphicsItem.ItemSelectedHasChanged:
+            self._apply_widget_selection_tint(bool(value))
         return result
+
+    def _apply_widget_selection_tint(self, selected: bool):
+        """Blend all embedded QWidgets toward white when node is selected."""
+        for child in self.childItems():
+            if not hasattr(child, 'widget'):
+                continue
+            w = child.widget()
+            if w is None:
+                continue
+            self._tint_widget(w, selected)
+
+    def _tint_widget(self, w: QWidget, selected: bool):
+        from PyQt5.QtWidgets import QAbstractButton, QAbstractSpinBox
+        T = 0.18  # blend factor toward white
+
+        def blended(hex_color: str) -> str:
+            c = QColor(hex_color)
+            r = int(c.red()   + (255 - c.red())   * T)
+            g = int(c.green() + (255 - c.green()) * T)
+            b = int(c.blue()  + (255 - c.blue())  * T)
+            return f"#{r:02X}{g:02X}{b:02X}"
+
+        if selected:
+            bg_field  = blended(CANVAS_BACKGROUND_COLOR)
+            bg_button = blended(BUTTON_BG_COLOR)
+        else:
+            bg_field  = CANVAS_BACKGROUND_COLOR
+            bg_button = BUTTON_BG_COLOR
+
+        if isinstance(w, QLineEdit):
+            w.setStyleSheet(_FIELD_QSS.replace(CANVAS_BACKGROUND_COLOR, bg_field))
+        elif isinstance(w, QComboBox):
+            w.setStyleSheet(_COMBOBOX_QSS.replace(CANVAS_BACKGROUND_COLOR, bg_field)
+                                         .replace(BUTTON_BG_COLOR, bg_button))
+        elif isinstance(w, QAbstractSpinBox):
+            w.setStyleSheet(_SPINBOX_QSS.replace(CANVAS_BACKGROUND_COLOR, bg_field)
+                                        .replace(BUTTON_BG_COLOR, bg_button))
+        elif isinstance(w, QCheckBox):
+            w.setStyleSheet(_CHECKBOX_QSS.replace(CANVAS_BACKGROUND_COLOR, bg_field)
+                                         .replace(BUTTON_BG_COLOR, bg_button))
+        elif isinstance(w, (QToolButton, QAbstractButton)):
+            w.setStyleSheet(_TOOLBTN_QSS.replace(BUTTON_BG_COLOR, bg_button))
+        else:
+            # Container widget — recurse into children
+            for child in w.findChildren(QWidget):
+                self._tint_widget(child, selected)
+
+
 
     def _on_scene_loaded(self):
         self._update_scheduled = False

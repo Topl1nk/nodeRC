@@ -65,7 +65,7 @@ SCROLLBAR_BTN_OFFSET = 18  # clearance past the Qt scrollbar track width
 # ── Socket/node color schema per type ─────────────────────────────────────────
 # Blueprint scheme: dark blue backgrounds, distinct pastel outlines/sockets
 SOCKET_COLOR_SCHEMA: dict[str, dict[str, str]] = {
-    "exec":     {"hdr": "#062242", "body": "#0A315C", "socket": "#FFFFFF"},
+    "exec":     {"hdr": "#062242", "body": "#0A315C", "socket": "#3A76B8"},
     "string":   {"hdr": "#062242", "body": "#0A315C", "socket": "#F48FB1"},
     "bool":     {"hdr": "#062242", "body": "#0A315C", "socket": "#A3E4D7"},
     "integer":  {"hdr": "#062242", "body": "#0A315C", "socket": "#3498DB"},
@@ -80,12 +80,12 @@ SOCKET_COLOR_SCHEMA: dict[str, dict[str, str]] = {
     "keyvalue": {"hdr": "#062242", "body": "#0A315C", "socket": "#D5F5E3"},
     "any":      {"hdr": "#062242", "body": "#0A315C", "socket": "#3498DB"},
 }
-SOCKET_HOVER_COLOR = "#00FFFF"
+SOCKET_HOVER_COLOR = "#FFFFFF"
 
 # ── General Interface Colors ───────────────────────────────────────────────────
 NODE_BORDER_COLOR = "#3A76B8"
-NODE_SELECTED_COLOR = "#00FFFF"
-CONNECTION_SELECTED_COLOR = "#FF7043"
+NODE_SELECTED_COLOR = "#FFFFFF"
+CONNECTION_SELECTED_COLOR = "#FFFFFF"
 
 BUTTON_BG_COLOR = "#0A315C"
 BUTTON_HOVER_COLOR = "#164273"
