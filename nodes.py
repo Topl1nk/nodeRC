@@ -11,13 +11,13 @@ from __future__ import annotations
 import os
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, TYPE_CHECKING
+from typing import List, Dict, Optional, TYPE_CHECKING, Any
 
 from PyQt5.QtWidgets import (
     QGraphicsObject, QGraphicsItem, QGraphicsTextItem,
     QGraphicsProxyWidget, QPushButton, QLineEdit, QCheckBox,
     QSpinBox, QComboBox, QGraphicsPathItem, QWidget,
-    QHBoxLayout, QToolButton, QFileDialog, QStyle,
+    QHBoxLayout, QToolButton, QFileDialog, QStyle, QLabel,
 )
 from PyQt5.QtGui import (
     QPen, QBrush, QColor, QPainterPath, QFont, QPainter, QPolygonF,
@@ -37,6 +37,8 @@ from configuration import (
     BUTTON_TEXT_COLOR, CANVAS_BACKGROUND_COLOR, TEXT_COLOR, TEXT_MUTED_COLOR,
     BEZIER_CTRL_FACTOR, BEZIER_CTRL_MIN, BROWSE_BTN_WIDTH,
     GRID_SIZE_SMALL,
+    INTEGER_PARAM_NAMES, NODE_POPUP_Z,
+    VECTOR_COLLAPSE_GLYPH, VECTOR_EXPAND_GLYPH, VECTOR_AXIS_LABEL_COLOR,
 )
 
 if TYPE_CHECKING:
@@ -61,13 +63,15 @@ _FIELD_QSS = (
 
 _COMBOBOX_QSS = (
     f"QComboBox{{border:1px solid {NODE_BORDER_COLOR};background:{CANVAS_BACKGROUND_COLOR};"
-    f"color:{TEXT_COLOR};border-radius:0px;padding:2px 4px;font:9pt Consolas;}}"
+    f"color:{TEXT_COLOR};border-radius:0px;padding:2px 4px;font:9pt Consolas;combobox-popup:0;}}"
     f"QComboBox::drop-down{{border-left:1px solid {NODE_BORDER_COLOR};"
     f"width:{BROWSE_BTN_WIDTH}px;background:{BUTTON_BG_COLOR};}}"
     f"QComboBox::drop-down:hover{{background:{BUTTON_HOVER_COLOR};border-color:{NODE_SELECTED_COLOR};}}"
     f"QComboBox QAbstractItemView{{border:1px solid {NODE_BORDER_COLOR};"
     f"background:{CANVAS_BACKGROUND_COLOR};color:{TEXT_COLOR};"
-    f"selection-background-color:{BUTTON_HOVER_COLOR};selection-color:{TEXT_COLOR};outline:0px;}}"
+    f"selection-background-color:{NODE_SELECTED_COLOR};selection-color:{CANVAS_BACKGROUND_COLOR};outline:0px;}}"
+    f"QComboBox QAbstractItemView::item:hover{{background-color:{NODE_SELECTED_COLOR};color:{CANVAS_BACKGROUND_COLOR};}}"
+    f"QComboBox QAbstractItemView::item:selected{{background-color:{NODE_SELECTED_COLOR};color:{CANVAS_BACKGROUND_COLOR};}}"
     f"QScrollBar:vertical{{border:none;background:{CANVAS_BACKGROUND_COLOR};width:8px;margin:0px;}}"
     f"QScrollBar::handle:vertical{{background:{NODE_BORDER_COLOR};min-height:20px;border-radius:0px;}}"
     f"QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{{height:0px;}}"
@@ -112,9 +116,19 @@ _PUSHBTN_QSS = (
     f"QPushButton:pressed{{background:{BUTTON_PRESSED_COLOR};}}"
 )
 
+_VECTOR_TOGGLE_QSS = (
+    "QToolButton{font:bold 8pt;padding:0px 2px;border:none;background:transparent;}"
+)
+
+_VECTOR_AXIS_LABEL_QSS = f"color:{VECTOR_AXIS_LABEL_COLOR};font:9pt Consolas;"
+
 
 def resolve_color_schema(socket_type: str) -> dict:
     return SOCKET_COLOR_SCHEMA.get(socket_type.lower(), SOCKET_COLOR_SCHEMA["any"])
+
+
+def param_spec_name(param) -> str:
+    return param if isinstance(param, str) else param.get("name", "")
 
 
 # ── Schema ────────────────────────────────────────────────────────────────────
@@ -130,6 +144,9 @@ class SocketDef:
     is_exec: bool = False
     param_type: str = "string"
     values: List[str] = field(default_factory=list)
+    is_collapsed_vector: bool = False
+    is_expanded_vector_start: bool = False
+    vector_base: str = ""
 
 
 @dataclass
@@ -290,6 +307,7 @@ class MetaNode(QGraphicsObject):
         super().__init__()
         self.node_def = node_def
         self.sockets: Dict[str, SocketItem] = {}
+        self._vector_buttons: Dict[str, tuple] = {}
         self.setFlags(
             QGraphicsItem.ItemIsMovable |
             QGraphicsItem.ItemIsSelectable |
@@ -299,6 +317,7 @@ class MetaNode(QGraphicsObject):
 
     def _generate(self):
         d = self.node_def
+        self._vector_buttons.clear()
 
         title_item = QGraphicsTextItem(self)
         title_item.setHtml(d.title)
@@ -320,11 +339,30 @@ class MetaNode(QGraphicsObject):
                 label_y      = d.socket_y(socket_def.row, socket_def.is_exec) - label_height / 2.0
 
                 if socket_def.kind == "input":
-                    label.setPos(NODE_EXEC_SOCKET_HALFSIZE * 2 + 5, label_y)
+                    label_x = NODE_EXEC_SOCKET_HALFSIZE * 2 + 5
+                    label.setPos(label_x, label_y)
+
+                    if socket_def.is_collapsed_vector or socket_def.is_expanded_vector_start:
+                        toggle = QToolButton()
+                        toggle.setText(
+                            VECTOR_COLLAPSE_GLYPH if socket_def.is_collapsed_vector
+                            else VECTOR_EXPAND_GLYPH
+                        )
+                        toggle.setStyleSheet(_VECTOR_TOGGLE_QSS)
+                        toggle.setCursor(Qt.PointingHandCursor)
+                        proxy = QGraphicsProxyWidget(self)
+                        proxy.setWidget(toggle)
+                        proxy.setPos(label_x + label_width + 2, label_y)
+                        base_name = socket_def.vector_base
+                        toggle.clicked.connect(
+                            lambda _, base=base_name: self.toggle_vector_expansion(base)
+                        )
+                        self._vector_buttons[base_name] = (toggle, proxy)
                 else:
                     label.setPos(d.width - NODE_EXEC_SOCKET_HALFSIZE * 2 - 5 - label_width, label_y)
 
                 label.setDefaultTextColor(QColor(socket_def.color))
+        self.update_vector_buttons_visibility()
 
     def boundingRect(self) -> QRectF:
         d = self.node_def
@@ -414,6 +452,7 @@ class MetaNode(QGraphicsObject):
                     self._refresh_connections()
                     conn.source.meta_node._refresh_connections()
                     conn.dest.meta_node._refresh_connections()
+                    win.push_undo_state()
                     break
 
     def _refresh_connections(self):
@@ -425,6 +464,26 @@ class MetaNode(QGraphicsObject):
                 if (item.source and item.source.meta_node is self) or \
                    (item.dest   and item.dest.meta_node   is self):
                     item.refresh()
+        self.update_vector_buttons_visibility()
+
+    def _is_vector_connected(self, base_name: str) -> bool:
+        scene = self.scene()
+        win = getattr(scene, 'nodeEditorWindow', None) if scene else None
+        if not win:
+            return False
+        for c in win.connections:
+            if c.source.meta_node is self and c.source.sock_def.vector_base == base_name:
+                return True
+            if c.dest.meta_node is self and c.dest.sock_def.vector_base == base_name:
+                return True
+        return False
+
+    def update_vector_buttons_visibility(self):
+        for base_name, (_, proxy) in self._vector_buttons.items():
+            proxy.setVisible(not self._is_vector_connected(base_name))
+
+    def toggle_vector_expansion(self, base_name: str):
+        """No-op on the base node; only CommandNode rebuilds its sockets on toggle."""
 
     def get_socket(self, name: str) -> Optional[SocketItem]:
         return self.sockets.get(name)
@@ -438,6 +497,61 @@ def _html_title(text: str, bold_first: bool = False) -> str:
     rest  = f" {parts[1]}" if len(parts) > 1 else ""
     return (f'<span style="font-family:Consolas;font-size:9pt;color:white;">'
             f'{first}{rest}</span>')
+
+
+def _vector_axis_run(params: list, start: int, base: str) -> list:
+    run = []
+    for offset, suffix in enumerate("xyz"):
+        position = start + offset
+        if position >= len(params):
+            break
+        if param_spec_name(params[position]).lower() != (base + suffix).lower():
+            break
+        run.append(params[position])
+    return run
+
+
+def _mark_expanded_start(param, base: str) -> dict:
+    marked = {"name": param_spec_name(param)} if isinstance(param, str) else param.copy()
+    marked["is_expanded_vector_start"] = True
+    marked["vector_base"] = base
+    return marked
+
+
+def _collapse_vector(axis_params: list, base: str) -> dict:
+    is_triple = len(axis_params) == 3
+    axes_label = "X,Y,Z" if is_triple else "X,Y"
+    return {
+        "name": base or ("XYZ" if is_triple else "XY"),
+        "label": f"{base} ({axes_label})" if base else axes_label,
+        "type": "float3" if is_triple else "float2",
+        "original": list(axis_params),
+        "is_collapsed_vector": True,
+        "vector_base": base,
+    }
+
+
+def group_xyz_params(params: list, expanded_bases: set = None) -> list:
+    expanded_bases = expanded_bases or set()
+    grouped = []
+    index = 0
+    while index < len(params):
+        head_name = param_spec_name(params[index])
+        base = head_name[:-1] if head_name.lower().endswith("x") else None
+        axis_run = _vector_axis_run(params, index, base) if base is not None else []
+
+        if len(axis_run) >= 2:
+            if base in expanded_bases:
+                grouped.append(_mark_expanded_start(axis_run[0], base))
+                grouped.extend(axis_run[1:])
+            else:
+                grouped.append(_collapse_vector(axis_run, base))
+            index += len(axis_run)
+            continue
+
+        grouped.append(params[index])
+        index += 1
+    return grouped
 
 
 def _start_node_def() -> NodeDef:
@@ -455,7 +569,35 @@ def _start_node_def() -> NodeDef:
     )
 
 
-def _command_node_def(cmd_def: dict) -> NodeDef:
+def _resolve_param_type(name: str, param) -> str:
+    declared = param.get("type", "string") if isinstance(param, dict) else "string"
+    if declared == "string" and name.lower() in INTEGER_PARAM_NAMES:
+        return "integer"
+    return declared
+
+
+def _append_param_sockets(sockets: List[SocketDef], param, row: int, optional: bool):
+    name   = param_spec_name(param)
+    ptype  = _resolve_param_type(name, param)
+    values = param.get("values", []) if isinstance(param, dict) else []
+    label  = param.get("label", name) if isinstance(param, dict) else name
+    socket_color = resolve_color_schema(ptype)["socket"]
+
+    sockets.append(SocketDef(
+        name, "input", row=row, label=f"{label}  (opt)" if optional else label,
+        optional=optional, color=socket_color, param_type=ptype, values=values,
+        is_collapsed_vector=param.get("is_collapsed_vector", False) if isinstance(param, dict) else False,
+        is_expanded_vector_start=param.get("is_expanded_vector_start", False) if isinstance(param, dict) else False,
+        vector_base=param.get("vector_base", "") if isinstance(param, dict) else "",
+    ))
+    if name.startswith("new"):
+        sockets.append(SocketDef(
+            f"{name}_out", "output", row=row, label="", optional=optional,
+            color=socket_color, param_type=ptype, values=values,
+        ))
+
+
+def _command_node_def(cmd_def: dict, expanded_vectors: set = None) -> NodeDef:
     display = cmd_def.get("display", cmd_def.get("command", ""))
     exec_schema = resolve_color_schema("exec")
     sockets: List[SocketDef] = [
@@ -463,34 +605,10 @@ def _command_node_def(cmd_def: dict) -> NodeDef:
         SocketDef("__exec_out__", "output", row=-1, label="", color=exec_schema["socket"], is_exec=True),
     ]
     row_idx = 0
-    for p in cmd_def.get("required", []):
-        name   = p if isinstance(p, str) else p["name"]
-        ptype  = "string" if isinstance(p, str) else p.get("type", "string")
-        values = [] if isinstance(p, str) else p.get("values", [])
-        sockets.append(SocketDef(
-            name, "input", row=row_idx, label=name, optional=False,
-            color=resolve_color_schema(ptype)["socket"], param_type=ptype, values=values,
-        ))
-        if name.startswith("new"):
-            sockets.append(SocketDef(
-                f"{name}_out", "output", row=row_idx, label="", optional=False,
-                color=resolve_color_schema(ptype)["socket"], param_type=ptype, values=values,
-            ))
-        row_idx += 1
-    for p in cmd_def.get("optional", []):
-        name   = p if isinstance(p, str) else p["name"]
-        ptype  = "string" if isinstance(p, str) else p.get("type", "string")
-        values = [] if isinstance(p, str) else p.get("values", [])
-        sockets.append(SocketDef(
-            name, "input", row=row_idx, label=f"{name}  (opt)", optional=True,
-            color=resolve_color_schema(ptype)["socket"], param_type=ptype, values=values,
-        ))
-        if name.startswith("new"):
-            sockets.append(SocketDef(
-                f"{name}_out", "output", row=row_idx, label="", optional=True,
-                color=resolve_color_schema(ptype)["socket"], param_type=ptype, values=values,
-            ))
-        row_idx += 1
+    for optional, key in ((False, "required"), (True, "optional")):
+        for param in group_xyz_params(cmd_def.get(key, []), expanded_vectors):
+            _append_param_sockets(sockets, param, row_idx, optional)
+            row_idx += 1
     return NodeDef(
         title=_html_title(display, bold_first=True),
         header_color=exec_schema["hdr"],
@@ -534,17 +652,72 @@ class StartNode(MetaNode):
 
     def _request_chain_execution(self):
         scene = self.scene()
-        if scene and scene.nodeEditorWindow:
-            scene.nodeEditorWindow.execute_chain()
+        win = getattr(scene, 'nodeEditorWindow', None) if scene else None
+        if win:
+            win.execute_chain()
 
 
 class CommandNode(MetaNode):
-    def __init__(self, cmd_def: dict):
+    def __init__(self, cmd_def: dict, expanded_vectors: set = None):
         self.cmd_def = cmd_def
-        super().__init__(_command_node_def(cmd_def))
+        self.expanded_vectors = expanded_vectors or set()
+        super().__init__(_command_node_def(cmd_def, self.expanded_vectors))
+
+    def toggle_vector_expansion(self, base_name: str):
+        self.expanded_vectors.symmetric_difference_update({base_name})
+
+        scene = self.scene()
+        win = getattr(scene, 'nodeEditorWindow', None) if scene else None
+        if not win or not scene:
+            return
+
+        new_node = CommandNode(self.cmd_def, self.expanded_vectors.copy())
+        new_node.setPos(self.pos())
+        scene.addItem(new_node)
+
+        for old in list(win.connections):
+            if old.source.meta_node is self:
+                migrated = new_node.sockets.get(old.source.sock_def.name)
+                if migrated:
+                    self._rewire(scene, win, migrated, old.dest)
+            elif old.dest.meta_node is self:
+                migrated = new_node.sockets.get(old.dest.sock_def.name)
+                if migrated:
+                    self._rewire(scene, win, old.source, migrated)
+            else:
+                continue
+            scene.removeItem(old)
+            if old in win.connections:
+                win.connections.remove(old)
+
+        scene.removeItem(self)
+        win.push_undo_state()
+
+    @staticmethod
+    def _rewire(scene, win, out_sock: 'SocketItem', in_sock: 'SocketItem'):
+        scene._enforce_connection_rules(out_sock, in_sock)
+        conn = Connection(out_sock, in_sock)
+        scene.addItem(conn)
+        win.connections.append(conn)
+        conn.source.meta_node._refresh_connections()
+        conn.dest.meta_node._refresh_connections()
 
 
 # ── Typed Parameter Nodes ─────────────────────────────────────────────────────
+
+class NodeComboBox(QComboBox):
+    def __init__(self, node: 'MetaNode'):
+        super().__init__()
+        self.node = node
+
+    def showPopup(self):
+        self.node.setZValue(NODE_POPUP_Z)
+        super().showPopup()
+
+    def hidePopup(self):
+        super().hidePopup()
+        self.node.setZValue(0)
+
 
 class _BaseParamNode(MetaNode):
     def __init__(self, node_def: NodeDef):
@@ -578,9 +751,9 @@ class _BaseParamNode(MetaNode):
         return w
 
     def _make_combobox(self, items: List[str] = None, *,
-                       fixed_width: bool = True) -> QComboBox:
-        w = QComboBox()
-        w.setEditable(True)
+                       fixed_width: bool = True, editable: bool = True) -> QComboBox:
+        w = NodeComboBox(self)
+        w.setEditable(editable)
         for item in (items or []):
             w.addItem(item)
         if fixed_width:
@@ -608,6 +781,8 @@ class _BaseParamNode(MetaNode):
     def _make_checkbox(self, text: str = "true", checked: bool = False) -> QCheckBox:
         w = QCheckBox(text)
         w.setChecked(checked)
+        w.setFixedWidth(self._widget_width())
+        w.setFixedHeight(NODE_WIDGET_HEIGHT)
         w.setStyleSheet(_CHECKBOX_QSS)
         return w
 
@@ -625,7 +800,10 @@ class _BaseParamNode(MetaNode):
         sock = self.get_socket(socket_name)
         if not sock or not self.scene():
             return None
-        for conn in self.scene().nodeEditorWindow.connections:
+        win = getattr(self.scene(), 'nodeEditorWindow', None)
+        if not win:
+            return None
+        for conn in win.connections:
             if conn.dest is sock:
                 return conn.source.meta_node.get_value(conn.source.sock_def.name)
         return None
@@ -666,9 +844,10 @@ class _BaseParamNode(MetaNode):
             return
         visited.add(self)
         scene = self.scene()
-        if not scene or not scene.nodeEditorWindow:
+        win = getattr(scene, 'nodeEditorWindow', None) if scene else None
+        if not win:
             return
-        for conn in scene.nodeEditorWindow.connections:
+        for conn in win.connections:
             if conn.source.meta_node is self:
                 dest_node = conn.dest.meta_node
                 if hasattr(dest_node, "_update_connected_values"):
@@ -678,6 +857,31 @@ class _BaseParamNode(MetaNode):
     def _update_connected_values(self):
         """Override in subclasses to update UI when connections change"""
         pass
+
+    def _on_widget_user_edit(self):
+        scene = self.scene()
+        win = getattr(scene, 'nodeEditorWindow', None) if scene else None
+        if win:
+            win.push_undo_state()
+
+    def _format_float_input(self, line_edit: QLineEdit):
+        text = line_edit.text().strip()
+        if not text:
+            return
+        try:
+            val = float(text.replace(",", "."))
+            if "." not in text and "e" not in text.lower():
+                line_edit.setText(f"{int(val)}.0")
+            elif text.endswith("."):
+                line_edit.setText(text + "0")
+        except ValueError:
+            pass
+
+    def _on_float_editing_finished(self):
+        sender = self.sender()
+        if isinstance(sender, QLineEdit):
+            self._format_float_input(sender)
+        self._on_widget_user_edit()
 
     def _refresh_connections(self):
         super()._refresh_connections()
@@ -702,6 +906,12 @@ class _BaseParamNode(MetaNode):
             NODE_HEADER_HEIGHT + rows * NODE_ROW_HEIGHT + NODE_WIDGET_V_OFFSET,
         )
 
+    def get_value_state(self) -> Any:
+        return None
+
+    def set_value_state(self, val: Any):
+        pass
+
     def get_value(self, socket_name: str = None) -> str:
         raise NotImplementedError
 
@@ -713,7 +923,14 @@ class StringParamNode(_BaseParamNode):
         super().__init__(_param_node_def(param_name, self.TYPE_ID))
         self._editor = self._make_field(default, "text value...")
         self._editor.textChanged.connect(self._notify_connections_changed)
+        self._editor.editingFinished.connect(self._on_widget_user_edit)
         self._attach_input_widget(self._editor)
+
+    def get_value_state(self) -> Any:
+        return self._editor.text()
+
+    def set_value_state(self, val: Any):
+        self._editor.setText(str(val))
 
     def get_value(self, socket_name: str = None) -> str:
         return self._editor.text().strip()
@@ -724,12 +941,21 @@ class BoolParamNode(_BaseParamNode):
 
     def __init__(self, param_name="[B] Boolean", default=False):
         super().__init__(_param_node_def(param_name, self.TYPE_ID))
-        self._checkbox = self._make_checkbox("true", default)
+        self._checkbox = self._make_checkbox("true" if default else "false", default)
         self._checkbox.toggled.connect(
             lambda checked: self._checkbox.setText("true" if checked else "false")
         )
         self._checkbox.toggled.connect(self._notify_connections_changed)
+        self._checkbox.toggled.connect(self._on_widget_user_edit)
         self._attach_input_widget(self._checkbox)
+
+    def get_value_state(self) -> Any:
+        return self._checkbox.isChecked()
+
+    def set_value_state(self, val: Any):
+        checked = bool(val)
+        self._checkbox.setChecked(checked)
+        self._checkbox.setText("true" if checked else "false")
 
     def get_value(self, socket_name: str = None) -> str:
         return "true" if self._checkbox.isChecked() else "false"
@@ -742,7 +968,14 @@ class IntParamNode(_BaseParamNode):
         super().__init__(_param_node_def(param_name, self.TYPE_ID))
         self._spinbox = self._make_spinbox(-999999, 999999, default)
         self._spinbox.valueChanged.connect(self._notify_connections_changed)
+        self._spinbox.editingFinished.connect(self._on_widget_user_edit)
         self._attach_input_widget(self._spinbox)
+
+    def get_value_state(self) -> Any:
+        return self._spinbox.value()
+
+    def set_value_state(self, val: Any):
+        self._spinbox.setValue(int(val))
 
     def get_value(self, socket_name: str = None) -> str:
         return str(self._spinbox.value())
@@ -756,7 +989,14 @@ class FloatParamNode(_BaseParamNode):
         self._editor = self._make_field(str(default))
         self._editor.setValidator(QDoubleValidator())
         self._editor.textChanged.connect(self._notify_connections_changed)
+        self._editor.editingFinished.connect(self._on_float_editing_finished)
         self._attach_input_widget(self._editor)
+
+    def get_value_state(self) -> Any:
+        return self._editor.text()
+
+    def set_value_state(self, val: Any):
+        self._editor.setText(str(val))
 
     def get_value(self, socket_name: str = None) -> str:
         return self._editor.text().strip()
@@ -777,7 +1017,7 @@ class EnumParamNode(_BaseParamNode):
                           color=string_schema["socket"], param_type="string",
                           optional=True),
                 SocketDef("value_out", "output", row=1, label="",
-                          color=schema["socket"], param_type="string"),
+                          color=string_schema["socket"], param_type="string"),
             ],
             has_footer=False,
         )
@@ -797,8 +1037,9 @@ class EnumParamNode(_BaseParamNode):
         editor_row.setFixedWidth(self._widget_width())
         self._attach_widget_at_row(editor_row, 0)
 
-        self._combobox = self._make_combobox(values or ["option1", "option2"])
+        self._combobox = self._make_combobox(values or ["option1", "option2"], editable=False)
         self._combobox.currentTextChanged.connect(self._notify_connections_changed)
+        self._combobox.activated.connect(self._on_widget_user_edit)
         self._attach_widget_at_row(self._combobox, 1)
 
     def _add_enum_item(self):
@@ -807,11 +1048,13 @@ class EnumParamNode(_BaseParamNode):
             self._combobox.addItem(text)
             self._combobox.setCurrentText(text)
             self._new_item.clear()
+            self._on_widget_user_edit()
 
     def _remove_enum_item(self):
         idx = self._combobox.currentIndex()
         if idx >= 0:
             self._combobox.removeItem(idx)
+            self._on_widget_user_edit()
 
     def _populate_from_source(self, source: str):
         if not source:
@@ -849,16 +1092,23 @@ class EnumParamNode(_BaseParamNode):
             self._add_btn.setVisible(True)
             self._remove_btn.setVisible(True)
 
+    def get_value_state(self) -> Any:
+        return self._combobox.currentText()
+
+    def set_value_state(self, val: Any):
+        self._combobox.setCurrentText(str(val))
+
     def get_value(self, socket_name: str = None) -> str:
         src_socket = self.get_socket("src")
         if src_socket and self.scene():
-            win = self.scene().nodeEditorWindow
-            for conn in win.connections:
-                if conn.dest is src_socket:
-                    self._populate_from_source(
-                        conn.source.meta_node.get_value(conn.source.sock_def.name)
-                    )
-                    break
+            win = getattr(self.scene(), 'nodeEditorWindow', None)
+            if win:
+                for conn in win.connections:
+                    if conn.dest is src_socket:
+                        self._populate_from_source(
+                            conn.source.meta_node.get_value(conn.source.sock_def.name)
+                        )
+                        break
         return self._combobox.currentText()
 
 
@@ -896,10 +1146,12 @@ class PathParamNode(_BaseParamNode):
             lambda: self._on_dir_changed(self._dir_editor.text())
         )
         self._ext_filter.textChanged.connect(self._notify_connections_changed)
+        self._ext_filter.editingFinished.connect(self._on_widget_user_edit)
 
         self._dir_editor = self._make_field(placeholder="dirpath…", fixed_width=False)
         self._dir_editor.textChanged.connect(self._on_dir_changed)
         self._dir_editor.textChanged.connect(self._notify_connections_changed)
+        self._dir_editor.editingFinished.connect(self._on_widget_user_edit)
 
         dir_widget = QWidget()
         dir_widget.setStyleSheet("background:transparent;")
@@ -913,6 +1165,9 @@ class PathParamNode(_BaseParamNode):
         self._file_combo = self._make_combobox()
         self._file_combo.lineEdit().setPlaceholderText("filename…")
         self._file_combo.currentTextChanged.connect(self._notify_connections_changed)
+        self._file_combo.activated.connect(self._on_widget_user_edit)
+        if self._file_combo.lineEdit():
+            self._file_combo.lineEdit().editingFinished.connect(self._on_widget_user_edit)
 
         self._attach_widget_at_row(dir_widget, 0)
         self._attach_widget_at_row(self._file_combo, 1)
@@ -922,6 +1177,7 @@ class PathParamNode(_BaseParamNode):
         path = QFileDialog.getExistingDirectory(None, "Select folder", self._dir_editor.text())
         if path:
             self._dir_editor.setText(path)
+            self._on_widget_user_edit()
 
     def _update_connected_values(self):
         self._show_connected_combobox(self._file_combo,
@@ -950,6 +1206,16 @@ class PathParamNode(_BaseParamNode):
         self._file_combo.blockSignals(False)
         self._notify_connections_changed()
 
+    def get_value_state(self) -> Any:
+        return {"dir": self._dir_editor.text(), "file": self._file_combo.currentText()}
+
+    def set_value_state(self, val: Any):
+        if isinstance(val, dict):
+            self._dir_editor.setText(val.get("dir", ""))
+            self._file_combo.setCurrentText(val.get("file", ""))
+        else:
+            self._dir_editor.setText(str(val))
+
     def get_value(self, socket_name: str = None) -> str:
         d = self._dir_editor.text().strip().replace("\\", "/")
         if socket_name == "dirpath_out":
@@ -974,10 +1240,72 @@ class KeyValueParamNode(_BaseParamNode):
         super().__init__(_param_node_def(param_name, self.TYPE_ID))
         self._editor = self._make_field("key=value", "key=value")
         self._editor.textChanged.connect(self._notify_connections_changed)
+        self._editor.editingFinished.connect(self._on_widget_user_edit)
         self._attach_input_widget(self._editor)
+
+    def get_value_state(self) -> Any:
+        return self._editor.text()
+
+    def set_value_state(self, val: Any):
+        self._editor.setText(str(val))
 
     def get_value(self, socket_name: str = None) -> str:
         return self._editor.text().strip()
+
+
+class _VectorParamNode(_BaseParamNode):
+    AXES: tuple = ()
+
+    def __init__(self, param_name: str):
+        super().__init__(_param_node_def(param_name, self.TYPE_ID))
+
+        row_widget = QWidget()
+        row_widget.setStyleSheet("background:transparent;")
+        layout = QHBoxLayout(row_widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        self._editors: List[QLineEdit] = []
+        for axis in self.AXES:
+            editor = self._make_field("0.0", axis.lower(), fixed_width=False)
+            editor.setValidator(QDoubleValidator())
+            editor.textChanged.connect(self._notify_connections_changed)
+            editor.editingFinished.connect(self._on_float_editing_finished)
+            label = QLabel(f"{axis}:")
+            label.setStyleSheet(_VECTOR_AXIS_LABEL_QSS)
+            layout.addWidget(label)
+            layout.addWidget(editor)
+            self._editors.append(editor)
+
+        row_widget.setFixedWidth(self._widget_width())
+        self._attach_input_widget(row_widget)
+
+    def get_value_state(self) -> Any:
+        return [editor.text() for editor in self._editors]
+
+    def set_value_state(self, val: Any):
+        if isinstance(val, list):
+            for editor, component in zip(self._editors, val):
+                editor.setText(str(component))
+
+    def get_value(self, socket_name: str = None) -> str:
+        return " ".join(editor.text().strip() or "0.0" for editor in self._editors)
+
+
+class Float2ParamNode(_VectorParamNode):
+    TYPE_ID = "float2"
+    AXES = ("X", "Y")
+
+    def __init__(self, param_name="[#2] Float2 (X,Y)"):
+        super().__init__(param_name)
+
+
+class Float3ParamNode(_VectorParamNode):
+    TYPE_ID = "float3"
+    AXES = ("X", "Y", "Z")
+
+    def __init__(self, param_name="[#3] Float3 (X,Y,Z)"):
+        super().__init__(param_name)
 
 
 # ── Registry ──────────────────────────────────────────────────────────────────
@@ -987,6 +1315,8 @@ PARAM_NODE_TYPES: Dict[str, type] = {
     "bool":     BoolParamNode,
     "integer":  IntParamNode,
     "float":    FloatParamNode,
+    "float2":   Float2ParamNode,
+    "float3":   Float3ParamNode,
     "enum":     EnumParamNode,
     "enum_int": EnumParamNode,
     "filepath": PathParamNode,

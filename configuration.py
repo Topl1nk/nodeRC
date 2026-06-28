@@ -34,6 +34,27 @@ GRID_SIZE_LARGE = 100  # major grid lines
 BEZIER_CTRL_FACTOR = 0.55  # horizontal spread relative to endpoint distance
 BEZIER_CTRL_MIN    = 60.0  # minimum control-point offset — prevents flat S-curves
 
+# ── Parameter typing ───────────────────────────────────────────────────────────
+# Command parameters whose name marks them as whole numbers, promoted from the
+# default string type so the socket exposes an integer editor.
+INTEGER_PARAM_NAMES: frozenset[str] = frozenset({
+    "width", "height", "resolution", "jumpslength", "size", "count",
+    "margin", "padding", "length", "downscale", "index",
+})
+# Types whose value string carries several space-separated components.
+VECTOR_PARAM_TYPES: frozenset[str] = frozenset({"float2", "float3", "vector"})
+
+# ── Vector socket grouping ─────────────────────────────────────────────────────
+VECTOR_COLLAPSE_GLYPH   = "◀"        # collapse X/Y/Z sockets into one vector socket
+VECTOR_EXPAND_GLYPH     = "▼"        # expand a vector socket back into X/Y/Z sockets
+VECTOR_AXIS_LABEL_COLOR = "#AAAAAA"  # axis prefix ("X:", "Y:", "Z:") on vector editors
+
+# ── Editor history ─────────────────────────────────────────────────────────────
+UNDO_HISTORY_LIMIT = 100  # retained editor snapshots for undo/redo
+
+# ── Node z-order ───────────────────────────────────────────────────────────────
+NODE_POPUP_Z = 100  # node z-value while its combobox popup is open — above siblings
+
 # ── PathParamNode browse button ────────────────────────────────────────────────
 BROWSE_BTN_WIDTH = 22  # pixel width shared by the browse "…" button and drop-down area
 
@@ -45,17 +66,19 @@ SCROLLBAR_BTN_OFFSET = 18  # clearance past the Qt scrollbar track width
 # Blueprint scheme: dark blue backgrounds, distinct pastel outlines/sockets
 SOCKET_COLOR_SCHEMA: dict[str, dict[str, str]] = {
     "exec":     {"hdr": "#062242", "body": "#0A315C", "socket": "#FFFFFF"},
-    "string":   {"hdr": "#062242", "body": "#0A315C", "socket": "#D3C4E3"},
+    "string":   {"hdr": "#062242", "body": "#0A315C", "socket": "#F48FB1"},
     "bool":     {"hdr": "#062242", "body": "#0A315C", "socket": "#A3E4D7"},
-    "integer":  {"hdr": "#062242", "body": "#0A315C", "socket": "#85C1E9"},
-    "float":    {"hdr": "#062242", "body": "#0A315C", "socket": "#7FB3D5"},
-    "vector":   {"hdr": "#062242", "body": "#0A315C", "socket": "#76D7C4"},
-    "enum":     {"hdr": "#062242", "body": "#0A315C", "socket": "#F5CBA7"},
-    "enum_int": {"hdr": "#062242", "body": "#0A315C", "socket": "#F5CBA7"},
+    "integer":  {"hdr": "#062242", "body": "#0A315C", "socket": "#3498DB"},
+    "float":    {"hdr": "#062242", "body": "#0A315C", "socket": "#EC7063"},
+    "float2":   {"hdr": "#062242", "body": "#0A315C", "socket": "#F7DC6F"},
+    "float3":   {"hdr": "#062242", "body": "#0A315C", "socket": "#C39BD3"},
+    "vector":   {"hdr": "#062242", "body": "#0A315C", "socket": "#C39BD3"},
+    "enum":     {"hdr": "#062242", "body": "#0A315C", "socket": "#F39C12"},
+    "enum_int": {"hdr": "#062242", "body": "#0A315C", "socket": "#F39C12"},
     "filepath": {"hdr": "#062242", "body": "#0A315C", "socket": "#F5B7B1"},
     "dirpath":  {"hdr": "#062242", "body": "#0A315C", "socket": "#F9E79F"},
     "keyvalue": {"hdr": "#062242", "body": "#0A315C", "socket": "#D5F5E3"},
-    "any":      {"hdr": "#062242", "body": "#0A315C", "socket": "#FFFFFF"},
+    "any":      {"hdr": "#062242", "body": "#0A315C", "socket": "#3498DB"},
 }
 SOCKET_HOVER_COLOR = "#00FFFF"
 
@@ -82,6 +105,11 @@ SCROLLBAR_TOGGLE_HOVER = "rgba(38,50,56,240)"
 SCENE_PADDING            = 1500
 CANVAS_BACKGROUND_COLOR  = "#04152B"
 WINDOW_BACKGROUND_COLOR  = "#04152B"
+
+# ── Vignette ───────────────────────────────────────────────────────────────────
+VIGNETTE_COLOR  = (4, 21, 43, 255)   # RGBA color of the vignette edges
+VIGNETTE_RADIUS = 0.5               # Gradient radius multiplier (relative to max(width, height))
+
 
 # ── Context menu stylesheet ────────────────────────────────────────────────────
 CONTEXT_MENU_STYLESHEET = f"""

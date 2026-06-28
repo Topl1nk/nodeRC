@@ -28,6 +28,8 @@ from configuration import (
     SCROLLBAR_TOGGLE_BG, SCROLLBAR_TOGGLE_HOVER,
     GRID_SIZE_SMALL, GRID_SIZE_LARGE,
     SCROLLBAR_BTN_MARGIN, SCROLLBAR_BTN_OFFSET,
+    VECTOR_PARAM_TYPES, UNDO_HISTORY_LIMIT,
+    VIGNETTE_COLOR, VIGNETTE_RADIUS,
 )
 from diagnostics import log_and_explain
 from nodeRC import load_legacy_command_definitions
@@ -37,7 +39,7 @@ from nodes import (
     StringParamNode, BoolParamNode, IntParamNode, EnumParamNode,
     PathParamNode, KeyValueParamNode,
     Connection, SocketItem, PARAM_NODE_TYPES,
-    _BaseParamNode,
+    _BaseParamNode, group_xyz_params,
 )
 
 
@@ -82,6 +84,31 @@ class GraphicsView(QGraphicsView):
     def wheelEvent(self, event):
         factor = self._ZOOM_STEP_IN if event.angleDelta().y() > 0 else self._ZOOM_STEP_OUT
         self.scale(factor, factor)
+
+    def drawBackground(self, painter: QPainter, rect: QRectF):
+        # 1. Let the scene paint the background grid
+        if self.scene():
+            self.scene().drawBackground(painter, rect)
+
+        # 2. Draw a viewport-space vignette overlaying the grid
+        painter.save()
+        painter.resetTransform()
+
+        from PyQt5.QtGui import QRadialGradient, QBrush
+        w = self.viewport().width()
+        h = self.viewport().height()
+
+        # Radial gradient from center to corners
+        gradient = QRadialGradient(w / 2.0, h / 2.0, max(w, h) * VIGNETTE_RADIUS)
+        gradient.setColorAt(0.0, QColor(0, 0, 0, 0))
+        # Fade to the configured vignette color at the edges
+        gradient.setColorAt(1.0, QColor(*VIGNETTE_COLOR))
+
+        painter.setBrush(QBrush(gradient))
+        painter.setPen(Qt.NoPen)
+        painter.drawRect(0, 0, w, h)
+
+        painter.restore()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MiddleButton:
@@ -205,13 +232,17 @@ class NodeScene(QGraphicsScene):
                     if c.dest == source:
                         self._drag_original_dest = c.source
                         break
-                        
+
         origin = source.scene_center()
         self._drag_preview_line = QGraphicsLineItem()
         self._drag_preview_line.setPen(QPen(QColor(source.sock_def.color), 2, Qt.DashLine))
         self._drag_preview_line.setZValue(-0.5)
         self._drag_preview_line.setLine(origin.x(), origin.y(), origin.x(), origin.y())
         super().addItem(self._drag_preview_line)
+
+    def mousePressEvent(self, event):
+        super().mousePressEvent(event)
+        self._drag_start_positions = {item: item.pos() for item in self.selectedItems() if isinstance(item, MetaNode)}
 
     def mouseMoveEvent(self, event):
         if self._drag_active and self._drag_preview_line and self._drag_source:
@@ -249,15 +280,26 @@ class NodeScene(QGraphicsScene):
                 if self.nodeEditorWindow:
                     self.nodeEditorWindow.connections.append(conn)
                     in_sock.meta_node._refresh_connections()
+                    self.nodeEditorWindow.push_undo_state()
             else:
                 if self.nodeEditorWindow:
                     self._show_node_creation_menu(
-                        event.scenePos(), event.screenPos(), 
+                        event.scenePos(), event.screenPos(),
                         source_socket=self._drag_source,
                         original_dest=self._drag_original_dest
                     )
             self._cancel_connection_drag()
-        super().mouseReleaseEvent(event)
+        else:
+            super().mouseReleaseEvent(event)
+            moved = False
+            if hasattr(self, "_drag_start_positions"):
+                for item, start_pos in self._drag_start_positions.items():
+                    if item.scene() and item.pos() != start_pos:
+                        moved = True
+                        break
+                self._drag_start_positions = {}
+            if moved and self.nodeEditorWindow:
+                self.nodeEditorWindow.push_undo_state()
 
     def _find_compatible_socket(self, scene_pos: QPointF) -> Optional[SocketItem]:
         """
@@ -306,50 +348,55 @@ class NodeScene(QGraphicsScene):
         win = self.nodeEditorWindow
         if not win:
             return
-            
+
         dialog = SearchMenuDialog(win.command_categories, win)
         dialog.set_anchor_pos(screen_pos)
-        
-        if dialog.exec_() == QDialog.Accepted:
-            payload = dialog.payload
-            
-            new_node = None
-            if isinstance(payload, dict) and "command" in payload:
-                new_node = win.add_command_node(scene_pos, payload)
-            elif isinstance(payload, dict) and "param_type" in payload:
-                new_node = win.add_param_node(scene_pos, payload)
-                
-            target_socket = None
-            if new_node and source_socket:
-                for s in new_node.sockets.values():
-                    if s.socket_type != source_socket.socket_type and s.sock_def.is_exec == source_socket.sock_def.is_exec:
-                        target_socket = s
-                        break
-            if target_socket:
-                if source_socket.socket_type == "output":
-                    out_sock, in_sock = source_socket, target_socket
-                else:
-                    out_sock, in_sock = target_socket, source_socket
-                self._enforce_connection_rules(out_sock, in_sock)
-                conn = Connection(out_sock, in_sock)
-                self.addItem(conn)
-                win.connections.append(conn)
 
-                if original_dest:
-                    c_out_sock = None
+        if dialog.exec_() == QDialog.Accepted:
+            win._block_undo_push = True
+            try:
+                payload = dialog.payload
+
+                new_node = None
+                if isinstance(payload, dict) and "command" in payload:
+                    new_node = win.add_command_node(scene_pos, payload)
+                elif isinstance(payload, dict) and "param_type" in payload:
+                    new_node = win.add_param_node(scene_pos, payload)
+
+                target_socket = None
+                if new_node and source_socket:
                     for s in new_node.sockets.values():
-                        if s.socket_type == source_socket.socket_type and s.sock_def.is_exec == source_socket.sock_def.is_exec:
-                            c_out_sock = s
+                        if s.socket_type != source_socket.socket_type and s.sock_def.is_exec == source_socket.sock_def.is_exec:
+                            target_socket = s
                             break
-                    if c_out_sock:
-                        if original_dest.socket_type == "input":
-                            self._enforce_connection_rules(c_out_sock, original_dest)
-                            conn2 = Connection(c_out_sock, original_dest)
-                        else:
-                            self._enforce_connection_rules(original_dest, c_out_sock)
-                            conn2 = Connection(original_dest, c_out_sock)
-                        self.addItem(conn2)
-                        win.connections.append(conn2)
+                if target_socket:
+                    if source_socket.socket_type == "output":
+                        out_sock, in_sock = source_socket, target_socket
+                    else:
+                        out_sock, in_sock = target_socket, source_socket
+                    self._enforce_connection_rules(out_sock, in_sock)
+                    conn = Connection(out_sock, in_sock)
+                    self.addItem(conn)
+                    win.connections.append(conn)
+
+                    if original_dest:
+                        c_out_sock = None
+                        for s in new_node.sockets.values():
+                            if s.socket_type == source_socket.socket_type and s.sock_def.is_exec == source_socket.sock_def.is_exec:
+                                c_out_sock = s
+                                break
+                        if c_out_sock:
+                            if original_dest.socket_type == "input":
+                                self._enforce_connection_rules(c_out_sock, original_dest)
+                                conn2 = Connection(c_out_sock, original_dest)
+                            else:
+                                self._enforce_connection_rules(original_dest, c_out_sock)
+                                conn2 = Connection(original_dest, c_out_sock)
+                            self.addItem(conn2)
+                            win.connections.append(conn2)
+            finally:
+                win._block_undo_push = False
+            win.push_undo_state()
 
 
 
@@ -382,6 +429,11 @@ class NodeEditorWindow(QMainWindow):
 
         self._add_start_node()
 
+        self._block_undo_push = False
+        self.history: List[dict] = []
+        self.history_index: int = -1
+        self.push_undo_state()
+
     def _load_command_database(self):
         if os.path.exists(COMMAND_DB_JSON):
             with open(COMMAND_DB_JSON, "r", encoding="utf-8") as f:
@@ -404,24 +456,26 @@ class NodeEditorWindow(QMainWindow):
         node = CommandNode(cmd_def)
         node.setPos(pos)
         self.scene.addItem(node)
+        self.push_undo_state()
         return node
 
     def add_param_node(self, pos: QPointF, data: dict):
         param_type = data.get("param_type", "string")
         values     = data.get("values", [])
         node_class = PARAM_NODE_TYPES.get(param_type, StringParamNode)
-        
+
         kwargs = {}
         param_display = data.get("display") or data.get("name")
         if param_display:
             kwargs["param_name"] = param_display
         if node_class is EnumParamNode and values:
             kwargs["values"] = values
-            
+
         node = node_class(**kwargs)
         node.creation_data = data
         node.setPos(pos)
         self.scene.addItem(node)
+        self.push_undo_state()
         return node
 
     def keyPressEvent(self, event):
@@ -445,64 +499,87 @@ class NodeEditorWindow(QMainWindow):
         elif event.key() == Qt.Key_V and event.modifiers() == Qt.ControlModifier:
             self.paste_nodes()
             event.accept()
+        elif event.key() == Qt.Key_Z and event.modifiers() == Qt.ControlModifier:
+            self.undo()
+            event.accept()
+        elif event.key() == Qt.Key_Z and event.modifiers() == (Qt.ControlModifier | Qt.ShiftModifier):
+            self.redo()
+            event.accept()
+        elif event.key() == Qt.Key_Y and event.modifiers() == Qt.ControlModifier:
+            self.redo()
+            event.accept()
         else:
             super().keyPressEvent(event)
 
     def _delete_selected_items(self):
         items_to_delete = self.scene.selectedItems()
-        for item in items_to_delete:
-            if isinstance(item, Connection):
-                dest_node = item.dest.meta_node if item.dest else None
-                self.scene.removeItem(item)
-                if item in self.connections:
-                    self.connections.remove(item)
-                if dest_node:
-                    dest_node._refresh_connections()
-            elif isinstance(item, MetaNode) and not isinstance(item, StartNode):
-                # Search for bypass connection (exec_in -> exec_out)
-                incoming_exec = None
-                outgoing_exec = None
-                for c in self.connections:
-                    if c.is_exec:
-                        if c.dest.meta_node is item:
-                            incoming_exec = c
-                        elif c.source.meta_node is item:
-                            outgoing_exec = c
+        if not items_to_delete:
+            return
 
-                if incoming_exec and outgoing_exec:
-                    left_node = incoming_exec.source.meta_node
-                    right_node = outgoing_exec.dest.meta_node
-                    if left_node not in items_to_delete and right_node not in items_to_delete:
-                        self.scene._enforce_connection_rules(incoming_exec.source, outgoing_exec.dest)
-                        new_conn = Connection(incoming_exec.source, outgoing_exec.dest)
-                        self.scene.addItem(new_conn)
-                        self.connections.append(new_conn)
-                        left_node._refresh_connections()
-                        right_node._refresh_connections()
+        self._block_undo_push = True
+        try:
+            for item in items_to_delete:
+                if isinstance(item, Connection):
+                    dest_node = item.dest.meta_node if item.dest else None
+                    self.scene.removeItem(item)
+                    if item in self.connections:
+                        self.connections.remove(item)
+                    if dest_node:
+                        dest_node._refresh_connections()
+                elif isinstance(item, MetaNode) and not isinstance(item, StartNode):
+                    # Search for bypass connection (exec_in -> exec_out)
+                    incoming_exec = None
+                    outgoing_exec = None
+                    for c in self.connections:
+                        if c.is_exec:
+                            if c.dest.meta_node is item:
+                                incoming_exec = c
+                            elif c.source.meta_node is item:
+                                outgoing_exec = c
 
-                dead_connections = [
-                    c for c in self.connections
-                    if c.source.meta_node is item or c.dest.meta_node is item
-                ]
-                for conn in dead_connections:
-                    self.scene.removeItem(conn)
-                    if conn in self.connections:
-                        self.connections.remove(conn)
-                self.scene.removeItem(item)
+                    if incoming_exec and outgoing_exec:
+                        left_node = incoming_exec.source.meta_node
+                        right_node = outgoing_exec.dest.meta_node
+                        if left_node not in items_to_delete and right_node not in items_to_delete:
+                            self.scene._enforce_connection_rules(incoming_exec.source, outgoing_exec.dest)
+                            new_conn = Connection(incoming_exec.source, outgoing_exec.dest)
+                            self.scene.addItem(new_conn)
+                            self.connections.append(new_conn)
+                            left_node._refresh_connections()
+                            right_node._refresh_connections()
+
+                    dead_connections = [
+                        c for c in self.connections
+                        if c.source.meta_node is item or c.dest.meta_node is item
+                    ]
+                    other_nodes = set()
+                    for conn in dead_connections:
+                        other_node = conn.dest.meta_node if conn.source.meta_node is item else conn.source.meta_node
+                        if other_node and other_node not in items_to_delete:
+                            other_nodes.add(other_node)
+                        self.scene.removeItem(conn)
+                        if conn in self.connections:
+                            self.connections.remove(conn)
+                    self.scene.removeItem(item)
+                    for n in other_nodes:
+                        n._refresh_connections()
+        finally:
+            self._block_undo_push = False
+        self.push_undo_state()
 
     def copy_nodes(self):
         selected_nodes = [item for item in self.scene.selectedItems() if isinstance(item, MetaNode)]
         if not selected_nodes:
             return
-            
+
         data = {"nodes": [], "connections": []}
         node_id_map = {}
-        
+
         xs = [n.scenePos().x() for n in selected_nodes]
         ys = [n.scenePos().y() for n in selected_nodes]
         center_x = sum(xs) / len(xs)
         center_y = sum(ys) / len(ys)
-        
+
         for idx, item in enumerate(selected_nodes):
             node_id_map[item] = idx
             pos = item.scenePos()
@@ -516,18 +593,9 @@ class NodeEditorWindow(QMainWindow):
                 node_data["cmd_def"] = item.cmd_def
             elif isinstance(item, _BaseParamNode):
                 node_data["creation_data"] = getattr(item, "creation_data", {"param_type": item.TYPE_ID, "display": item.TYPE_ID})
-                if hasattr(item, "_dir_editor"):
-                    node_data["current_value"] = {"dir": item._dir_editor.text(), "file": item._file_combo.currentText()}
-                elif hasattr(item, "_editor"):
-                    node_data["current_value"] = item._editor.text()
-                elif hasattr(item, "_checkbox"):
-                    node_data["current_value"] = item._checkbox.isChecked()
-                elif hasattr(item, "_spinbox"):
-                    node_data["current_value"] = item._spinbox.value()
-                elif hasattr(item, "_combobox"):
-                    node_data["current_value"] = item._combobox.currentText()
+                node_data["current_value"] = item.get_value_state()
             data["nodes"].append(node_data)
-            
+
         for conn in self.connections:
             if conn.source.meta_node in node_id_map and conn.dest.meta_node in node_id_map:
                 data["connections"].append({
@@ -536,7 +604,7 @@ class NodeEditorWindow(QMainWindow):
                     "dst_node": node_id_map[conn.dest.meta_node],
                     "dst_socket": conn.dest.sock_def.name
                 })
-                
+
         try:
             json_str = json.dumps(data)
             QApplication.clipboard().setText("NODERC_CLIPBOARD:" + json_str)
@@ -547,75 +615,64 @@ class NodeEditorWindow(QMainWindow):
         clipboard_text = QApplication.clipboard().text()
         if not clipboard_text.startswith("NODERC_CLIPBOARD:"):
             return
-            
+
         try:
             json_str = clipboard_text.replace("NODERC_CLIPBOARD:", "")
             data = json.loads(json_str)
         except Exception:
             return
-            
-        self.scene.clearSelection()
-        cursor_in_scene = self.view.mapToScene(self.view.mapFromGlobal(QCursor.pos()))
-        paste_x = cursor_in_scene.x()
-        paste_y = cursor_in_scene.y()
-        
-        id_to_node = {}
-        new_nodes = []
-        
-        for n_data in data.get("nodes", []):
-            pos = QPointF(paste_x + n_data["rel_x"], paste_y + n_data["rel_y"])
-            new_node = None
-            if "cmd_def" in n_data:
-                new_node = self.add_command_node(pos, n_data["cmd_def"])
-            elif "creation_data" in n_data:
-                new_node = self.add_param_node(pos, n_data["creation_data"])
-                if new_node and "current_value" in n_data:
-                    val = n_data["current_value"]
-                    if hasattr(new_node, "_dir_editor"):
-                        if isinstance(val, dict):
-                            new_node._dir_editor.setText(val.get("dir", ""))
-                            new_node._file_combo.setCurrentText(val.get("file", ""))
-                        else:
-                            new_node._dir_editor.setText(str(val))
-                    elif hasattr(new_node, "_editor"):
-                        new_node._editor.setText(str(val))
-                    elif hasattr(new_node, "_checkbox"):
-                        new_node._checkbox.setChecked(bool(val))
-                    elif hasattr(new_node, "_spinbox"):
-                        new_node._spinbox.setValue(int(val))
-                    elif hasattr(new_node, "_combobox"):
-                        idx = new_node._combobox.findText(str(val))
-                        if idx >= 0:
-                            new_node._combobox.setCurrentIndex(idx)
-                            
-            if new_node:
-                id_to_node[n_data["id"]] = new_node
-                new_node.setSelected(True)
-                new_nodes.append(new_node)
-                
-        for c_data in data.get("connections", []):
-            src_node = id_to_node.get(c_data["src_node"])
-            dst_node = id_to_node.get(c_data["dst_node"])
-            if src_node and dst_node:
-                src_sock = src_node.get_socket(c_data["src_socket"])
-                dst_sock = dst_node.get_socket(c_data["dst_socket"])
-                if src_sock and dst_sock:
-                    self.scene._enforce_connection_rules(src_sock, dst_sock)
-                    conn = Connection(src_sock, dst_sock)
-                    self.scene.addItem(conn)
-                    self.connections.append(conn)
-                    
-        for n in new_nodes:
-            n._refresh_connections()
+
+        self._block_undo_push = True
+        try:
+            self.scene.clearSelection()
+            cursor_in_scene = self.view.mapToScene(self.view.mapFromGlobal(QCursor.pos()))
+            paste_x = cursor_in_scene.x()
+            paste_y = cursor_in_scene.y()
+
+            id_to_node = {}
+            new_nodes = []
+
+            for n_data in data.get("nodes", []):
+                pos = QPointF(paste_x + n_data["rel_x"], paste_y + n_data["rel_y"])
+                new_node = None
+                if "cmd_def" in n_data:
+                    new_node = self.add_command_node(pos, n_data["cmd_def"])
+                elif "creation_data" in n_data:
+                    new_node = self.add_param_node(pos, n_data["creation_data"])
+                    if new_node and "current_value" in n_data:
+                        new_node.set_value_state(n_data["current_value"])
+
+                if new_node:
+                    id_to_node[n_data["id"]] = new_node
+                    new_node.setSelected(True)
+                    new_nodes.append(new_node)
+
+            for c_data in data.get("connections", []):
+                src_node = id_to_node.get(c_data["src_node"])
+                dst_node = id_to_node.get(c_data["dst_node"])
+                if src_node and dst_node:
+                    src_sock = src_node.get_socket(c_data["src_socket"])
+                    dst_sock = dst_node.get_socket(c_data["dst_socket"])
+                    if src_sock and dst_sock:
+                        self.scene._enforce_connection_rules(src_sock, dst_sock)
+                        conn = Connection(src_sock, dst_sock)
+                        self.scene.addItem(conn)
+                        self.connections.append(conn)
+
+            for n in new_nodes:
+                n._refresh_connections()
+        finally:
+            self._block_undo_push = False
+        self.push_undo_state()
 
     def save_project(self):
         path, _ = QFileDialog.getSaveFileName(self, "Save Project", "", "NodeRC Project (*.json)")
         if not path:
             return
-            
+
         data = {"nodes": [], "connections": []}
         node_id_map = {}
-        
+
         for idx, item in enumerate(self.scene.items()):
             if isinstance(item, MetaNode):
                 node_id_map[item] = idx
@@ -630,19 +687,10 @@ class NodeEditorWindow(QMainWindow):
                     node_data["cmd_def"] = item.cmd_def
                 elif isinstance(item, _BaseParamNode):
                     node_data["creation_data"] = getattr(item, "creation_data", {"param_type": item.TYPE_ID, "display": item.TYPE_ID})
-                    if hasattr(item, "_dir_editor"):
-                        node_data["current_value"] = {"dir": item._dir_editor.text(), "file": item._file_combo.currentText()}
-                    elif hasattr(item, "_editor"):
-                        node_data["current_value"] = item._editor.text()
-                    elif hasattr(item, "_checkbox"):
-                        node_data["current_value"] = item._checkbox.isChecked()
-                    elif hasattr(item, "_spinbox"):
-                        node_data["current_value"] = item._spinbox.value()
-                    elif hasattr(item, "_combobox"):
-                        node_data["current_value"] = item._combobox.currentText()
+                    node_data["current_value"] = item.get_value_state()
 
                 data["nodes"].append(node_data)
-                
+
         for conn in self.connections:
             src_node_id = node_id_map.get(conn.source.meta_node)
             dst_node_id = node_id_map.get(conn.dest.meta_node)
@@ -653,7 +701,7 @@ class NodeEditorWindow(QMainWindow):
                     "dst_node": dst_node_id,
                     "dst_socket": conn.dest.sock_def.name
                 })
-                
+
         try:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
@@ -664,16 +712,16 @@ class NodeEditorWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(self, "Load Project", "", "NodeRC Project (*.json)")
         if not path:
             return
-            
+
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                
+
             items_to_delete = [i for i in self.scene.items() if isinstance(i, MetaNode) or isinstance(i, Connection)]
             for item in items_to_delete:
                 self.scene.removeItem(item)
             self.connections.clear()
-            
+
             node_id_map = {}
             for n_data in data.get("nodes", []):
                 node_type = n_data["type"]
@@ -701,27 +749,14 @@ class NodeEditorWindow(QMainWindow):
                     node.creation_data = c_data
                     node.setPos(pos)
                     self.scene.addItem(node)
-                    
+
                     val = n_data.get("current_value")
                     if val is not None:
-                        if hasattr(node, "_dir_editor"):
-                            if isinstance(val, dict):
-                                node._dir_editor.setText(val.get("dir", ""))
-                                node._file_combo.setCurrentText(val.get("file", ""))
-                            else:
-                                node._dir_editor.setText(str(val))
-                        elif hasattr(node, "_editor"):
-                            node._editor.setText(str(val))
-                        elif hasattr(node, "_checkbox"):
-                            node._checkbox.setChecked(bool(val))
-                        elif hasattr(node, "_spinbox"):
-                            node._spinbox.setValue(int(val))
-                        elif hasattr(node, "_combobox"):
-                            node._combobox.setCurrentText(str(val))
-                            
+                        node.set_value_state(val)
+
                 if node:
                     node_id_map[n_data["id"]] = node
-                    
+
             for c_data in data.get("connections", []):
                 src_node = node_id_map.get(c_data["src_node"])
                 dst_node = node_id_map.get(c_data["dst_node"])
@@ -733,10 +768,135 @@ class NodeEditorWindow(QMainWindow):
                         conn = Connection(src_sock, dst_sock)
                         self.scene.addItem(conn)
                         self.connections.append(conn)
-                        
+            for n in node_id_map.values():
+                n._refresh_connections()
+
         except Exception as exc:
             QMessageBox.critical(self, "Load Error", log_and_explain("Failed to load project", exc))
             self._add_start_node()
+
+    def get_project_state(self) -> dict:
+        data = {"nodes": [], "connections": []}
+        node_id_map = {}
+
+        for idx, item in enumerate(self.scene.items()):
+            if isinstance(item, MetaNode):
+                node_id_map[item] = idx
+                pos = item.scenePos()
+                node_data = {
+                    "id": idx,
+                    "type": type(item).__name__,
+                    "x": pos.x(),
+                    "y": pos.y(),
+                    "selected": item.isSelected()
+                }
+                if isinstance(item, CommandNode):
+                    node_data["cmd_def"] = item.cmd_def
+                elif isinstance(item, _BaseParamNode):
+                    node_data["creation_data"] = getattr(item, "creation_data", {"param_type": item.TYPE_ID, "display": item.TYPE_ID})
+                    node_data["current_value"] = item.get_value_state()
+
+                data["nodes"].append(node_data)
+
+        for conn in self.connections:
+            src_node_id = node_id_map.get(conn.source.meta_node)
+            dst_node_id = node_id_map.get(conn.dest.meta_node)
+            if src_node_id is not None and dst_node_id is not None:
+                data["connections"].append({
+                    "src_node": src_node_id,
+                    "src_socket": conn.source.sock_def.name,
+                    "dst_node": dst_node_id,
+                    "dst_socket": conn.dest.sock_def.name,
+                    "selected": conn.isSelected()
+                })
+        return data
+
+    def set_project_state(self, data: dict):
+        self._block_undo_push = True
+        try:
+            items_to_delete = [i for i in self.scene.items() if isinstance(i, MetaNode) or isinstance(i, Connection)]
+            for item in items_to_delete:
+                self.scene.removeItem(item)
+            self.connections.clear()
+
+            node_id_map = {}
+            for n_data in data.get("nodes", []):
+                node_type = n_data["type"]
+                pos       = QPointF(n_data["x"], n_data["y"])
+                node      = None
+                if node_type == "StartNode":
+                    node = StartNode()
+                    node.setPos(pos)
+                    self.scene.addItem(node)
+                elif node_type == "CommandNode":
+                    node = CommandNode(n_data["cmd_def"])
+                    node.setPos(pos)
+                    self.scene.addItem(node)
+                elif node_type.endswith("ParamNode"):
+                    c_data = n_data.get("creation_data", {"param_type": "string", "display": "value"})
+                    param_type = c_data.get("param_type", "string")
+                    param_name = c_data.get("display") or c_data.get("name", "value")
+                    values     = c_data.get("values", [])
+                    node_class = PARAM_NODE_TYPES.get(param_type, StringParamNode)
+                    node = (
+                        node_class(param_name, values)
+                        if node_class is EnumParamNode and values
+                        else node_class(param_name)
+                    )
+                    node.creation_data = c_data
+                    node.setPos(pos)
+                    self.scene.addItem(node)
+
+                    val = n_data.get("current_value")
+                    if val is not None:
+                        node.set_value_state(val)
+
+                if node:
+                    node_id_map[n_data["id"]] = node
+                    if n_data.get("selected", False):
+                        node.setSelected(True)
+
+            for c_data in data.get("connections", []):
+                src_node = node_id_map.get(c_data["src_node"])
+                dst_node = node_id_map.get(c_data["dst_node"])
+                if src_node and dst_node:
+                    src_sock = src_node.get_socket(c_data["src_socket"])
+                    dst_sock = dst_node.get_socket(c_data["dst_socket"])
+                    if src_sock and dst_sock:
+                        self.scene._enforce_connection_rules(src_sock, dst_sock)
+                        conn = Connection(src_sock, dst_sock)
+                        self.scene.addItem(conn)
+                        self.connections.append(conn)
+                        if c_data.get("selected", False):
+                            conn.setSelected(True)
+
+            for n in node_id_map.values():
+                n._refresh_connections()
+            self.scene.recalculate_scene_rect()
+        finally:
+            self._block_undo_push = False
+
+    def push_undo_state(self):
+        if getattr(self, "_block_undo_push", False):
+            return
+        state = self.get_project_state()
+        if self.history_index >= 0 and self.history[self.history_index] == state:
+            return
+        self.history = self.history[:self.history_index + 1]
+        self.history.append(state)
+        if len(self.history) > UNDO_HISTORY_LIMIT:
+            self.history.pop(0)
+        self.history_index = len(self.history) - 1
+
+    def undo(self):
+        if self.history_index > 0:
+            self.history_index -= 1
+            self.set_project_state(self.history[self.history_index])
+
+    def redo(self):
+        if self.history_index < len(self.history) - 1:
+            self.history_index += 1
+            self.set_project_state(self.history[self.history_index])
 
     def _build_exec_chain(self) -> Optional[List[MetaNode]]:
         all_nodes = {i for i in self.scene.items() if isinstance(i, MetaNode)}
@@ -787,16 +947,18 @@ class NodeEditorWindow(QMainWindow):
             if not isinstance(node, CommandNode):
                 continue
             tokens.append(node.cmd_def["command"])
-            for p in node.cmd_def.get("required", []):
-                name  = p if isinstance(p, str) else p["name"]
-                value = self._resolve_connected_param_value(node, name)
-                if value:
-                    tokens.append(value)
-            for p in node.cmd_def.get("optional", []):
-                name  = p if isinstance(p, str) else p["name"]
-                value = self._resolve_connected_param_value(node, name)
-                if value:
-                    tokens.append(value)
+            expanded = getattr(node, "expanded_vectors", set())
+            for key in ("required", "optional"):
+                for p in group_xyz_params(node.cmd_def.get(key, []), expanded):
+                    name  = p if isinstance(p, str) else p["name"]
+                    ptype = "string" if isinstance(p, str) else p.get("type", "string")
+                    value = self._resolve_connected_param_value(node, name)
+                    if not value:
+                        continue
+                    if ptype in VECTOR_PARAM_TYPES:
+                        tokens.extend(value.split())
+                    else:
+                        tokens.append(value)
 
         try:
             subprocess.Popen(tokens)
