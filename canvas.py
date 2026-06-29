@@ -29,7 +29,8 @@ from configuration import (
     GRID_SIZE_SMALL, GRID_SIZE_LARGE,
     SCROLLBAR_BTN_MARGIN, SCROLLBAR_BTN_OFFSET,
     VECTOR_PARAM_TYPES, UNDO_HISTORY_LIMIT,
-    VIGNETTE_COLOR, VIGNETTE_RADIUS,
+    VIGNETTE_COLOR, VIGNETTE_RADIUS, TEXT_COLOR,
+    DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR,
 )
 from diagnostics import log_and_explain
 from nodeRC import load_legacy_command_definitions
@@ -436,6 +437,8 @@ class NodeEditorWindow(QMainWindow):
         self._load_command_database()
 
         self.connections: List[Connection] = []
+        self._linked_group: List[MetaNode] = []  # selected same-type nodes under linked editing
+        self._active_field_key: Optional[str] = None
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -457,20 +460,24 @@ class NodeEditorWindow(QMainWindow):
 
         self._apply_windows_theme()
 
+    @staticmethod
+    def _to_colorref(hex_color: str) -> int:
+        c = QColor(hex_color)
+        return c.red() | (c.green() << 8) | (c.blue() << 16)
+
     def _apply_windows_theme(self):
-        import sys
-        if sys.platform == "win32":
-            try:
-                from ctypes import windll, byref, sizeof, c_int
-                hwnd = int(self.winId())
-                # Use immersive dark mode (attribute 20)
-                windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, byref(c_int(1)), sizeof(c_int))
-                # Set title bar background color (attribute 35) to #04152B (COLORREF 0x002B1504)
-                windll.dwmapi.DwmSetWindowAttribute(hwnd, 35, byref(c_int(0x002B1504)), sizeof(c_int))
-                # Set title bar text color (attribute 36) to #FFFFFF (COLORREF 0x00FFFFFF)
-                windll.dwmapi.DwmSetWindowAttribute(hwnd, 36, byref(c_int(0x00FFFFFF)), sizeof(c_int))
-            except Exception:
-                pass
+        if sys.platform != "win32":
+            return
+        try:
+            from ctypes import windll, byref, sizeof, c_int
+            hwnd = int(self.winId())
+            apply = lambda attr, val: windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, attr, byref(c_int(val)), sizeof(c_int))
+            apply(DWMWA_USE_IMMERSIVE_DARK_MODE, 1)
+            apply(DWMWA_CAPTION_COLOR, self._to_colorref(WINDOW_BACKGROUND_COLOR))
+            apply(DWMWA_TEXT_COLOR, self._to_colorref(TEXT_COLOR))
+        except Exception as exc:
+            log_and_explain("Windows title bar theming unavailable", exc)
 
     def _load_command_database(self):
         if os.path.exists(COMMAND_DB_JSON):
@@ -852,6 +859,7 @@ class NodeEditorWindow(QMainWindow):
     def set_project_state(self, data: dict):
         self._block_undo_push = True
         try:
+            self._linked_group = []  # nodes about to be replaced — drop stale links
             items_to_delete = [i for i in self.scene.items() if isinstance(i, MetaNode) or isinstance(i, Connection)]
             for item in items_to_delete:
                 self.scene.removeItem(item)

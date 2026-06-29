@@ -18,12 +18,13 @@ from PyQt5.QtWidgets import (
     QGraphicsProxyWidget, QPushButton, QLineEdit, QCheckBox,
     QSpinBox, QComboBox, QGraphicsPathItem, QWidget,
     QHBoxLayout, QToolButton, QFileDialog, QStyle, QLabel,
+    QApplication, QAbstractSpinBox,
 )
 from PyQt5.QtGui import (
     QPen, QBrush, QColor, QPainterPath, QFont, QPainter, QPolygonF,
     QDoubleValidator, QPalette, QTextCursor,
 )
-from PyQt5.QtCore import QRectF, Qt, QPointF
+from PyQt5.QtCore import QRectF, Qt, QPointF, QEvent, QTimer
 
 from configuration import (
     NODE_HEADER_HEIGHT, NODE_ROW_HEIGHT,
@@ -39,6 +40,8 @@ from configuration import (
     GRID_SIZE_SMALL,
     INTEGER_PARAM_NAMES, NODE_POPUP_Z,
     VECTOR_COLLAPSE_GLYPH, VECTOR_EXPAND_GLYPH, VECTOR_AXIS_LABEL_COLOR,
+    NODE_SELECTION_OVERLAY_RGBA, NODE_SELECTION_OVERLAY_Z,
+    NODE_SOCKET_Z, NODE_WIDGET_Z_BASE,
 )
 
 if TYPE_CHECKING:
@@ -158,15 +161,15 @@ class NodeDef:
     sockets: List[SocketDef] = field(default_factory=list)
     width: int = NODE_DEFAULT_WIDTH
     has_footer: bool = False
-    extra_rows: int = 0     # additional body rows reserved for buttons/widgets
+    extra_rows: float = 0.0     # additional body rows reserved for buttons/widgets
 
     @property
     def body_height(self) -> int:
         param_rows = [s.row for s in self.sockets if not s.is_exec]
         rows = max(param_rows, default=-1) + 1
-        return NODE_HEADER_HEIGHT + (rows + self.extra_rows) * NODE_ROW_HEIGHT + (
+        return int(NODE_HEADER_HEIGHT + (rows + self.extra_rows) * NODE_ROW_HEIGHT + (
             NODE_FOOTER_HEIGHT if self.has_footer else NODE_BOTTOM_PAD
-        )
+        ))
 
     def socket_y(self, row: int, is_exec: bool = False) -> float:
         """Index-based Y centre. Exec sockets are vertically centered on the header."""
@@ -199,6 +202,7 @@ class SocketItem(QGraphicsObject):
 
         self.setFlag(QGraphicsItem.ItemIsSelectable, False)
         self.setAcceptHoverEvents(True)
+        self.setZValue(NODE_SOCKET_Z)
         self.setPos(node_def.socket_x(sock_def.kind), node_def.socket_y(row, sock_def.is_exec))
 
     def boundingRect(self) -> QRectF:
@@ -299,6 +303,30 @@ class Connection(QGraphicsPathItem):
 
 # ── MetaNode ──────────────────────────────────────────────────────────────────
 
+class _SelectionOverlay(QGraphicsItem):
+    """Translucent-white wash above all node contents while selected.
+
+    Stacked above the embedded widgets and title so the selected look is uniform;
+    transparent to mouse buttons so the widgets beneath stay interactive.
+    """
+
+    def __init__(self, node: "MetaNode"):
+        super().__init__(node)
+        self._node = node
+        self.setZValue(NODE_SELECTION_OVERLAY_Z)
+        self.setAcceptedMouseButtons(Qt.NoButton)
+        self.setVisible(False)
+
+    def boundingRect(self) -> QRectF:
+        d = self._node.node_def
+        return QRectF(0, 0, d.width, d.body_height)
+
+    def paint(self, painter: QPainter, option, widget=None):
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(QColor(*NODE_SELECTION_OVERLAY_RGBA)))
+        painter.drawRect(self.boundingRect())
+
+
 class MetaNode(QGraphicsObject):
     """
     Declarative base. _generate() creates ALL children from NodeDef once.
@@ -320,6 +348,8 @@ class MetaNode(QGraphicsObject):
     def _generate(self):
         d = self.node_def
         self._vector_buttons.clear()
+
+        self._selection_overlay = _SelectionOverlay(self)
 
         self.title_item = self._build_title_item(d.title)
         self._center_title()
@@ -381,35 +411,21 @@ class MetaNode(QGraphicsObject):
             d.body_height + NODE_SHADOW_OFFSET_Y + NODE_SHADOW_BLUR,
         )
 
-    @staticmethod
-    def _blend_white(hex_color: str, t: float = 0.18) -> QColor:
-        """Linearly blend hex_color toward white by factor t (0=original, 1=white)."""
-        c = QColor(hex_color)
-        r = int(c.red()   + (255 - c.red())   * t)
-        g = int(c.green() + (255 - c.green()) * t)
-        b = int(c.blue()  + (255 - c.blue())  * t)
-        return QColor(r, g, b)
-
     def paint(self, painter: QPainter, option, widget=None):
         if option.state & QStyle.State_Selected:
             option.state &= ~QStyle.State_Selected
         painter.setRenderHint(QPainter.Antialiasing)
-        d    = self.node_def
-        body = QRectF(0, 0, d.width, d.body_height)
-        selected = self.isSelected()
-
-        body_color   = self._blend_white(d.body_color,   0.15) if selected else QColor(d.body_color)
-        header_color = self._blend_white(d.header_color, 0.20) if selected else QColor(d.header_color)
+        d = self.node_def
 
         painter.setPen(
-            QPen(QColor(NODE_SELECTED_COLOR), 2.0) if selected
+            QPen(QColor(NODE_SELECTED_COLOR), 2.0) if self.isSelected()
             else QPen(QColor(NODE_BORDER_COLOR), 1.0)
         )
-        painter.setBrush(QBrush(body_color))
-        painter.drawRect(body)
+        painter.setBrush(QBrush(QColor(d.body_color)))
+        painter.drawRect(QRectF(0, 0, d.width, d.body_height))
 
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QBrush(header_color))
+        painter.setBrush(QBrush(QColor(d.header_color)))
         painter.drawRect(QRectF(0, 0, d.width, NODE_HEADER_HEIGHT))
 
         painter.setPen(QPen(QColor(NODE_BORDER_COLOR), 1))
@@ -426,6 +442,8 @@ class MetaNode(QGraphicsObject):
             return QPointF(x, y)
         if change == QGraphicsItem.ItemPositionHasChanged and self.scene():
             self._refresh_connections()
+        if change == QGraphicsItem.ItemSelectedHasChanged:
+            self._selection_overlay.setVisible(bool(value))
         return super().itemChange(change, value)
 
     def mouseReleaseEvent(self, event):
@@ -589,7 +607,7 @@ def _start_node_def() -> NodeDef:
         )],
         width=185,
         has_footer=False,
-        extra_rows=3,       # Launch + Open + Save buttons
+        extra_rows=3.5,       # Launch + Open + Save buttons
     )
 
 
@@ -769,6 +787,16 @@ class _EditableTitleItem(QGraphicsTextItem):
         super().__init__(node)
         self._node = node
 
+    def paint(self, painter: QPainter, option, widget=None):
+        # While editing, paint an opaque header-colored field so the selection wash
+        # never shows through the glyph gaps — the input reads clean, the node stays washed.
+        if self.textInteractionFlags() != Qt.NoTextInteraction:
+            painter.fillRect(
+                self.boundingRect().adjusted(-2, -1, 2, 1),
+                QColor(self._node.node_def.header_color),
+            )
+        super().paint(painter, option, widget)
+
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key_Return, Qt.Key_Enter):
             self._node._commit_rename()
@@ -807,18 +835,26 @@ class _BaseParamNode(MetaNode):
         item.setDefaultTextColor(QColor(TEXT_COLOR))
         item.setFont(QFont("Consolas", 9))
         item.setPlainText(self._rename_backup)
+        # Lift the field above the selection wash so the edited text reads clearly.
+        item.setZValue(NODE_SOCKET_Z)
         item.setTextInteractionFlags(Qt.TextEditorInteraction)
         item.setFocus(Qt.MouseFocusReason)
         cursor = item.textCursor()
         cursor.select(QTextCursor.Document)
         item.setTextCursor(cursor)
 
-    def _commit_rename(self):
+    def _end_rename(self) -> bool:
         item = self.title_item
         if item.textInteractionFlags() == Qt.NoTextInteraction:
-            return
+            return False
         item.setTextInteractionFlags(Qt.NoTextInteraction)
-        name = item.toPlainText().strip() or self._rename_backup
+        item.setZValue(0)  # drop back under the wash — selected title reads as covered again
+        return True
+
+    def _commit_rename(self):
+        if not self._end_rename():
+            return
+        name = self.title_item.toPlainText().strip() or self._rename_backup
         self._apply_title(name)
         creation_data = dict(getattr(self, "creation_data", {}) or {})
         creation_data.setdefault("param_type", self.TYPE_ID)
@@ -830,10 +866,8 @@ class _BaseParamNode(MetaNode):
             win.push_undo_state()
 
     def _cancel_rename(self):
-        item = self.title_item
-        if item.textInteractionFlags() == Qt.NoTextInteraction:
+        if not self._end_rename():
             return
-        item.setTextInteractionFlags(Qt.NoTextInteraction)
         self._apply_title(self._rename_backup)
 
     def _apply_title(self, text: str):
@@ -858,7 +892,7 @@ class _BaseParamNode(MetaNode):
             w = child.widget()
             if w is None:
                 continue
-            self._tint_widget(w, selected)
+            self._tint_widget(w, False)
 
     def _tint_widget(self, w: QWidget, selected: bool):
         from PyQt5.QtWidgets import QAbstractButton, QAbstractSpinBox
@@ -887,8 +921,8 @@ class _BaseParamNode(MetaNode):
             w.setStyleSheet(_SPINBOX_QSS.replace(CANVAS_BACKGROUND_COLOR, bg_field)
                                         .replace(BUTTON_BG_COLOR, bg_button))
         elif isinstance(w, QCheckBox):
-            w.setStyleSheet(_CHECKBOX_QSS.replace(CANVAS_BACKGROUND_COLOR, bg_field)
-                                         .replace(BUTTON_BG_COLOR, bg_button))
+            pass  # checkbox row stays untinted on selection
+
         elif isinstance(w, (QToolButton, QAbstractButton)):
             w.setStyleSheet(_TOOLBTN_QSS.replace(BUTTON_BG_COLOR, bg_button))
         else:
@@ -1004,6 +1038,156 @@ class _BaseParamNode(MetaNode):
 
     def _notify_connections_changed(self, *args):
         self._propagate_connections_changed(set())
+        self._broadcast_to_linked_peers()
+
+    # ── Linked editing across selected same-type nodes ─────────────────────────
+    # Focusing one field links every selected node of the same TYPE_ID: the
+    # selection effect drops and edits mirror to the whole group in real time.
+    # The active group lives on the window (single owner); _broadcasting guards
+    # the mirror against re-entrant feedback.
+
+    _broadcasting: bool = False
+
+    def _editor_window(self) -> Optional["NodeEditorWindow"]:
+        scene = self.scene()
+        return getattr(scene, "nodeEditorWindow", None) if scene else None
+
+    def _watch_field_focus(self, widget: QWidget):
+        from PyQt5.QtWidgets import QAbstractButton
+        for w in (widget, *widget.findChildren(QWidget)):
+            if isinstance(w, (QLineEdit, QComboBox, QAbstractSpinBox, QAbstractButton)):
+                w.installEventFilter(self)
+
+    def _owns_widget(self, widget: Optional[QWidget]) -> bool:
+        if widget is None:
+            return False
+        for child in self.childItems():
+            if isinstance(child, QGraphicsProxyWidget):
+                w = child.widget()
+                if w is not None and (w is widget or w.isAncestorOf(widget)):
+                    return True
+        return False
+
+    def eventFilter(self, obj, event):
+        if event.type() in (QEvent.FocusIn, QEvent.MouseButtonPress):
+            win = self._editor_window()
+            if win:
+                # Use an integer counter for strict ordering instead of monotonic time
+                counter = getattr(win, '_focus_event_counter', 0) + 1
+                win._focus_event_counter = counter
+                for child in self.childItems():
+                    if isinstance(child, QGraphicsProxyWidget):
+                        w = child.widget()
+                        if w is not None and (w is obj or w.isAncestorOf(obj)):
+                            active_key = getattr(child, '_field_key', None)
+                            if active_key is not None:
+                                win._active_field_key = active_key
+                            break
+            self._enter_linked_editing()
+        elif event.type() == QEvent.FocusOut:
+            win = self._editor_window()
+            # Capture the current counter state
+            ct = getattr(win, '_focus_event_counter', 0) if win else 0
+            QTimer.singleShot(0, lambda: self._exit_linked_editing_if_focus_left(ct))
+        return super().eventFilter(obj, event)
+
+    def _enter_linked_editing(self):
+        win   = self._editor_window()
+        scene = self.scene()
+        if not win or not scene:
+            return
+        same_type = [
+            n for n in scene.selectedItems()
+            if isinstance(n, _BaseParamNode) and n.TYPE_ID == self.TYPE_ID
+        ]
+        group = same_type if self in same_type else [self, *same_type]
+        if set(win._linked_group) == set(group):
+            # Focus moved within the active group — update Z-values for all peers
+            for node in win._linked_group:
+                if node.scene():
+                    node._adjust_proxy_z_values()
+            return
+        
+        saved_key = getattr(win, '_active_field_key', None)
+        self._dissolve_linked_group()
+        win._active_field_key = saved_key
+        
+        win._linked_group = group
+        for node in group:
+            node._set_selection_effect(False)
+
+    def _exit_linked_editing_if_focus_left(self, queued_ct: int):
+        win = self._editor_window()
+        if not win or not win._linked_group:
+            return
+        if self not in win._linked_group:
+            return
+        # If a FocusIn happened AFTER this FocusOut was queued, skip — focus is still alive
+        current_ct = getattr(win, '_focus_event_counter', 0)
+        if current_ct > queued_ct:
+            return
+        focused = QApplication.focusWidget()
+        if any(n.scene() and n._owns_widget(focused) for n in win._linked_group):
+            return
+        self._dissolve_linked_group()
+
+    def _dissolve_linked_group(self):
+        win = self._editor_window()
+        if not win or not win._linked_group:
+            return
+        win._active_field_key = None
+        group, win._linked_group = win._linked_group, []
+        for node in group:
+            if node.scene():
+                node._set_selection_effect(node.isSelected())
+        win.push_undo_state()
+
+    def _set_selection_effect(self, on: bool):
+        self._selection_overlay.setVisible(self.isSelected())
+        self._apply_widget_selection_tint(on)
+        self._adjust_proxy_z_values()
+
+    def _adjust_proxy_z_values(self):
+        win = self._editor_window()
+        is_edited = win is not None and self in win._linked_group
+        active_key = getattr(win, '_active_field_key', None) if is_edited else None
+
+        for child in self.childItems():
+            if isinstance(child, QGraphicsProxyWidget):
+                child_key = getattr(child, '_field_key', None)
+                if is_edited and active_key is not None and child_key == active_key:
+                    # Lift ONLY the active proxy widget above the selection wash (Z = 2000)
+                    if not hasattr(child, '_original_z_value'):
+                        child._original_z_value = child.zValue()
+                    child.setZValue(2500)
+                    child.update()
+                else:
+                    # Restore original Z-value
+                    if hasattr(child, '_original_z_value'):
+                        child.setZValue(child._original_z_value)
+                        child.update()
+        
+        self.update()
+        if hasattr(self, '_selection_overlay'):
+            self._selection_overlay.update()
+
+    def _broadcast_to_linked_peers(self):
+        if _BaseParamNode._broadcasting:
+            return
+        win = self._editor_window()
+        if not win or self not in win._linked_group:
+            return
+        active_key = getattr(win, '_active_field_key', None)
+        _BaseParamNode._broadcasting = True
+        try:
+            for peer in win._linked_group:
+                if peer is not self and peer.scene():
+                    peer._apply_linked_sync(self, active_key)
+        finally:
+            _BaseParamNode._broadcasting = False
+
+    def _apply_linked_sync(self, source_node: '_BaseParamNode', active_key: Optional[str]):
+        self.set_value_state(source_node.get_value_state())
 
     def _propagate_connections_changed(self, visited):
         if self in visited:
@@ -1060,7 +1244,9 @@ class _BaseParamNode(MetaNode):
             NODE_HORIZONTAL_PAD,
             NODE_HEADER_HEIGHT + row * NODE_ROW_HEIGHT + NODE_WIDGET_V_OFFSET,
         )
-        proxy.setZValue(1000 - row)
+        proxy.setZValue(NODE_WIDGET_Z_BASE - row)
+        proxy._field_key = f"row_{row}"
+        self._watch_field_focus(widget)
 
     def _attach_input_widget(self, widget: QWidget):
         proxy = QGraphicsProxyWidget(self)
@@ -1071,6 +1257,9 @@ class _BaseParamNode(MetaNode):
             NODE_HORIZONTAL_PAD,
             NODE_HEADER_HEIGHT + rows * NODE_ROW_HEIGHT + NODE_WIDGET_V_OFFSET,
         )
+        proxy.setZValue(NODE_WIDGET_Z_BASE - rows)
+        proxy._field_key = f"row_{rows}"
+        self._watch_field_focus(widget)
 
     def get_value_state(self) -> Any:
         return None
@@ -1382,6 +1571,16 @@ class PathParamNode(_BaseParamNode):
         else:
             self._dir_editor.setText(str(val))
 
+    def _apply_linked_sync(self, source_node: '_BaseParamNode', active_key: Optional[str]):
+        if active_key == "row_0":
+            self._dir_editor.setText(source_node._dir_editor.text())
+        elif active_key == "row_1":
+            self._file_combo.setCurrentText(source_node._file_combo.currentText())
+        elif active_key == "row_2":
+            self._ext_filter.setText(source_node._ext_filter.text())
+        else:
+            self.set_value_state(source_node.get_value_state())
+
     def get_value(self, socket_name: str = None) -> str:
         d = self._dir_editor.text().strip().replace("\\", "/")
         if socket_name == "dirpath_out":
@@ -1425,26 +1624,46 @@ class _VectorParamNode(_BaseParamNode):
     def __init__(self, param_name: str):
         super().__init__(_param_node_def(param_name, self.TYPE_ID))
 
-        row_widget = QWidget()
-        row_widget.setStyleSheet("background:transparent;")
-        layout = QHBoxLayout(row_widget)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
+        param_rows = [s.row for s in self.node_def.sockets if not s.is_exec]
+        rows = max(param_rows, default=-1) + 1
+
+        total_w = self._widget_width()
+        n_axes = len(self.AXES)
+        spacing = 4
+        col_w = int((total_w - spacing * (n_axes - 1)) / n_axes)
 
         self._editors: List[QLineEdit] = []
-        for axis in self.AXES:
+        for i, axis in enumerate(self.AXES):
+            cell_widget = QWidget()
+            cell_widget.setStyleSheet("background:transparent;")
+            layout = QHBoxLayout(cell_widget)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(2)
+
             editor = self._make_field("0.0", axis.lower(), fixed_width=False)
             editor.setValidator(QDoubleValidator())
             editor.textChanged.connect(self._notify_connections_changed)
             editor.editingFinished.connect(self._on_float_editing_finished)
+
             label = QLabel(f"{axis}:")
             label.setStyleSheet(_VECTOR_AXIS_LABEL_QSS)
+
             layout.addWidget(label)
             layout.addWidget(editor)
             self._editors.append(editor)
 
-        row_widget.setFixedWidth(self._widget_width())
-        self._attach_input_widget(row_widget)
+            cell_widget.setFixedWidth(col_w)
+
+            proxy = QGraphicsProxyWidget(self)
+            proxy.setWidget(cell_widget)
+            proxy.setPos(
+                NODE_HORIZONTAL_PAD + i * (col_w + spacing),
+                NODE_HEADER_HEIGHT + rows * NODE_ROW_HEIGHT + NODE_WIDGET_V_OFFSET,
+            )
+            proxy.setZValue(NODE_WIDGET_Z_BASE - rows)
+            proxy._field_key = f"vector_{axis}"
+
+            self._watch_field_focus(cell_widget)
 
     def get_value_state(self) -> Any:
         return [editor.text() for editor in self._editors]
@@ -1453,6 +1672,18 @@ class _VectorParamNode(_BaseParamNode):
         if isinstance(val, list):
             for editor, component in zip(self._editors, val):
                 editor.setText(str(component))
+
+    def _apply_linked_sync(self, source_node: '_BaseParamNode', active_key: Optional[str]):
+        if active_key and active_key.startswith("vector_"):
+            axis = active_key.split("_")[1]
+            try:
+                idx = self.AXES.index(axis)
+                if hasattr(source_node, '_editors') and idx < len(source_node._editors):
+                    self._editors[idx].setText(source_node._editors[idx].text())
+                return
+            except ValueError:
+                pass
+        self.set_value_state(source_node.get_value_state())
 
     def get_value(self, socket_name: str = None) -> str:
         return " ".join(editor.text().strip() or "0.0" for editor in self._editors)

@@ -55,6 +55,23 @@ UNDO_HISTORY_LIMIT = 100  # retained editor snapshots for undo/redo
 # ── Node z-order ───────────────────────────────────────────────────────────────
 NODE_POPUP_Z = 100  # node z-value while its combobox popup is open — above siblings
 
+# Child stacking inside a node, ascending. The selection wash sits above every
+# embedded widget yet below the sockets so connectors stay vivid when selected.
+NODE_WIDGET_Z_BASE       = 1000  # embedded editor proxies; higher rows stack first
+NODE_SELECTION_OVERLAY_Z = 2000
+NODE_SOCKET_Z            = 3000
+
+# ── Selection highlight ────────────────────────────────────────────────────────
+# One translucent-white wash painted above the whole node (body, embedded widgets,
+# title) when selected — the single source for the entire selected appearance.
+NODE_SELECTION_OVERLAY_RGBA = (255, 255, 255, 40)
+
+# ── Windows title bar (DwmSetWindowAttribute identifiers) ──────────────────────
+# Caption/text colors mirror WINDOW_BACKGROUND_COLOR / TEXT_COLOR — single source.
+DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+DWMWA_CAPTION_COLOR           = 35
+DWMWA_TEXT_COLOR              = 36
+
 # ── PathParamNode browse button ────────────────────────────────────────────────
 BROWSE_BTN_WIDTH = 22  # pixel width shared by the browse "…" button and drop-down area
 
