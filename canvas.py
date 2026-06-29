@@ -287,7 +287,14 @@ class NodeEditorWindow(QMainWindow):
             item.setSelected(not all_selected)
 
     def keyPressEvent(self, event):
-        key  = event.key()
+        key = event.key()
+        # Fallback to the physical keyboard letter (QWERTY layout equivalent) using
+        # native virtual key codes on Windows. VK_A (0x41) through VK_Z (0x5A) align
+        # perfectly with Qt.Key_A through Qt.Key_Z, providing layout-independence.
+        nvk = event.nativeVirtualKey()
+        if 0x41 <= nvk <= 0x5A:
+            key = nvk
+
         mods = event.modifiers()
         if key == KEY_SPAWN_MENU:
             cursor_in_scene = self.view.mapToScene(

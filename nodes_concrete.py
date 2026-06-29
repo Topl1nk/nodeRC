@@ -98,7 +98,7 @@ def _start_node_def() -> NodeDef:
         )],
         width=185,
         has_footer=False,
-        extra_rows=5.0,
+        extra_rows=5.5,
     )
 
 

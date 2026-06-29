@@ -694,6 +694,9 @@ class MetaNode(QGraphicsObject):
         if change == QGraphicsItem.ItemPositionHasChanged and self.scene():
             self._refresh_connections()
         if change == QGraphicsItem.ItemSelectedHasChanged:
+            if not value:
+                if hasattr(self, '_dissolve_linked_group'):
+                    self._dissolve_linked_group()
             if hasattr(self, "_refresh_selection_visuals"):
                 self._refresh_selection_visuals()
             else:

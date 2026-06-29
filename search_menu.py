@@ -11,6 +11,20 @@ from configuration import (
 )
 
 
+SEARCH_MENU_MANUAL_HTML = """<b>[ Keys & Shortcuts Manual ]</b><br/>
+• <b>Space</b> : Open Search Menu<br/>
+• <b>Delete</b> : Delete Selected Items<br/>
+• <b>Ctrl+A</b> : Select All / Toggle Selection<br/>
+• <b>Ctrl+G</b> : Group Selected in Frame<br/>
+• <b>Ctrl+D</b> : Duplicate Selection<br/>
+• <b>Ctrl+C</b> / <b>Ctrl+V</b> : Copy / Paste<br/>
+• <b>Ctrl+Z</b> / <b>Ctrl+Y</b> : Undo / Redo<br/>
+• <b>F</b> : Fit View / Frame Selection<br/>
+• <b>G</b> : Toggle Grid Overlay<br/>
+• <b>F2</b> : Rename Node / Frame Title<br/>
+• <b>F11</b> : Toggle Fullscreen Mode"""
+
+
 class SearchMenuDialog(QDialog):
     def __init__(self, command_categories, parent=None):
         super().__init__(parent, Qt.Popup | Qt.FramelessWindowHint)
@@ -57,7 +71,7 @@ class SearchMenuDialog(QDialog):
         desc_layout = QVBoxLayout(self.desc_frame)
         desc_layout.setContentsMargins(0, 0, 0, 0)
         
-        self.desc_label = QLabel("Hover or select a node to see its description.")
+        self.desc_label = QLabel(SEARCH_MENU_MANUAL_HTML)
         self.desc_label.setObjectName("descriptionLabel")
         self.desc_label.setWordWrap(True)
         self.desc_label.setMinimumHeight(60)
@@ -316,13 +330,13 @@ class SearchMenuDialog(QDialog):
         if selected:
             self._update_preview_and_desc(selected[0])
         else:
-            self.desc_label.setText("")
+            self.desc_label.setText(SEARCH_MENU_MANUAL_HTML)
             self.preview_scene.clear()
 
     def _update_preview_and_desc(self, item):
         item_payload = item.data(0, Qt.UserRole)
         if not item_payload:
-            self.desc_label.setText("")
+            self.desc_label.setText(SEARCH_MENU_MANUAL_HTML)
             self.preview_scene.clear()
             return
             
