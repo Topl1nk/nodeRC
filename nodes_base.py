@@ -442,7 +442,6 @@ class GroupFrameItem(QGraphicsRectItem):
         menu.setStyleSheet(CONTEXT_MENU_STYLESHEET)
 
         rename_act = menu.addAction("Rename Group")
-        fit_act    = menu.addAction("Fit to Grouped Nodes")
         menu.addSeparator()
         remove_frame_act = menu.addAction("Remove Frame")
         clear_frame_act  = menu.addAction("Clear Frame")
@@ -451,8 +450,6 @@ class GroupFrameItem(QGraphicsRectItem):
         chosen = menu.exec_(event.screenPos())
         if chosen == rename_act:
             self._begin_rename()
-        elif chosen == fit_act:
-            self.fit_to_nodes()
         elif chosen == remove_frame_act:
             self._remove_frame()
         elif chosen == clear_frame_act:
@@ -460,16 +457,6 @@ class GroupFrameItem(QGraphicsRectItem):
         elif chosen == delete_group_act:
             self._delete_group()
         event.accept()
-
-    def _overlapping_nodes(self) -> list:
-        """Nodes the frame's body touches — used to refit around them."""
-        scene = self.scene()
-        if not scene:
-            return []
-        frame_rect = self.mapToScene(self.rect()).boundingRect()
-        return [item for item in scene.items()
-                if isinstance(item, MetaNode) and item is not self
-                and frame_rect.intersects(item.sceneBoundingRect())]
 
     def _contained_nodes(self) -> list:
         """Nodes whose center lies inside the frame — the group's real members."""
@@ -480,26 +467,6 @@ class GroupFrameItem(QGraphicsRectItem):
         return [item for item in scene.items()
                 if isinstance(item, MetaNode) and item is not self
                 and frame_rect.contains(item.sceneBoundingRect().center())]
-
-    def fit_to_nodes(self):
-        nodes = self._overlapping_nodes()
-        if not nodes:
-            return
-        # Fitting only repositions the frame; clear any drag capture so the
-        # programmatic setPos below cannot carry nodes along with it.
-        self._dragged_inner_nodes = []
-        rect = nodes[0].sceneBoundingRect()
-        for n in nodes[1:]:
-            rect = rect.united(n.sceneBoundingRect())
-        rect = rect.adjusted(-GROUP_FRAME_PAD_LEFT, -GROUP_FRAME_PAD_TOP,
-                             GROUP_FRAME_PAD_RIGHT, GROUP_FRAME_PAD_BOTTOM)
-        self.setPos(self._snap(rect.x()), self._snap(rect.y()))
-        self.setRect(0, 0, self._snap(rect.width()), self._snap(rect.height()))
-        self._center_title()
-        self.update()
-        win = self._editor_window()
-        if win:
-            win.push_undo_state()
 
     def _remove_frame(self):
         scene = self.scene()
