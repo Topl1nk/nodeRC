@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Optional, List, Dict, Any
+from typing import Optional
 
 from PyQt5.QtWidgets import QGraphicsScene, QGraphicsLineItem, QDialog, QApplication
 from PyQt5.QtCore import Qt, QPointF, QRectF

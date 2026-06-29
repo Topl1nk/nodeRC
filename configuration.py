@@ -8,7 +8,6 @@ from __future__ import annotations
 RC_HELP_HTML    = r"C:\ProgramData\Epic\RealityScan\LanguagePack\help\en-US\appbasics\allcommands.htm"
 RC_EXECUTABLE   = r"C:\Program Files\Capturing Reality\RealityCapture\RealityCapture.exe"
 COMMAND_DB_JSON = "rc_commands.json"
-COMMAND_DB_TXT  = "rc_commands.txt"
 
 # ── Node layout ────────────────────────────────────────────────────────────────
 NODE_HEADER_HEIGHT        = 30
@@ -78,6 +77,14 @@ BROWSE_BTN_WIDTH = 22  # pixel width shared by the browse "…" button and drop-
 # ── Scrollbar toggle button ────────────────────────────────────────────────────
 SCROLLBAR_BTN_MARGIN = 5   # gap from view edge
 SCROLLBAR_BTN_OFFSET = 18  # clearance past the Qt scrollbar track width
+SCROLLBAR_BTN_SIZE   = 22  # square edge of the toggle button
+
+# ── View zoom ──────────────────────────────────────────────────────────────────
+VIEW_ZOOM_STEP = 1.20  # multiplicative zoom per wheel notch
+
+# ── Auto-spawned parameter placement ───────────────────────────────────────────
+AUTOSPAWN_X_GAP    = 280  # distance left of the command node for a created param node
+AUTOSPAWN_Y_OFFSET = -40  # vertical nudge aligning the param node to its target socket
 
 # ── Socket/node color schema per type ─────────────────────────────────────────
 # Blueprint scheme: dark blue backgrounds, distinct pastel outlines/sockets
@@ -207,3 +214,81 @@ QFrame#descFrame {{
     background: transparent;
 }}
 """
+
+# ── Widgets QSS templates ──────────────────────────────────────────────────────
+FIELD_QSS = (
+    f"QLineEdit{{"
+    f"border:1px solid {NODE_BORDER_COLOR};"
+    f"background:{CANVAS_BACKGROUND_COLOR};"
+    f"color:{TEXT_COLOR};"
+    f"border-radius:0px;"
+    f"padding:2px 4px;"
+    f"font:9pt Consolas;"
+    f"}}"
+    f"QLineEdit:read-only{{"
+    f"color:{TEXT_MUTED_COLOR};"
+    f"}}"
+)
+
+COMBOBOX_QSS = (
+    f"QComboBox{{border:1px solid {NODE_BORDER_COLOR};background:{CANVAS_BACKGROUND_COLOR};"
+    f"color:{TEXT_COLOR};border-radius:0px;padding:2px 4px;font:9pt Consolas;combobox-popup:0;}}"
+    f"QComboBox::drop-down{{border-left:1px solid {NODE_BORDER_COLOR};"
+    f"width:{BROWSE_BTN_WIDTH}px;background:{BUTTON_BG_COLOR};}}"
+    f"QComboBox::drop-down:hover{{background:{BUTTON_HOVER_COLOR};border-color:{NODE_SELECTED_COLOR};}}"
+    f"QComboBox QAbstractItemView{{border:1px solid {NODE_BORDER_COLOR};"
+    f"background:{CANVAS_BACKGROUND_COLOR};color:{TEXT_COLOR};"
+    f"selection-background-color:{NODE_SELECTED_COLOR};selection-color:{CANVAS_BACKGROUND_COLOR};outline:0px;}}"
+    f"QComboBox QAbstractItemView::item:hover{{background-color:{NODE_SELECTED_COLOR};color:{CANVAS_BACKGROUND_COLOR};}}"
+    f"QComboBox QAbstractItemView::item:selected{{background-color:{NODE_SELECTED_COLOR};color:{CANVAS_BACKGROUND_COLOR};}}"
+    f"QScrollBar:vertical{{border:none;background:{CANVAS_BACKGROUND_COLOR};width:8px;margin:0px;}}"
+    f"QScrollBar::handle:vertical{{background:{NODE_BORDER_COLOR};min-height:20px;border-radius:0px;}}"
+    f"QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{{height:0px;}}"
+    f"QComboBox[connected=\"true\"]{{color:{TEXT_MUTED_COLOR};}}"
+    f"QComboBox[connected=\"true\"] QLineEdit{{color:{TEXT_MUTED_COLOR};}}"
+    f"QComboBox[connected=\"true\"]::drop-down{{width:0px;border:none;}}"
+)
+
+SPINBOX_QSS = (
+    f"QSpinBox{{border:1px solid {NODE_BORDER_COLOR};background:{CANVAS_BACKGROUND_COLOR};"
+    f"color:{TEXT_COLOR};border-radius:0px;padding:2px;font:9pt Consolas;}}"
+    f"QSpinBox::up-button{{background:{BUTTON_BG_COLOR};"
+    f"border-left:1px solid {NODE_BORDER_COLOR};"
+    f"border-bottom:1px solid {NODE_BORDER_COLOR};width:16px;}}"
+    f"QSpinBox::down-button{{background:{BUTTON_BG_COLOR};"
+    f"border-left:1px solid {NODE_BORDER_COLOR};width:16px;}}"
+    f"QSpinBox::up-button:hover,QSpinBox::down-button:hover{{"
+    f"background:{BUTTON_HOVER_COLOR};border-color:{NODE_SELECTED_COLOR};}}"
+    f"QSpinBox:hover{{border-color:{NODE_SELECTED_COLOR};}}"
+)
+
+CHECKBOX_QSS = (
+    f"QCheckBox{{font:9pt Consolas;color:{TEXT_COLOR};background:{BUTTON_BG_COLOR};spacing:6px;}}"
+    f"QCheckBox::indicator{{width:13px;height:13px;"
+    f"border:1px solid {NODE_BORDER_COLOR};background:{CANVAS_BACKGROUND_COLOR};}}"
+    f"QCheckBox::indicator:checked{{background:{NODE_SELECTED_COLOR};border-color:{NODE_SELECTED_COLOR};}}"
+    f"QCheckBox::indicator:hover{{border-color:{NODE_SELECTED_COLOR};}}"
+)
+
+TOOLBTN_QSS = (
+    f"QToolButton{{background:{BUTTON_BG_COLOR};color:{BUTTON_TEXT_COLOR};"
+    f"border:1px solid {NODE_BORDER_COLOR};border-radius:0px;font:9pt Consolas;}}"
+    f"QToolButton:hover{{background:{BUTTON_HOVER_COLOR};border-color:{NODE_SELECTED_COLOR};}}"
+    f"QToolButton:pressed{{background:{BUTTON_PRESSED_COLOR};}}"
+)
+
+PUSHBTN_QSS = (
+    f"QPushButton{{background:{BUTTON_BG_COLOR};color:{BUTTON_TEXT_COLOR};"
+    f"border:1px solid {NODE_BORDER_COLOR};border-radius:0px;"
+    f"padding:5px 8px;font:bold 9pt Consolas;}}"
+    f"QPushButton:hover{{background:{BUTTON_HOVER_COLOR};border-color:{NODE_SELECTED_COLOR};}}"
+    f"QPushButton:pressed{{background:{BUTTON_PRESSED_COLOR};}}"
+)
+
+VECTOR_TOGGLE_QSS = (
+    f"QToolButton{{color:{TEXT_MUTED_COLOR};font:bold 8pt;padding:0px 2px;border:none;background:transparent;}}"
+    f"QToolButton:hover{{color:{NODE_SELECTED_COLOR};}}"
+)
+
+VECTOR_AXIS_LABEL_QSS = f"color:{VECTOR_AXIS_LABEL_COLOR};font:9pt Consolas;"
+

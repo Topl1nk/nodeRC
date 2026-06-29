@@ -4,25 +4,30 @@ import xml.etree.ElementTree as ET
 from typing import List, Dict, Optional, Any
 
 from PyQt5.QtWidgets import (
-    QPushButton, QLineEdit, QCheckBox, QSpinBox, QComboBox,
-    QWidget, QHBoxLayout, QToolButton, QLabel,
-    QGraphicsProxyWidget, QFileDialog, QStyle, QApplication,
+    QPushButton, QWidget, QHBoxLayout, QGraphicsProxyWidget, QFileDialog, QMenu,
 )
-from PyQt5.QtGui import QDoubleValidator, QPalette, QColor, QFont
-from PyQt5.QtCore import Qt, QPointF
+from PyQt5.QtGui import QDoubleValidator
+from PyQt5.QtCore import QPointF
 
 from configuration import (
-    NODE_HEADER_HEIGHT, NODE_ROW_HEIGHT, NODE_DEFAULT_WIDTH,
-    NODE_HORIZONTAL_PAD, NODE_WIDGET_V_OFFSET, NODE_WIDGET_HEIGHT,
-    INTEGER_PARAM_NAMES, BROWSE_BTN_WIDTH,
+    NODE_HEADER_HEIGHT, NODE_ROW_HEIGHT,
+    NODE_HORIZONTAL_PAD, NODE_WIDGET_V_OFFSET,
+    INTEGER_PARAM_NAMES, PUSHBTN_QSS, CONTEXT_MENU_STYLESHEET,
+    AUTOSPAWN_X_GAP, AUTOSPAWN_Y_OFFSET,
 )
 from nodes_base import (
     SocketDef, NodeDef, MetaNode, _BaseParamNode, _VectorParamNode,
     resolve_color_schema, param_spec_name, _html_title, _param_node_def,
-    _PUSHBTN_QSS, _FIELD_QSS, _COMBOBOX_QSS, _SPINBOX_QSS, _CHECKBOX_QSS,
-    _TOOLBTN_QSS, _VECTOR_TOGGLE_QSS, _VECTOR_AXIS_LABEL_QSS,
     Connection, SocketItem,
 )
+
+# Visual prefix per parameter type — keeps auto-created nodes consistent with the
+# titles the typed ParamNode classes assign themselves.
+PARAM_TYPE_PREFIX: Dict[str, str] = {
+    "string": "[S]", "bool": "[B]", "integer": "[I]", "float": "[#]",
+    "float2": "[#2]", "float3": "[#3]", "enum": "[E]", "enum_int": "[E]",
+    "filepath": "[F/D]", "dirpath": "[F/D]", "keyvalue": "[K]",
+}
 
 
 def _vector_axis_run(params: list, start: int, base: str) -> list:
@@ -154,7 +159,7 @@ class StartNode(MetaNode):
 
         def _add_btn(label: str, tooltip: str, callback, row_offset: int):
             btn = QPushButton(label)
-            btn.setStyleSheet(_PUSHBTN_QSS)
+            btn.setStyleSheet(PUSHBTN_QSS)
             btn.setFixedWidth(btn_w)
             btn.setToolTip(tooltip)
             btn.clicked.connect(callback)
@@ -192,6 +197,9 @@ class CommandNode(MetaNode):
         self.expanded_vectors = expanded_vectors or set()
         super().__init__(_command_node_def(cmd_def, self.expanded_vectors))
 
+    def serialize_payload(self) -> dict:
+        return {"cmd_def": self.cmd_def}
+
     def toggle_vector_expansion(self, base_name: str):
         self.expanded_vectors.symmetric_difference_update({base_name})
 
@@ -200,9 +208,11 @@ class CommandNode(MetaNode):
         if not win or not scene:
             return
 
+        was_selected = self.isSelected()
         new_node = CommandNode(self.cmd_def, self.expanded_vectors.copy())
         new_node.setPos(self.pos())
         scene.addItem(new_node)
+        new_node.setSelected(was_selected)
 
         for old in list(win.connections):
             if old.source.meta_node is self:
@@ -230,6 +240,85 @@ class CommandNode(MetaNode):
         win.connections.append(conn)
         conn.source.meta_node._refresh_connections()
         conn.dest.meta_node._refresh_connections()
+
+    def contextMenuEvent(self, event):
+        scene = self.scene()
+        win = getattr(scene, 'nodeEditorWindow', None) if scene else None
+        if not win:
+            super().contextMenuEvent(event)
+            return
+
+        menu = QMenu()
+        menu.setStyleSheet(CONTEXT_MENU_STYLESHEET)
+
+        # Check if there are any required parameters that are NOT connected (grouped correctly)
+        required_grouped = group_xyz_params(self.cmd_def.get("required", []), self.expanded_vectors)
+        unconnected_reqs = []
+        for p in required_grouped:
+            p_name = p if isinstance(p, str) else p["name"]
+            socket = self.get_socket(p_name)
+            if socket:
+                connected = False
+                for conn in win.connections:
+                    if conn.dest is socket:
+                        connected = True
+                        break
+                if not connected:
+                    unconnected_reqs.append((p, socket))
+
+        auto_action = menu.addAction("Auto-Create Required Parameters")
+        auto_action.setEnabled(len(unconnected_reqs) > 0)
+
+        action = menu.exec_(event.screenPos())
+        if action == auto_action:
+            self.auto_create_required_parameters(unconnected_reqs)
+        event.accept()
+
+    def auto_create_required_parameters(self, unconnected_reqs):
+        scene = self.scene()
+        win = getattr(scene, 'nodeEditorWindow', None) if scene else None
+        if not win or not scene:
+            return
+
+        win._block_undo_push = True
+        try:
+            command_pos = self.scenePos()
+
+            for param, socket in unconnected_reqs:
+                param_name   = param_spec_name(param)
+                param_type   = _resolve_param_type(param_name, param)
+                param_values = [] if isinstance(param, str) else param.get("values", [])
+
+                prefix = PARAM_TYPE_PREFIX.get(param_type, "")
+                creation_data = {
+                    "param_type": param_type,
+                    "display": f"{prefix} {param_name}" if prefix else param_name,
+                    "values": param_values,
+                }
+
+                param_pos = QPointF(
+                    command_pos.x() - AUTOSPAWN_X_GAP,
+                    command_pos.y() + socket.pos().y() + AUTOSPAWN_Y_OFFSET,
+                )
+                param_node = win.add_param_node(param_pos, creation_data)
+                if not param_node:
+                    continue
+
+                out_socket = (
+                    param_node.get_socket("dirpath_out") if param_type == "dirpath"
+                    else param_node.get_socket("path_out") if param_type == "filepath"
+                    else param_node.get_socket("value_out")
+                )
+                if out_socket:
+                    self._rewire(scene, win, out_socket, socket)
+
+            self._refresh_connections()
+            for p_node in [c.source.meta_node for c in win.connections if c.dest.meta_node is self]:
+                p_node._refresh_connections()
+
+        finally:
+            win._block_undo_push = False
+            win.push_undo_state()
 
 
 class StringParamNode(_BaseParamNode):
@@ -411,10 +500,23 @@ class EnumParamNode(_BaseParamNode):
             self._remove_btn.setVisible(True)
 
     def get_value_state(self) -> Any:
-        return self._combobox.currentText()
+        return {
+            "items": [self._combobox.itemText(i) for i in range(self._combobox.count())],
+            "current": self._combobox.currentText(),
+        }
 
     def set_value_state(self, val: Any):
-        self._combobox.setCurrentText(str(val))
+        if isinstance(val, dict):
+            self._combobox.blockSignals(True)
+            self._combobox.clear()
+            self._combobox.addItems(val.get("items", []))
+            self._combobox.setCurrentText(val.get("current", ""))
+            self._combobox.blockSignals(False)
+        else:
+            self._combobox.setCurrentText(str(val))  # legacy saves stored only the selection
+
+    def _apply_linked_sync(self, source_node: _BaseParamNode, active_key: Optional[str]):
+        self._combobox.setCurrentText(source_node._combobox.currentText())
 
     def get_value(self, socket_name: str = None) -> str:
         src_socket = self.get_socket("src")
@@ -526,10 +628,16 @@ class PathParamNode(_BaseParamNode):
         self._notify_connections_changed()
 
     def get_value_state(self) -> Any:
-        return {"dir": self._dir_editor.text(), "file": self._file_combo.currentText()}
+        return {
+            "dir": self._dir_editor.text(),
+            "file": self._file_combo.currentText(),
+            "ext": self._ext_filter.text(),
+        }
 
     def set_value_state(self, val: Any):
         if isinstance(val, dict):
+            # Ext first so the directory listing filters correctly when dir is applied.
+            self._ext_filter.setText(val.get("ext", ""))
             self._dir_editor.setText(val.get("dir", ""))
             self._file_combo.setCurrentText(val.get("file", ""))
         else:

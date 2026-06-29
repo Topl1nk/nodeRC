@@ -21,10 +21,13 @@ from __future__ import annotations
 import os
 import re
 import json
-import sys
+import logging
 from typing import Dict, List, Optional, Set
 
-from configuration import RC_HELP_HTML, COMMAND_DB_JSON, COMMAND_DB_TXT
+from configuration import RC_HELP_HTML, COMMAND_DB_JSON
+
+_logger = logging.getLogger("nodeRC")
+
 
 try:
     from bs4 import BeautifulSoup
@@ -34,23 +37,23 @@ except ImportError:
 
 # ── Text normalization ─────────────────────────────────────────────────────────
 
-def _split_camel_case(s: str) -> str:
+def split_camel_case(s: str) -> str:
     s = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1 \2', s)
     s = re.sub(r'([a-z\d])([A-Z])', r'\1 \2', s)
     return s.strip()
 
 
-def _command_display_name(command_flag: str) -> str:
+def command_display_name(command_flag: str) -> str:
     """-calculateQualityTexture → 'Calculate Quality Texture'"""
-    words = _split_camel_case(command_flag.lstrip("-")).split()
+    words = split_camel_case(command_flag.lstrip("-")).split()
     if words:
         words[0] = words[0].capitalize()
     return " ".join(words)
 
 
-def _command_action_word(command_flag: str) -> str:
+def command_action_word(command_flag: str) -> str:
     """First camelCase word, lowercased: 'calculate'"""
-    parts = _split_camel_case(command_flag.lstrip("-")).split()
+    parts = split_camel_case(command_flag.lstrip("-")).split()
     return parts[0].lower() if parts else ""
 
 
@@ -208,13 +211,13 @@ def _extract_categories(soup: BeautifulSoup) -> CommandCategoryTree:
                 categories.setdefault(section, {}).setdefault(subsection, [])
 
                 if not any(e["command"] == current_command for e in categories[section][subsection]):
-                    display = _command_display_name(current_command)
+                    display = command_display_name(current_command)
                     words   = display.split()
                     categories[section][subsection].append({
                         "command":     current_command,
                         "display":     display,
                         "action_word": words[0] if words else "",
-                        "action":      _command_action_word(current_command),
+                        "action":      command_action_word(current_command),
                         "required":    [_build_param_record(p) for p in _split_param_tokens(required_text)],
                         "optional":    [_build_param_record(p) for p in _split_param_tokens(optional_text)],
                         "section":     current_section,
@@ -233,32 +236,18 @@ def _write_json_database(categories: CommandCategoryTree, path: str) -> int:
     return total
 
 
-def _write_txt_database(categories: CommandCategoryTree, path: str) -> int:
-    lines = []
-    for subsections in categories.values():
-        for commands in subsections.values():
-            for cmd in commands:
-                required = ",".join(p["name"] for p in cmd["required"])
-                optional = ",".join(p["name"] for p in cmd["optional"])
-                lines.append(f'{cmd["command"]}; required:{required}; optional:{optional}\n')
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.writelines(lines)
-    return len(lines)
-
-
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def rebuild_command_database_from_html(
     html_path: str      = RC_HELP_HTML,
     json_output: str    = COMMAND_DB_JSON,
-    txt_output: str     = COMMAND_DB_TXT,
 ) -> bool:
     """
-    Parse html_path and write both output files.
+    Parse html_path and write rich JSON output database.
     Returns True on success, False if html_path not found.
     """
     if not os.path.exists(html_path):
-        print(f"[rc_documentation_extractor] Not found: {html_path}")
+        _logger.warning("Documentation file not found: %s", html_path)
         return False
 
     with open(html_path, "r", encoding="utf-8", errors="replace") as fh:
@@ -266,15 +255,15 @@ def rebuild_command_database_from_html(
 
     categories = _extract_categories(soup)
     if not categories:
-        print("[rc_documentation_extractor] No commands found.")
+        _logger.warning("No commands found in documentation.")
         return False
 
     n_json = _write_json_database(categories, json_output)
-    n_txt  = _write_txt_database(categories, txt_output)
-    print(f"[rc_documentation_extractor] {n_json} commands -> {json_output}  |  {n_txt} lines -> {txt_output}")
+    _logger.info("%d commands successfully extracted to %s", n_json, json_output)
     return True
 
 
 if __name__ == "__main__":
+    import sys
     path = sys.argv[1] if len(sys.argv) > 1 else RC_HELP_HTML
     sys.exit(0 if rebuild_command_database_from_html(path) else 1)

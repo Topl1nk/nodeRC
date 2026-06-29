@@ -7,13 +7,14 @@ from PyQt5.QtCore import Qt, QPoint, QRectF
 
 from configuration import (
     CANVAS_BACKGROUND_COLOR, SCROLLBAR_TOGGLE_BG, SCROLLBAR_TOGGLE_HOVER,
-    VIGNETTE_COLOR, VIGNETTE_RADIUS, SCROLLBAR_BTN_MARGIN, SCROLLBAR_BTN_OFFSET
+    VIGNETTE_COLOR, VIGNETTE_RADIUS, SCROLLBAR_BTN_MARGIN, SCROLLBAR_BTN_OFFSET,
+    SCROLLBAR_BTN_SIZE, VIEW_ZOOM_STEP,
 )
 
 
 class GraphicsView(QGraphicsView):
-    _ZOOM_STEP_IN  = 1.20
-    _ZOOM_STEP_OUT = 1 / 1.20
+    _ZOOM_STEP_IN  = VIEW_ZOOM_STEP
+    _ZOOM_STEP_OUT = 1 / VIEW_ZOOM_STEP
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -35,7 +36,7 @@ class GraphicsView(QGraphicsView):
         self._suppress_redelivered_click = False
 
         self._scrollbar_toggle_btn = QPushButton("⊞", self)
-        self._scrollbar_toggle_btn.setFixedSize(22, 22)
+        self._scrollbar_toggle_btn.setFixedSize(SCROLLBAR_BTN_SIZE, SCROLLBAR_BTN_SIZE)
         self._scrollbar_toggle_btn.setToolTip("Toggle scrollbars")
         self._scrollbar_toggle_btn.setStyleSheet(f"""
             QPushButton {{

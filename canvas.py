@@ -10,24 +10,23 @@ import os
 from typing import List, Optional, Dict, Any
 
 from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QMessageBox, QFileDialog, QDialog, QApplication, QVBoxLayout
+    QMainWindow, QWidget, QMessageBox, QFileDialog, QApplication, QVBoxLayout
 )
 from PyQt5.QtGui import QCursor, QColor
 from PyQt5.QtCore import Qt, QPointF
 
 from configuration import (
-    RC_EXECUTABLE, COMMAND_DB_JSON, COMMAND_DB_TXT,
+    RC_EXECUTABLE, COMMAND_DB_JSON,
     WINDOW_BACKGROUND_COLOR, UNDO_HISTORY_LIMIT,
     DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR,
-    TEXT_COLOR
+    TEXT_COLOR, VECTOR_PARAM_TYPES,
 )
 from diagnostics import log_and_explain
-from nodeRC import load_legacy_command_definitions
-from search_menu import SearchMenuDialog
+from nodeRC import builtin_command_defaults
 
 from view import GraphicsView
 from scene import NodeScene
-from nodes_base import Connection, SocketItem, MetaNode, _BaseParamNode
+from nodes_base import Connection, MetaNode, _BaseParamNode
 from nodes_concrete import (
     StartNode, CommandNode, PARAM_NODE_TYPES, group_xyz_params, StringParamNode, EnumParamNode
 )
@@ -99,9 +98,9 @@ class NodeEditorWindow(QMainWindow):
                 for commands in subsections.values():
                     self.command_defs.extend(commands)
         else:
-            flat = load_legacy_command_definitions(COMMAND_DB_TXT)
-            self.command_defs = flat
-            self.command_categories = {"Commands": {"__root__": flat}}
+            defaults = builtin_command_defaults()
+            self.command_defs = defaults
+            self.command_categories = {"Commands": {"__root__": defaults}}
 
     def _add_start_node(self):
         if not any(isinstance(i, StartNode) for i in self.scene.items()):
@@ -116,24 +115,120 @@ class NodeEditorWindow(QMainWindow):
         self.push_undo_state()
         return node
 
-    def add_param_node(self, pos: QPointF, node_metadata: dict):
-        param_type = node_metadata.get("param_type", "string")
-        values     = node_metadata.get("values", [])
-        node_class = PARAM_NODE_TYPES.get(param_type, StringParamNode)
-
-        kwargs = {}
-        param_display = node_metadata.get("display") or node_metadata.get("name")
-        if param_display:
-            kwargs["param_name"] = param_display
-        if node_class is EnumParamNode and values:
-            kwargs["values"] = values
-
-        node = node_class(**kwargs)
-        node.creation_data = node_metadata
+    def add_param_node(self, pos: QPointF, creation_data: dict):
+        node = self._build_param_node(creation_data)
         node.setPos(pos)
         self.scene.addItem(node)
         self.push_undo_state()
         return node
+
+    # ── Project (de)serialization ─────────────────────────────────────────────
+    # One source of truth shared by save/load, clipboard and undo. Each path only
+    # supplies the parts that genuinely differ: absolute vs relative position,
+    # whether selection is part of the snapshot, and the destination of the bytes.
+
+    def _build_param_node(self, creation_data: dict) -> _BaseParamNode:
+        node_class = PARAM_NODE_TYPES.get(creation_data.get("param_type", "string"), StringParamNode)
+        name   = creation_data.get("display") or creation_data.get("name")
+        values = creation_data.get("values", [])
+        if node_class is EnumParamNode and values:
+            node = node_class(name, values) if name else node_class(values=values)
+        else:
+            node = node_class(name) if name else node_class()
+        node.creation_data = creation_data
+        return node
+
+    def _serialize_node(self, node: MetaNode) -> dict:
+        return {"type": type(node).__name__, **node.serialize_payload()}
+
+    def _deserialize_node(self, record: dict, pos: QPointF) -> Optional[MetaNode]:
+        node_type = record["type"]
+        if node_type == "StartNode":
+            node = StartNode()
+        elif node_type == "CommandNode":
+            node = CommandNode(record["cmd_def"])
+        elif node_type.endswith("ParamNode"):
+            node = self._build_param_node(
+                record.get("creation_data", {"param_type": "string", "display": "value"}))
+        else:
+            return None
+        node.setPos(pos)
+        self.scene.addItem(node)
+        if isinstance(node, _BaseParamNode) and record.get("current_value") is not None:
+            node.set_value_state(record["current_value"])
+        return node
+
+    def _serialize_connections(self, node_id_map: Dict[MetaNode, int],
+                               include_selection: bool = False) -> List[dict]:
+        records = []
+        for conn in self.connections:
+            src_id = node_id_map.get(conn.source.meta_node)
+            dst_id = node_id_map.get(conn.dest.meta_node)
+            if src_id is None or dst_id is None:
+                continue
+            record = {
+                "src_node": src_id, "src_socket": conn.source.sock_def.name,
+                "dst_node": dst_id, "dst_socket": conn.dest.sock_def.name,
+            }
+            if include_selection:
+                record["selected"] = conn.isSelected()
+            records.append(record)
+        return records
+
+    def _rebuild_connections(self, records: List[dict], id_to_node: Dict[int, MetaNode],
+                             restore_selection: bool = False):
+        for record in records:
+            src_node = id_to_node.get(record["src_node"])
+            dst_node = id_to_node.get(record["dst_node"])
+            if not (src_node and dst_node):
+                continue
+            src_sock = src_node.get_socket(record["src_socket"])
+            dst_sock = dst_node.get_socket(record["dst_socket"])
+            if not (src_sock and dst_sock):
+                continue
+            self.scene._enforce_connection_rules(src_sock, dst_sock)
+            conn = Connection(src_sock, dst_sock)
+            self.scene.addItem(conn)
+            self.connections.append(conn)
+            if restore_selection and record.get("selected", False):
+                conn.setSelected(True)
+
+    def _capture(self, include_selection: bool) -> dict:
+        node_id_map: Dict[MetaNode, int] = {}
+        node_records = []
+        for idx, item in enumerate(self.scene.items()):
+            if not isinstance(item, MetaNode):
+                continue
+            node_id_map[item] = idx
+            pos = item.scenePos()
+            record = {"id": idx, "x": pos.x(), "y": pos.y(), **self._serialize_node(item)}
+            if include_selection:
+                record["selected"] = item.isSelected()
+            node_records.append(record)
+        return {
+            "nodes": node_records,
+            "connections": self._serialize_connections(node_id_map, include_selection),
+        }
+
+    def _restore(self, payload: dict, restore_selection: bool):
+        self._linked_group = []
+        for item in [i for i in self.scene.items() if isinstance(i, (MetaNode, Connection))]:
+            self.scene.removeItem(item)
+        self.connections.clear()
+
+        id_to_node: Dict[int, MetaNode] = {}
+        for record in payload.get("nodes", []):
+            node = self._deserialize_node(record, QPointF(record["x"], record["y"]))
+            if node is None:
+                continue
+            id_to_node[record["id"]] = node
+            if restore_selection and record.get("selected", False):
+                node.setSelected(True)
+
+        self._rebuild_connections(payload.get("connections", []), id_to_node, restore_selection)
+        for node in id_to_node.values():
+            node._refresh_connections()
+        self.scene.recalculate_scene_rect()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Space:
@@ -234,102 +329,57 @@ class NodeEditorWindow(QMainWindow):
         self.push_undo_state()
 
     def copy_nodes(self):
-        selected_nodes = [item for item in self.scene.selectedItems() if isinstance(item, MetaNode)]
+        selected_nodes = [i for i in self.scene.selectedItems()
+                          if isinstance(i, MetaNode) and not isinstance(i, StartNode)]
         if not selected_nodes:
             return
 
-        clipboard_payload = {"nodes": [], "connections": []}
-        node_id_map = {}
+        center_x = sum(n.scenePos().x() for n in selected_nodes) / len(selected_nodes)
+        center_y = sum(n.scenePos().y() for n in selected_nodes) / len(selected_nodes)
 
-        xs = [n.scenePos().x() for n in selected_nodes]
-        ys = [n.scenePos().y() for n in selected_nodes]
-        center_x = sum(xs) / len(xs)
-        center_y = sum(ys) / len(ys)
-
-        for idx, item in enumerate(selected_nodes):
-            node_id_map[item] = idx
-            pos = item.scenePos()
-            node_data = {
-                "id": idx,
-                "type": type(item).__name__,
-                "rel_x": pos.x() - center_x,
-                "rel_y": pos.y() - center_y
-            }
-            if isinstance(item, CommandNode):
-                node_data["cmd_def"] = item.cmd_def
-            elif isinstance(item, _BaseParamNode):
-                node_data["creation_data"] = getattr(item, "creation_data", {"param_type": item.TYPE_ID, "display": item.TYPE_ID})
-                node_data["current_value"] = item.get_value_state()
-            clipboard_payload["nodes"].append(node_data)
-
-        for conn in self.connections:
-            if conn.source.meta_node in node_id_map and conn.dest.meta_node in node_id_map:
-                clipboard_payload["connections"].append({
-                    "src_node": node_id_map[conn.source.meta_node],
-                    "src_socket": conn.source.sock_def.name,
-                    "dst_node": node_id_map[conn.dest.meta_node],
-                    "dst_socket": conn.dest.sock_def.name
-                })
-
+        node_id_map: Dict[MetaNode, int] = {}
+        node_records = []
+        for idx, node in enumerate(selected_nodes):
+            node_id_map[node] = idx
+            pos = node.scenePos()
+            node_records.append({
+                "id": idx, "rel_x": pos.x() - center_x, "rel_y": pos.y() - center_y,
+                **self._serialize_node(node),
+            })
+        clipboard_payload = {
+            "nodes": node_records,
+            "connections": self._serialize_connections(node_id_map),
+        }
         try:
-            json_str = json.dumps(clipboard_payload)
-            QApplication.clipboard().setText("NODERC_CLIPBOARD:" + json_str)
+            QApplication.clipboard().setText("NODERC_CLIPBOARD:" + json.dumps(clipboard_payload))
         except Exception as exc:
-            from diagnostics import log_and_explain
             log_and_explain("Failed to copy nodes to clipboard", exc)
 
     def paste_nodes(self):
         clipboard_text = QApplication.clipboard().text()
         if not clipboard_text.startswith("NODERC_CLIPBOARD:"):
             return
-
         try:
-            json_str = clipboard_text.replace("NODERC_CLIPBOARD:", "")
-            clipboard_payload = json.loads(json_str)
+            clipboard_payload = json.loads(clipboard_text.replace("NODERC_CLIPBOARD:", "", 1))
         except Exception as exc:
-            from diagnostics import log_and_explain
             log_and_explain("Failed to parse nodes from clipboard", exc)
             return
 
         self._block_undo_push = True
         try:
             self.scene.clearSelection()
-            cursor_in_scene = self.view.mapToScene(self.view.mapFromGlobal(QCursor.pos()))
-            paste_x = cursor_in_scene.x()
-            paste_y = cursor_in_scene.y()
-
-            id_to_node = {}
-            new_nodes = []
-
-            for n_data in clipboard_payload.get("nodes", []):
-                pos = QPointF(paste_x + n_data["rel_x"], paste_y + n_data["rel_y"])
-                new_node = None
-                if "cmd_def" in n_data:
-                    new_node = self.add_command_node(pos, n_data["cmd_def"])
-                elif "creation_data" in n_data:
-                    new_node = self.add_param_node(pos, n_data["creation_data"])
-                    if new_node and "current_value" in n_data:
-                        new_node.set_value_state(n_data["current_value"])
-
-                if new_node:
-                    id_to_node[n_data["id"]] = new_node
-                    new_node.setSelected(True)
-                    new_nodes.append(new_node)
-
-            for c_data in clipboard_payload.get("connections", []):
-                src_node = id_to_node.get(c_data["src_node"])
-                dst_node = id_to_node.get(c_data["dst_node"])
-                if src_node and dst_node:
-                    src_sock = src_node.get_socket(c_data["src_socket"])
-                    dst_sock = dst_node.get_socket(c_data["dst_socket"])
-                    if src_sock and dst_sock:
-                        self.scene._enforce_connection_rules(src_sock, dst_sock)
-                        conn = Connection(src_sock, dst_sock)
-                        self.scene.addItem(conn)
-                        self.connections.append(conn)
-
-            for n in new_nodes:
-                n._refresh_connections()
+            cursor = self.view.mapToScene(self.view.mapFromGlobal(QCursor.pos()))
+            id_to_node: Dict[int, MetaNode] = {}
+            for record in clipboard_payload.get("nodes", []):
+                pos = QPointF(cursor.x() + record["rel_x"], cursor.y() + record["rel_y"])
+                node = self._deserialize_node(record, pos)
+                if node is None:
+                    continue
+                id_to_node[record["id"]] = node
+                node.setSelected(True)
+            self._rebuild_connections(clipboard_payload.get("connections", []), id_to_node)
+            for node in id_to_node.values():
+                node._refresh_connections()
         finally:
             self._block_undo_push = False
         self.push_undo_state()
@@ -338,42 +388,9 @@ class NodeEditorWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, "Save Project", "", "NodeRC Project (*.json)")
         if not path:
             return
-
-        project_payload = {"nodes": [], "connections": []}
-        node_id_map = {}
-
-        for idx, item in enumerate(self.scene.items()):
-            if isinstance(item, MetaNode):
-                node_id_map[item] = idx
-                pos = item.scenePos()
-                node_data = {
-                    "id": idx,
-                    "type": type(item).__name__,
-                    "x": pos.x(),
-                    "y": pos.y()
-                }
-                if isinstance(item, CommandNode):
-                    node_data["cmd_def"] = item.cmd_def
-                elif isinstance(item, _BaseParamNode):
-                    node_data["creation_data"] = getattr(item, "creation_data", {"param_type": item.TYPE_ID, "display": item.TYPE_ID})
-                    node_data["current_value"] = item.get_value_state()
-
-                project_payload["nodes"].append(node_data)
-
-        for conn in self.connections:
-            src_node_id = node_id_map.get(conn.source.meta_node)
-            dst_node_id = node_id_map.get(conn.dest.meta_node)
-            if src_node_id is not None and dst_node_id is not None:
-                project_payload["connections"].append({
-                    "src_node": src_node_id,
-                    "src_socket": conn.source.sock_def.name,
-                    "dst_node": dst_node_id,
-                    "dst_socket": conn.dest.sock_def.name
-                })
-
         try:
             with open(path, "w", encoding="utf-8") as f:
-                json.dump(project_payload, f, indent=2)
+                json.dump(self._capture(include_selection=False), f, indent=2)
         except Exception as exc:
             QMessageBox.critical(self, "Save Error", log_and_explain("Failed to save project", exc))
 
@@ -381,168 +398,21 @@ class NodeEditorWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(self, "Load Project", "", "NodeRC Project (*.json)")
         if not path:
             return
-
         try:
             with open(path, "r", encoding="utf-8") as f:
-                project_payload = json.load(f)
-
-            items_to_delete = [i for i in self.scene.items() if isinstance(i, MetaNode) or isinstance(i, Connection)]
-            for item in items_to_delete:
-                self.scene.removeItem(item)
-            self.connections.clear()
-
-            node_id_map = {}
-            for n_data in project_payload.get("nodes", []):
-                node_type = n_data["type"]
-                pos       = QPointF(n_data["x"], n_data["y"])
-                node      = None
-                if node_type == "StartNode":
-                    node = StartNode()
-                    node.setPos(pos)
-                    self.scene.addItem(node)
-                elif node_type == "CommandNode":
-                    node = CommandNode(n_data["cmd_def"])
-                    node.setPos(pos)
-                    self.scene.addItem(node)
-                elif node_type.endswith("ParamNode"):
-                    c_data = n_data.get("creation_data", {"param_type": "string", "display": "value"})
-                    param_type = c_data.get("param_type", "string")
-                    param_name = c_data.get("display") or c_data.get("name", "value")
-                    values     = c_data.get("values", [])
-                    node_class = PARAM_NODE_TYPES.get(param_type, StringParamNode)
-                    node = (
-                        node_class(param_name, values)
-                        if node_class is EnumParamNode and values
-                        else node_class(param_name)
-                    )
-                    node.creation_data = c_data
-                    node.setPos(pos)
-                    self.scene.addItem(node)
-
-                    val = n_data.get("current_value")
-                    if val is not None:
-                        node.set_value_state(val)
-
-                if node:
-                    node_id_map[n_data["id"]] = node
-
-            for c_data in project_payload.get("connections", []):
-                src_node = node_id_map.get(c_data["src_node"])
-                dst_node = node_id_map.get(c_data["dst_node"])
-                if src_node and dst_node:
-                    src_sock = src_node.get_socket(c_data["src_socket"])
-                    dst_sock = dst_node.get_socket(c_data["dst_socket"])
-                    if src_sock and dst_sock:
-                        self.scene._enforce_connection_rules(src_sock, dst_sock)
-                        conn = Connection(src_sock, dst_sock)
-                        self.scene.addItem(conn)
-                        self.connections.append(conn)
-            for n in node_id_map.values():
-                n._refresh_connections()
-
+                payload = json.load(f)
+            self._restore(payload, restore_selection=False)
         except Exception as exc:
             QMessageBox.critical(self, "Load Error", log_and_explain("Failed to load project", exc))
             self._add_start_node()
 
     def get_project_state(self) -> dict:
-        project_payload = {"nodes": [], "connections": []}
-        node_id_map = {}
+        return self._capture(include_selection=True)
 
-        for idx, item in enumerate(self.scene.items()):
-            if isinstance(item, MetaNode):
-                node_id_map[item] = idx
-                pos = item.scenePos()
-                node_data = {
-                    "id": idx,
-                    "type": type(item).__name__,
-                    "x": pos.x(),
-                    "y": pos.y(),
-                    "selected": item.isSelected()
-                }
-                if isinstance(item, CommandNode):
-                    node_data["cmd_def"] = item.cmd_def
-                elif isinstance(item, _BaseParamNode):
-                    node_data["creation_data"] = getattr(item, "creation_data", {"param_type": item.TYPE_ID, "display": item.TYPE_ID})
-                    node_data["current_value"] = item.get_value_state()
-
-                project_payload["nodes"].append(node_data)
-
-        for conn in self.connections:
-            src_node_id = node_id_map.get(conn.source.meta_node)
-            dst_node_id = node_id_map.get(conn.dest.meta_node)
-            if src_node_id is not None and dst_node_id is not None:
-                project_payload["connections"].append({
-                    "src_node": src_node_id,
-                    "src_socket": conn.source.sock_def.name,
-                    "dst_node": dst_node_id,
-                    "dst_socket": conn.dest.sock_def.name,
-                    "selected": conn.isSelected()
-                })
-        return project_payload
-
-    def set_project_state(self, project_payload: dict):
+    def set_project_state(self, payload: dict):
         self._block_undo_push = True
         try:
-            self._linked_group = []
-            items_to_delete = [i for i in self.scene.items() if isinstance(i, MetaNode) or isinstance(i, Connection)]
-            for item in items_to_delete:
-                self.scene.removeItem(item)
-            self.connections.clear()
-
-            node_id_map = {}
-            for n_data in project_payload.get("nodes", []):
-                node_type = n_data["type"]
-                pos       = QPointF(n_data["x"], n_data["y"])
-                node      = None
-                if node_type == "StartNode":
-                    node = StartNode()
-                    node.setPos(pos)
-                    self.scene.addItem(node)
-                elif node_type == "CommandNode":
-                    node = CommandNode(n_data["cmd_def"])
-                    node.setPos(pos)
-                    self.scene.addItem(node)
-                elif node_type.endswith("ParamNode"):
-                    c_data = n_data.get("creation_data", {"param_type": "string", "display": "value"})
-                    param_type = c_data.get("param_type", "string")
-                    param_name = c_data.get("display") or c_data.get("name", "value")
-                    values     = c_data.get("values", [])
-                    node_class = PARAM_NODE_TYPES.get(param_type, StringParamNode)
-                    node = (
-                        node_class(param_name, values)
-                        if node_class is EnumParamNode and values
-                        else node_class(param_name)
-                    )
-                    node.creation_data = c_data
-                    node.setPos(pos)
-                    self.scene.addItem(node)
-
-                    val = n_data.get("current_value")
-                    if val is not None:
-                        node.set_value_state(val)
-
-                if node:
-                    node_id_map[n_data["id"]] = node
-                    if n_data.get("selected", False):
-                        node.setSelected(True)
-
-            for c_data in project_payload.get("connections", []):
-                src_node = node_id_map.get(c_data["src_node"])
-                dst_node = node_id_map.get(c_data["dst_node"])
-                if src_node and dst_node:
-                    src_sock = src_node.get_socket(c_data["src_socket"])
-                    dst_sock = dst_node.get_socket(c_data["dst_socket"])
-                    if src_sock and dst_sock:
-                        self.scene._enforce_connection_rules(src_sock, dst_sock)
-                        conn = Connection(src_sock, dst_sock)
-                        self.scene.addItem(conn)
-                        self.connections.append(conn)
-                        if c_data.get("selected", False):
-                            conn.setSelected(True)
-
-            for n in node_id_map.values():
-                n._refresh_connections()
-            self.scene.recalculate_scene_rect()
+            self._restore(payload, restore_selection=True)
         finally:
             self._block_undo_push = False
 

@@ -1,3 +1,5 @@
+import re
+
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QTreeWidget, QTreeWidgetItem, QLabel, QGraphicsView, QGraphicsScene, QSizePolicy, QFrame, QWidget, QApplication
 )
@@ -140,11 +142,9 @@ class SearchMenuDialog(QDialog):
             
             try:
                 dummy = pclass()
-                title = dummy.node_def.title
-                import re
-                title = re.sub('<[^<]+>', '', title).strip()
+                title = re.sub('<[^<]+>', '', dummy.node_def.title).strip()
                 desc = getattr(dummy.node_def, "description", None) or f"A generic {ptype} parameter."
-            except Exception as e:
+            except Exception:
                 title = f"[P] {ptype.capitalize()}"
                 desc = f"A {ptype} parameter."
                 
@@ -216,22 +216,14 @@ class SearchMenuDialog(QDialog):
         self.preview_scene.clear()
         
         node = None
-        from nodes_concrete import (
-            CommandNode, StringParamNode, BoolParamNode, IntParamNode,
-            EnumParamNode, PathParamNode, KeyValueParamNode
-        )
-        
+        from nodes_concrete import CommandNode, PARAM_NODE_TYPES
+
         if "command" in item_payload:
             node = CommandNode(item_payload)
         elif "param_type" in item_payload:
-            ptype = item_payload["param_type"]
-            from nodes_concrete import PARAM_NODE_TYPES
-            pclass = PARAM_NODE_TYPES.get(ptype)
+            pclass = PARAM_NODE_TYPES.get(item_payload["param_type"])
             if pclass:
-                try:
-                    node = pclass()
-                except TypeError:
-                    node = pclass()
+                node = pclass()
             
         if node:
             self.preview_scene.addItem(node)

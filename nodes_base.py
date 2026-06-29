@@ -1,12 +1,11 @@
 from __future__ import annotations
-import os
-import xml.etree.ElementTree as ET
+import html
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Any
 
 from PyQt5.QtWidgets import (
     QGraphicsObject, QGraphicsItem, QGraphicsTextItem,
-    QGraphicsProxyWidget, QPushButton, QLineEdit, QCheckBox,
+    QGraphicsProxyWidget, QLineEdit, QCheckBox,
     QSpinBox, QComboBox, QGraphicsPathItem, QWidget,
     QHBoxLayout, QToolButton, QStyle, QLabel,
     QApplication, QAbstractSpinBox,
@@ -25,91 +24,17 @@ from configuration import (
     NODE_SHADOW_OFFSET_X, NODE_SHADOW_OFFSET_Y, NODE_SHADOW_BLUR,
     SOCKET_COLOR_SCHEMA, SOCKET_HOVER_COLOR,
     NODE_SELECTED_COLOR, NODE_BORDER_COLOR, CONNECTION_SELECTED_COLOR,
-    BUTTON_BG_COLOR, BUTTON_HOVER_COLOR, BUTTON_PRESSED_COLOR,
-    BUTTON_TEXT_COLOR, CANVAS_BACKGROUND_COLOR, TEXT_COLOR, TEXT_MUTED_COLOR,
+    TEXT_COLOR,
     BEZIER_CTRL_FACTOR, BEZIER_CTRL_MIN, BROWSE_BTN_WIDTH,
-    GRID_SIZE_SMALL,
-    INTEGER_PARAM_NAMES, NODE_POPUP_Z,
-    VECTOR_COLLAPSE_GLYPH, VECTOR_EXPAND_GLYPH, VECTOR_AXIS_LABEL_COLOR,
+    GRID_SIZE_SMALL, NODE_POPUP_Z,
+    VECTOR_COLLAPSE_GLYPH, VECTOR_EXPAND_GLYPH,
     NODE_SELECTION_OVERLAY_RGBA, NODE_SELECTION_OVERLAY_Z,
     NODE_SOCKET_Z, NODE_WIDGET_Z_BASE,
+    FIELD_QSS, COMBOBOX_QSS, SPINBOX_QSS, CHECKBOX_QSS,
+    TOOLBTN_QSS, VECTOR_TOGGLE_QSS, VECTOR_AXIS_LABEL_QSS,
 )
 
-_FIELD_QSS = (
-    f"QLineEdit{{"
-    f"border:1px solid {NODE_BORDER_COLOR};"
-    f"background:{CANVAS_BACKGROUND_COLOR};"
-    f"color:{TEXT_COLOR};"
-    f"border-radius:0px;"
-    f"padding:2px 4px;"
-    f"font:9pt Consolas;"
-    f"}}"
-    f"QLineEdit:read-only{{"
-    f"color:{TEXT_MUTED_COLOR};"
-    f"}}"
-)
 
-_COMBOBOX_QSS = (
-    f"QComboBox{{border:1px solid {NODE_BORDER_COLOR};background:{CANVAS_BACKGROUND_COLOR};"
-    f"color:{TEXT_COLOR};border-radius:0px;padding:2px 4px;font:9pt Consolas;combobox-popup:0;}}"
-    f"QComboBox::drop-down{{border-left:1px solid {NODE_BORDER_COLOR};"
-    f"width:{BROWSE_BTN_WIDTH}px;background:{BUTTON_BG_COLOR};}}"
-    f"QComboBox::drop-down:hover{{background:{BUTTON_HOVER_COLOR};border-color:{NODE_SELECTED_COLOR};}}"
-    f"QComboBox QAbstractItemView{{border:1px solid {NODE_BORDER_COLOR};"
-    f"background:{CANVAS_BACKGROUND_COLOR};color:{TEXT_COLOR};"
-    f"selection-background-color:{NODE_SELECTED_COLOR};selection-color:{CANVAS_BACKGROUND_COLOR};outline:0px;}}"
-    f"QComboBox QAbstractItemView::item:hover{{background-color:{NODE_SELECTED_COLOR};color:{CANVAS_BACKGROUND_COLOR};}}"
-    f"QComboBox QAbstractItemView::item:selected{{background-color:{NODE_SELECTED_COLOR};color:{CANVAS_BACKGROUND_COLOR};}}"
-    f"QScrollBar:vertical{{border:none;background:{CANVAS_BACKGROUND_COLOR};width:8px;margin:0px;}}"
-    f"QScrollBar::handle:vertical{{background:{NODE_BORDER_COLOR};min-height:20px;border-radius:0px;}}"
-    f"QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{{height:0px;}}"
-    f"QComboBox[connected=\"true\"]{{color:{TEXT_MUTED_COLOR};}}"
-    f"QComboBox[connected=\"true\"] QLineEdit{{color:{TEXT_MUTED_COLOR};}}"
-    f"QComboBox[connected=\"true\"]::drop-down{{width:0px;border:none;}}"
-)
-
-_SPINBOX_QSS = (
-    f"QSpinBox{{border:1px solid {NODE_BORDER_COLOR};background:{CANVAS_BACKGROUND_COLOR};"
-    f"color:{TEXT_COLOR};border-radius:0px;padding:2px;font:9pt Consolas;}}"
-    f"QSpinBox::up-button{{background:{BUTTON_BG_COLOR};"
-    f"border-left:1px solid {NODE_BORDER_COLOR};"
-    f"border-bottom:1px solid {NODE_BORDER_COLOR};width:16px;}}"
-    f"QSpinBox::down-button{{background:{BUTTON_BG_COLOR};"
-    f"border-left:1px solid {NODE_BORDER_COLOR};width:16px;}}"
-    f"QSpinBox::up-button:hover,QSpinBox::down-button:hover{{"
-    f"background:{BUTTON_HOVER_COLOR};border-color:{NODE_SELECTED_COLOR};}}"
-    f"QSpinBox:hover{{border-color:{NODE_SELECTED_COLOR};}}"
-)
-
-_CHECKBOX_QSS = (
-    f"QCheckBox{{font:9pt Consolas;color:{TEXT_COLOR};background:{BUTTON_BG_COLOR};spacing:6px;}}"
-    f"QCheckBox::indicator{{width:13px;height:13px;"
-    f"border:1px solid {NODE_BORDER_COLOR};background:{CANVAS_BACKGROUND_COLOR};}}"
-    f"QCheckBox::indicator:checked{{background:{NODE_SELECTED_COLOR};border-color:{NODE_SELECTED_COLOR};}}"
-    f"QCheckBox::indicator:hover{{border-color:{NODE_SELECTED_COLOR};}}"
-)
-
-_TOOLBTN_QSS = (
-    f"QToolButton{{background:{BUTTON_BG_COLOR};color:{BUTTON_TEXT_COLOR};"
-    f"border:1px solid {NODE_BORDER_COLOR};border-radius:0px;font:9pt Consolas;}}"
-    f"QToolButton:hover{{background:{BUTTON_HOVER_COLOR};border-color:{NODE_SELECTED_COLOR};}}"
-    f"QToolButton:pressed{{background:{BUTTON_PRESSED_COLOR};}}"
-)
-
-_PUSHBTN_QSS = (
-    f"QPushButton{{background:{BUTTON_BG_COLOR};color:{BUTTON_TEXT_COLOR};"
-    f"border:1px solid {NODE_BORDER_COLOR};border-radius:0px;"
-    f"padding:5px 8px;font:bold 9pt Consolas;}}"
-    f"QPushButton:hover{{background:{BUTTON_HOVER_COLOR};border-color:{NODE_SELECTED_COLOR};}}"
-    f"QPushButton:pressed{{background:{BUTTON_PRESSED_COLOR};}}"
-)
-
-_VECTOR_TOGGLE_QSS = (
-    f"QToolButton{{color:{TEXT_MUTED_COLOR};font:bold 8pt;padding:0px 2px;border:none;background:transparent;}}"
-    f"QToolButton:hover{{color:{NODE_SELECTED_COLOR};}}"
-)
-
-_VECTOR_AXIS_LABEL_QSS = f"color:{VECTOR_AXIS_LABEL_COLOR};font:9pt Consolas;"
 
 
 def resolve_color_schema(socket_type: str) -> dict:
@@ -155,7 +80,6 @@ class NodeDef:
         ))
 
     def socket_y(self, row: int, is_exec: bool = False) -> float:
-        """Index-based Y centre. Exec sockets are vertically centered on the header."""
         if is_exec:
             return NODE_HEADER_HEIGHT / 2.0
         return NODE_HEADER_HEIGHT + row * NODE_ROW_HEIGHT + NODE_ROW_HEIGHT / 2.0
@@ -280,7 +204,7 @@ class Connection(QGraphicsPathItem):
 
 
 class _SelectionOverlay(QGraphicsItem):
-    """Translucent-white wash above all node contents while selected."""
+
 
     def __init__(self, node: MetaNode):
         super().__init__(node)
@@ -301,8 +225,7 @@ class _SelectionOverlay(QGraphicsItem):
 
 class MetaNode(QGraphicsObject):
     """
-    Declarative base. _generate() creates ALL children from NodeDef once.
-    BoundingRect includes shadow area — prevents trail artifact on move.
+    Why: BoundingRect includes shadow area to prevent trail artifacts on move.
     """
 
     def __init__(self, node_def: NodeDef):
@@ -348,7 +271,7 @@ class MetaNode(QGraphicsObject):
                             VECTOR_COLLAPSE_GLYPH if socket_def.is_collapsed_vector
                             else VECTOR_EXPAND_GLYPH
                         )
-                        toggle.setStyleSheet(_VECTOR_TOGGLE_QSS)
+                        toggle.setStyleSheet(VECTOR_TOGGLE_QSS)
                         toggle.setCursor(Qt.PointingHandCursor)
                         proxy = QGraphicsProxyWidget(self)
                         proxy.setWidget(toggle)
@@ -501,6 +424,13 @@ class MetaNode(QGraphicsObject):
     def get_socket(self, name: str) -> Optional[SocketItem]:
         return self.sockets.get(name)
 
+    def serialize_payload(self) -> dict:
+        """Type-specific fields needed to reconstruct this node (sans id/position).
+
+        Overridden per node type so persistence never has to branch on the class.
+        """
+        return {}
+
 
 class NodeComboBox(QComboBox):
     def __init__(self, node: MetaNode):
@@ -555,6 +485,13 @@ class _BaseParamNode(MetaNode):
         item = _EditableTitleItem(self)
         item.setHtml(html)
         return item
+
+    def serialize_payload(self) -> dict:
+        return {
+            "creation_data": getattr(self, "creation_data",
+                                     {"param_type": self.TYPE_ID, "display": self.TYPE_ID}),
+            "current_value": self.get_value_state(),
+        }
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -612,54 +549,7 @@ class _BaseParamNode(MetaNode):
         if change == QGraphicsItem.ItemSceneHasChanged and not self._update_scheduled:
             self._update_scheduled = True
             QTimer.singleShot(100, self._on_scene_loaded)
-        if change == QGraphicsItem.ItemSelectedHasChanged:
-            self._apply_widget_selection_tint(bool(value))
         return result
-
-    def _apply_widget_selection_tint(self, selected: bool):
-        """Blend all embedded QWidgets toward white when node is selected."""
-        for child in self.childItems():
-            if not hasattr(child, 'widget'):
-                continue
-            w = child.widget()
-            if w is None:
-                continue
-            self._tint_widget(w, False)
-
-    def _tint_widget(self, w: QWidget, selected: bool):
-        from PyQt5.QtWidgets import QAbstractButton, QAbstractSpinBox
-        T = 0.18
-
-        def blended(hex_color: str) -> str:
-            c = QColor(hex_color)
-            r = int(c.red()   + (255 - c.red())   * T)
-            g = int(c.green() + (255 - c.green()) * T)
-            b = int(c.blue()  + (255 - c.blue())  * T)
-            return f"#{r:02X}{g:02X}{b:02X}"
-
-        if selected:
-            bg_field  = blended(CANVAS_BACKGROUND_COLOR)
-            bg_button = blended(BUTTON_BG_COLOR)
-        else:
-            bg_field  = CANVAS_BACKGROUND_COLOR
-            bg_button = BUTTON_BG_COLOR
-
-        if isinstance(w, QLineEdit):
-            w.setStyleSheet(_FIELD_QSS.replace(CANVAS_BACKGROUND_COLOR, bg_field))
-        elif isinstance(w, QComboBox):
-            w.setStyleSheet(_COMBOBOX_QSS.replace(CANVAS_BACKGROUND_COLOR, bg_field)
-                                         .replace(BUTTON_BG_COLOR, bg_button))
-        elif isinstance(w, QAbstractSpinBox):
-            w.setStyleSheet(_SPINBOX_QSS.replace(CANVAS_BACKGROUND_COLOR, bg_field)
-                                        .replace(BUTTON_BG_COLOR, bg_button))
-        elif isinstance(w, QCheckBox):
-            pass
-
-        elif isinstance(w, (QToolButton, QAbstractButton)):
-            w.setStyleSheet(_TOOLBTN_QSS.replace(BUTTON_BG_COLOR, bg_button))
-        else:
-            for child in w.findChildren(QWidget):
-                self._tint_widget(child, selected)
 
     def _on_scene_loaded(self):
         self._update_scheduled = False
@@ -676,7 +566,7 @@ class _BaseParamNode(MetaNode):
         if fixed_width:
             w.setFixedWidth(self._widget_width())
         w.setFixedHeight(NODE_WIDGET_HEIGHT)
-        w.setStyleSheet(_FIELD_QSS)
+        w.setStyleSheet(FIELD_QSS)
         return w
 
     def _make_combobox(self, items: List[str] = None, *,
@@ -688,7 +578,7 @@ class _BaseParamNode(MetaNode):
         if fixed_width:
             w.setFixedWidth(self._widget_width())
         w.setFixedHeight(NODE_WIDGET_HEIGHT)
-        w.setStyleSheet(_COMBOBOX_QSS)
+        w.setStyleSheet(COMBOBOX_QSS)
         pal = w.palette()
         pal.setColor(QPalette.ButtonText, QColor(TEXT_COLOR))
         w.setPalette(pal)
@@ -701,7 +591,7 @@ class _BaseParamNode(MetaNode):
         w.setValue(value)
         w.setFixedWidth(self._widget_width())
         w.setFixedHeight(NODE_WIDGET_HEIGHT)
-        w.setStyleSheet(_SPINBOX_QSS)
+        w.setStyleSheet(SPINBOX_QSS)
         pal = w.palette()
         pal.setColor(QPalette.ButtonText, QColor(TEXT_COLOR))
         w.setPalette(pal)
@@ -712,13 +602,13 @@ class _BaseParamNode(MetaNode):
         w.setChecked(checked)
         w.setFixedWidth(self._widget_width())
         w.setFixedHeight(NODE_WIDGET_HEIGHT)
-        w.setStyleSheet(_CHECKBOX_QSS)
+        w.setStyleSheet(CHECKBOX_QSS)
         return w
 
     def _make_toolbtn(self, text: str, callback=None) -> QToolButton:
         w = QToolButton()
         w.setText(text)
-        w.setStyleSheet(_TOOLBTN_QSS)
+        w.setStyleSheet(TOOLBTN_QSS)
         w.setFixedWidth(BROWSE_BTN_WIDTH)
         w.setFixedHeight(NODE_WIDGET_HEIGHT)
         if callback:
@@ -834,7 +724,7 @@ class _BaseParamNode(MetaNode):
         
         win._linked_group = group
         for node in group:
-            node._set_selection_effect(False)
+            node._refresh_selection_visuals()
 
     def _exit_linked_editing_if_focus_left(self, queued_ct: int):
         win = self._editor_window()
@@ -858,12 +748,11 @@ class _BaseParamNode(MetaNode):
         group, win._linked_group = win._linked_group, []
         for node in group:
             if node.scene():
-                node._set_selection_effect(node.isSelected())
+                node._refresh_selection_visuals()
         win.push_undo_state()
 
-    def _set_selection_effect(self, on: bool):
+    def _refresh_selection_visuals(self):
         self._selection_overlay.setVisible(self.isSelected())
-        self._apply_widget_selection_tint(on)
         self._adjust_proxy_z_values()
 
     def _adjust_proxy_z_values(self):
@@ -1015,7 +904,7 @@ class _VectorParamNode(_BaseParamNode):
             editor.editingFinished.connect(self._on_float_editing_finished)
 
             label = QLabel(f"{axis}:")
-            label.setStyleSheet(_VECTOR_AXIS_LABEL_QSS)
+            label.setStyleSheet(VECTOR_AXIS_LABEL_QSS)
 
             layout.addWidget(label)
             layout.addWidget(editor)
@@ -1060,8 +949,10 @@ class _VectorParamNode(_BaseParamNode):
 
 def _html_title(text: str, bold_first: bool = False) -> str:
     parts = text.split(" ", 1)
-    first = f"<b>{parts[0]}</b>" if bold_first and parts else parts[0] if parts else ""
-    rest  = f" {parts[1]}" if len(parts) > 1 else ""
+    first = html.escape(parts[0]) if parts else ""
+    if bold_first and parts:
+        first = f"<b>{first}</b>"
+    rest = f" {html.escape(parts[1])}" if len(parts) > 1 else ""
     return (f'<span style="font-family:Consolas;font-size:9pt;color:white;">'
             f'{first}{rest}</span>')
 
