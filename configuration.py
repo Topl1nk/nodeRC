@@ -141,3 +141,69 @@ QMenu::item:disabled {{ color:{NODE_BORDER_COLOR}; }}
 QMenu::separator {{ height:1px; background:{NODE_BORDER_COLOR}; margin:3px 8px; }}
 QMenu::icon {{ padding-left:6px; }}
 """
+
+# ── Search dialog dimensions and stylesheet ───────────────────────────────────
+SEARCH_DIALOG_WIDTH = 700
+SEARCH_DIALOG_HEIGHT = 450
+SEARCH_DIALOG_STYLESHEET = f"""
+QDialog {{
+    background-color: {CANVAS_BACKGROUND_COLOR};
+    border: 1px solid {NODE_BORDER_COLOR};
+}}
+QLineEdit {{
+    background-color: {BUTTON_BG_COLOR};
+    color: {TEXT_COLOR};
+    border: 1px solid {NODE_BORDER_COLOR};
+    padding: 4px;
+    font-family: Consolas, monospace;
+}}
+QLineEdit:focus {{
+    border: 1px solid {NODE_SELECTED_COLOR};
+}}
+QTreeWidget {{
+    background-color: transparent;
+    color: {TEXT_COLOR};
+    border: none;
+    font-family: Consolas, monospace;
+    outline: none;
+}}
+QTreeWidget::item:hover {{
+    background-color: {BUTTON_BG_COLOR};
+}}
+QTreeWidget::item:selected {{
+    background-color: {NODE_BORDER_COLOR};
+    color: {TEXT_COLOR};
+}}
+QGraphicsView#previewView {{
+    background: transparent;
+    border: none;
+}}
+QLabel#descriptionLabel {{
+    color: {TEXT_MUTED_COLOR};
+    font-family: Consolas, monospace;
+    padding: 6px;
+    background: transparent;
+    border: none;
+}}
+QScrollBar:vertical {{
+    background: transparent;
+    width: 14px;
+    margin: 0px 0px 0px 0px;
+}}
+QScrollBar::handle:vertical {{
+    background: {NODE_BORDER_COLOR};
+    min-height: 20px;
+    border-radius: 7px;
+}}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+    height: 0px;
+}}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+    background: none;
+}}
+QFrame#descFrame {{
+    border-top: 1px solid {NODE_BORDER_COLOR};
+    border-bottom: 1px solid {NODE_BORDER_COLOR};
+    background: transparent;
+}}
+"""
