@@ -41,15 +41,45 @@ To start the editor, run:
 python nodeRC.py
 ```
 
+### Controls & Shortcuts
+
+- **Pan Canvas:** Click and hold the **Middle Mouse Button (MMB)** and drag.
+- **Zoom:** Scroll the **Mouse Wheel**.
+- **Add Node:** Press **Space** or **Right-click** on empty canvas space to open the Search Menu. Select a command or parameter node to spawn it at the cursor position.
+- **Connect Sockets:** Drag a line from an output socket to an input socket.
+  - Dragging from a socket and releasing on an empty canvas space opens the Search Menu to select and auto-connect a new node.
+- **Delete Node/Connection:** Select the item and press **Delete**.
+- **Group Nodes:** Select nodes and press **Ctrl + G** to place them in a frame.
+- **Duplicate Nodes:** Select nodes and press **Ctrl + D**.
+- **Copy / Paste:** Select nodes and press **Ctrl + C** to copy, and **Ctrl + V** to paste at the cursor position.
+- **Undo / Redo:** Press **Ctrl + Z** to undo and **Ctrl + Y** (or **Ctrl + Shift + Z**) to redo.
+- **Select All:** Press **Ctrl + A**.
+- **Toggle Grid:** Press **G**.
+- **Fit View:** Press **F** to focus the view on the selection (or all nodes if none are selected).
+- **Rename Node:** Select a parameter node and press **F2**.
+- **Fullscreen:** Press **F11** to toggle.
+
+### Execution Workflow
+
+1. **Initialize the Chain:** The `> START` node is always present on the canvas.
+2. **Add Command Nodes:** Press **Space** and add commands (e.g., `-addFolder`, `-align`, etc.).
+3. **Link Execution:** Connect the execution sockets (arrow-shaped) sequentially starting from the `> START` node's output.
+4. **Configure Parameters:** Add parameter nodes (String, Integer, Float, File/Dir Path) via the Search Menu and connect their output to the command nodes' input sockets.
+5. **Run:** Click the **> Launch** button on the `> START` node to execute the CLI chain in RealityCapture.
+
+
 ## Project Structure
 
 - `nodeRC.py` - Main entry point.
-- `canvas.py` - Interactive canvas logic and graph management.
-- `nodes.py` - Base and specialized classes for nodes and sockets.
-- `configuration.py` - Configuration file (colors, styles, UI parameters).
-- `search_menu.py` - Dialog for searching and adding nodes.
-- `diagnostics.py` - Logging and exception handling.
-- `rc_documentation_extractor.py` - Utility for extracting command documentation.
+- `canvas.py` - Main editor window logic.
+- `scene.py` - Canvas scene and visual item event handling.
+- `view.py` - Graphic view logic, panning, and zooming.
+- `nodes_base.py` - Base classes for nodes, sockets, and connections.
+- `nodes_concrete.py` - Concrete implementations of specialized nodes (Start, Command, Parameter nodes).
+- `configuration.py` - Single source of truth for styles, UI settings, and hotkeys.
+- `search_menu.py` - Autocomplete search dialog for spawning nodes.
+- `diagnostics.py` - Exception handler and error logging.
+- `rc_documentation_extractor.py` - Command database builder from local RealityCapture documentation.
 
 ## License
 
