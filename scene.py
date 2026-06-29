@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Optional
 
 from PyQt5.QtWidgets import QGraphicsScene, QGraphicsLineItem, QDialog, QApplication
-from PyQt5.QtCore import Qt, QPointF, QRectF
+from PyQt5.QtCore import Qt, QPointF, QRectF, QTimer
 from PyQt5.QtGui import QPen, QColor, QPainter
 
 from configuration import (
@@ -26,6 +26,7 @@ class NodeScene(QGraphicsScene):
         self._drag_preview_line: Optional[QGraphicsLineItem] = None
         self._drag_active = False
         self._drag_original_dest: Optional[SocketItem] = None
+        self._rect_recalc_pending = False
         self.setSceneRect(-500, -500, 1000, 1000)
         self.setBackgroundBrush(QColor(CANVAS_BACKGROUND_COLOR))
         self.grid_visible = True
@@ -72,7 +73,19 @@ class NodeScene(QGraphicsScene):
     def addItem(self, item):
         super().addItem(item)
         if isinstance(item, MetaNode):
-            self.recalculate_scene_rect()
+            self._schedule_rect_recalc()
+
+    def _schedule_rect_recalc(self):
+        # Coalesce a burst of additions (load, paste, undo) into a single O(N) pass
+        # instead of recomputing the scene rect once per node — that was O(N²).
+        if self._rect_recalc_pending:
+            return
+        self._rect_recalc_pending = True
+        QTimer.singleShot(0, self._run_rect_recalc)
+
+    def _run_rect_recalc(self):
+        self._rect_recalc_pending = False
+        self.recalculate_scene_rect()
 
     def start_connection_drag(self, source: SocketItem):
         self._drag_active = True

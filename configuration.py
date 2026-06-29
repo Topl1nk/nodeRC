@@ -24,6 +24,9 @@ NODE_WIDGET_HEIGHT        = NODE_ROW_HEIGHT - 4  # 22px — uniform height for a
 NODE_SHADOW_OFFSET_X = 0
 NODE_SHADOW_OFFSET_Y = 0
 NODE_SHADOW_BLUR     = 0
+# Invalidation padding around a node/wire so the selection border (and antialiasing)
+# is fully covered — lets the view use partial repaints without leaving trails.
+NODE_BOUNDS_MARGIN   = 3
 
 # ── Grid ───────────────────────────────────────────────────────────────────────
 GRID_SIZE_SMALL = 20   # minor grid lines and node snap resolution
@@ -58,6 +61,7 @@ NODE_POPUP_Z = 100  # node z-value while its combobox popup is open — above si
 # embedded widget yet below the sockets so connectors stay vivid when selected.
 NODE_WIDGET_Z_BASE       = 1000  # embedded editor proxies; higher rows stack first
 NODE_SELECTION_OVERLAY_Z = 2000
+NODE_LINKED_FIELD_Z      = 2500  # the field being linked-edited, lifted above the wash
 NODE_SOCKET_Z            = 3000
 
 # ── Selection highlight ────────────────────────────────────────────────────────
@@ -81,6 +85,9 @@ SCROLLBAR_BTN_SIZE   = 22  # square edge of the toggle button
 
 # ── View zoom ──────────────────────────────────────────────────────────────────
 VIEW_ZOOM_STEP = 1.20  # multiplicative zoom per wheel notch
+VIEW_ZOOM_MIN  = 0.15  # furthest zoom-out (scale factor) — keeps the graph from vanishing
+VIEW_ZOOM_MAX  = 3.0   # closest zoom-in — prevents runaway magnification
+VIEW_FRAME_MARGIN = 60  # padding (scene px) around framed content when fitting to view
 
 # ── Auto-spawned parameter placement ───────────────────────────────────────────
 AUTOSPAWN_X_GAP    = 280  # distance left of the command node for a created param node
@@ -152,6 +159,7 @@ QMenu::icon {{ padding-left:6px; }}
 # ── Search dialog dimensions and stylesheet ───────────────────────────────────
 SEARCH_DIALOG_WIDTH = 700
 SEARCH_DIALOG_HEIGHT = 450
+SEARCH_RESULTS_LIMIT = 50  # most-relevant matches kept in the ranked result list
 SEARCH_DIALOG_STYLESHEET = f"""
 QDialog {{
     background-color: {CANVAS_BACKGROUND_COLOR};

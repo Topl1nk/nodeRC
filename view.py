@@ -2,13 +2,14 @@ from __future__ import annotations
 from typing import Optional
 
 from PyQt5.QtWidgets import QGraphicsView, QPushButton
-from PyQt5.QtGui import QPainter, QColor
+from PyQt5.QtGui import QPainter, QColor, QRadialGradient, QBrush
 from PyQt5.QtCore import Qt, QPoint, QRectF
 
 from configuration import (
     CANVAS_BACKGROUND_COLOR, SCROLLBAR_TOGGLE_BG, SCROLLBAR_TOGGLE_HOVER,
     VIGNETTE_COLOR, VIGNETTE_RADIUS, SCROLLBAR_BTN_MARGIN, SCROLLBAR_BTN_OFFSET,
-    SCROLLBAR_BTN_SIZE, VIEW_ZOOM_STEP,
+    SCROLLBAR_BTN_SIZE, VIEW_ZOOM_STEP, VIEW_ZOOM_MIN, VIEW_ZOOM_MAX,
+    VIEW_FRAME_MARGIN,
 )
 
 
@@ -23,7 +24,11 @@ class GraphicsView(QGraphicsView):
             QPainter.SmoothPixmapTransform |
             QPainter.TextAntialiasing,
         )
-        self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
+        # Partial repaints: only changed item rects redraw on a node drag, not the
+        # whole viewport. The vignette is painted in drawBackground (under the nodes);
+        # scrollContentsBy forces a full repaint on pan so it never smears.
+        self.setViewportUpdateMode(QGraphicsView.SmartViewportUpdate)
+        self._vignette_brush: Optional[QBrush] = None
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
@@ -50,27 +55,53 @@ class GraphicsView(QGraphicsView):
 
     def wheelEvent(self, event):
         factor = self._ZOOM_STEP_IN if event.angleDelta().y() > 0 else self._ZOOM_STEP_OUT
+        # Clamp so the graph can neither vanish nor magnify past readability.
+        next_scale = self.transform().m11() * factor
+        if next_scale < VIEW_ZOOM_MIN or next_scale > VIEW_ZOOM_MAX:
+            return
         self.scale(factor, factor)
 
-    def drawBackground(self, painter: QPainter, rect: QRectF):
-        if self.scene():
-            self.scene().drawBackground(painter, rect)
+    def frame_content(self, items=None):
+        """Fit the view to the given items, or to the whole graph when none are given."""
+        scene = self.scene()
+        if scene is None:
+            return
+        if items:
+            rect = QRectF()
+            for item in items:
+                rect = rect.united(item.sceneBoundingRect())
+        else:
+            rect = scene.itemsBoundingRect()
+        if rect.isNull() or rect.isEmpty():
+            return
+        self.fitInView(rect.adjusted(-VIEW_FRAME_MARGIN, -VIEW_FRAME_MARGIN,
+                                     VIEW_FRAME_MARGIN, VIEW_FRAME_MARGIN), Qt.KeepAspectRatio)
+        # fitInView ignores zoom bounds; pull an over-zoomed single node back in.
+        scale = self.transform().m11()
+        if scale > VIEW_ZOOM_MAX:
+            self.scale(VIEW_ZOOM_MAX / scale, VIEW_ZOOM_MAX / scale)
 
-        painter.save()
-        painter.resetTransform()
-
-        from PyQt5.QtGui import QRadialGradient, QBrush
+    def _build_vignette_brush(self):
         w = self.viewport().width()
         h = self.viewport().height()
-
         gradient = QRadialGradient(w / 2.0, h / 2.0, max(w, h) * VIGNETTE_RADIUS)
         gradient.setColorAt(0.0, QColor(0, 0, 0, 0))
         gradient.setColorAt(1.0, QColor(*VIGNETTE_COLOR))
+        self._vignette_brush = QBrush(gradient)
 
-        painter.setBrush(QBrush(gradient))
+    def drawBackground(self, painter: QPainter, rect: QRectF):
+        # Grid first, then the vignette — both under the items, so nodes and wires
+        # paint on top and stay un-dimmed; only the canvas/grid is darkened.
+        if self.scene():
+            self.scene().drawBackground(painter, rect)
+
+        if self._vignette_brush is None:
+            self._build_vignette_brush()
+        painter.save()
+        painter.resetTransform()  # viewport space — vignette is fixed to the screen
         painter.setPen(Qt.NoPen)
-        painter.drawRect(0, 0, w, h)
-
+        painter.setBrush(self._vignette_brush)
+        painter.drawRect(0, 0, self.viewport().width(), self.viewport().height())
         painter.restore()
 
     def mousePressEvent(self, event):
@@ -108,8 +139,15 @@ class GraphicsView(QGraphicsView):
         else:
             super().mouseMoveEvent(event)
 
+    def scrollContentsBy(self, dx: int, dy: int):
+        super().scrollContentsBy(dx, dy)
+        # A pan scroll-blits the viewport, which would smear the screen-fixed
+        # vignette; force a full repaint so the background is redrawn cleanly.
+        self.viewport().update()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._build_vignette_brush()
         self._scrollbar_toggle_btn.move(
             self.width()  - self._scrollbar_toggle_btn.width() - SCROLLBAR_BTN_MARGIN - SCROLLBAR_BTN_OFFSET,
             self.height() - self._scrollbar_toggle_btn.height() - SCROLLBAR_BTN_MARGIN - SCROLLBAR_BTN_OFFSET,

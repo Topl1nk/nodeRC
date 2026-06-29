@@ -21,7 +21,7 @@ from configuration import (
     NODE_EXEC_SOCKET_HALFSIZE, NODE_PARAM_SOCKET_RADIUS,
     NODE_DEFAULT_WIDTH, NODE_HORIZONTAL_PAD,
     NODE_FOOTER_HEIGHT, NODE_BOTTOM_PAD, NODE_WIDGET_V_OFFSET, NODE_WIDGET_HEIGHT,
-    NODE_SHADOW_OFFSET_X, NODE_SHADOW_OFFSET_Y, NODE_SHADOW_BLUR,
+    NODE_SHADOW_OFFSET_X, NODE_SHADOW_OFFSET_Y, NODE_SHADOW_BLUR, NODE_BOUNDS_MARGIN,
     SOCKET_COLOR_SCHEMA, SOCKET_HOVER_COLOR,
     NODE_SELECTED_COLOR, NODE_BORDER_COLOR, CONNECTION_SELECTED_COLOR,
     TEXT_COLOR,
@@ -29,7 +29,7 @@ from configuration import (
     GRID_SIZE_SMALL, NODE_POPUP_Z,
     VECTOR_COLLAPSE_GLYPH, VECTOR_EXPAND_GLYPH,
     NODE_SELECTION_OVERLAY_RGBA, NODE_SELECTION_OVERLAY_Z,
-    NODE_SOCKET_Z, NODE_WIDGET_Z_BASE,
+    NODE_SOCKET_Z, NODE_WIDGET_Z_BASE, NODE_LINKED_FIELD_Z,
     FIELD_QSS, COMBOBOX_QSS, SPINBOX_QSS, CHECKBOX_QSS,
     TOOLBTN_QSS, VECTOR_TOGGLE_QSS, VECTOR_AXIS_LABEL_QSS,
 )
@@ -193,7 +193,16 @@ class Connection(QGraphicsPathItem):
                          QPointF(p2.x() - ctrl, p2.y()), p2)
             self.setPath(path)
         except RuntimeError:
+            # An endpoint's underlying C++ socket was already deleted (node removed
+            # mid-refresh); the wire is about to be dropped too, so there is nothing
+            # to draw and nothing to report.
             pass
+
+    def boundingRect(self) -> QRectF:
+        # Pad past the widest (selected) pen so partial repaints leave no wire trail.
+        return super().boundingRect().adjusted(
+            -NODE_BOUNDS_MARGIN, -NODE_BOUNDS_MARGIN,
+            NODE_BOUNDS_MARGIN, NODE_BOUNDS_MARGIN)
 
     def paint(self, painter, option, widget=None):
         if option.state & QStyle.State_Selected:
@@ -300,10 +309,11 @@ class MetaNode(QGraphicsObject):
 
     def boundingRect(self) -> QRectF:
         d = self.node_def
+        m = NODE_BOUNDS_MARGIN
         return QRectF(
-            0, 0,
-            d.width       + NODE_SHADOW_OFFSET_X + NODE_SHADOW_BLUR,
-            d.body_height + NODE_SHADOW_OFFSET_Y + NODE_SHADOW_BLUR,
+            -m, -m,
+            d.width       + NODE_SHADOW_OFFSET_X + NODE_SHADOW_BLUR + 2 * m,
+            d.body_height + NODE_SHADOW_OFFSET_Y + NODE_SHADOW_BLUR + 2 * m,
         )
 
     def paint(self, painter: QPainter, option, widget=None):
@@ -395,11 +405,13 @@ class MetaNode(QGraphicsObject):
         scene = self.scene()
         if not scene:
             return
-        for item in scene.items():
-            if isinstance(item, Connection):
-                if (item.source and item.source.meta_node is self) or \
-                   (item.dest   and item.dest.meta_node   is self):
-                    item.refresh()
+        # Iterate the window's connection list (small) rather than scanning — and
+        # sorting — every scene item; this runs on each frame of a node drag.
+        win = getattr(scene, "nodeEditorWindow", None)
+        for conn in (win.connections if win else ()):
+            if (conn.source and conn.source.meta_node is self) or \
+               (conn.dest   and conn.dest.meta_node   is self):
+                conn.refresh()
         self.update_vector_buttons_visibility()
 
     def _is_vector_connected(self, base_name: str) -> bool:
@@ -766,7 +778,7 @@ class _BaseParamNode(MetaNode):
                 if is_edited and active_key is not None and child_key == active_key:
                     if not hasattr(child, '_original_z_value'):
                         child._original_z_value = child.zValue()
-                    child.setZValue(2500)
+                    child.setZValue(NODE_LINKED_FIELD_Z)
                     child.update()
                 else:
                     if hasattr(child, '_original_z_value'):

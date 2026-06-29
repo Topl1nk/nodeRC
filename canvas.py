@@ -39,7 +39,6 @@ class NodeEditorWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("NodeRC Editor")
         self.setGeometry(100, 100, 1280, 800)
         self.setStyleSheet(f"QMainWindow{{background:{WINDOW_BACKGROUND_COLOR};}}")
 
@@ -48,8 +47,12 @@ class NodeEditorWindow(QMainWindow):
         self._load_command_database()
 
         self.connections: List[Connection] = []
-        self._linked_group: List[MetaNode] = []
-        self._active_field_key: Optional[str] = None
+        self._linked_group: List[MetaNode] = []      # selected same-type nodes under linked editing
+        self._active_field_key: Optional[str] = None  # which field key the linked group mirrors
+        self._focus_event_counter: int = 0            # serializes focus in/out to settle the active group
+        self._project_path: Optional[str] = None      # file backing the current graph, if saved
+        self._dirty = False                           # unsaved edits since last save/load
+        self._update_title()
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -178,20 +181,25 @@ class NodeEditorWindow(QMainWindow):
     def _rebuild_connections(self, records: List[dict], id_to_node: Dict[int, MetaNode],
                              restore_selection: bool = False):
         for record in records:
-            src_node = id_to_node.get(record["src_node"])
-            dst_node = id_to_node.get(record["dst_node"])
-            if not (src_node and dst_node):
+            # Isolate per connection: a malformed wire must not abort the load.
+            try:
+                src_node = id_to_node.get(record["src_node"])
+                dst_node = id_to_node.get(record["dst_node"])
+                if not (src_node and dst_node):
+                    continue
+                src_sock = src_node.get_socket(record["src_socket"])
+                dst_sock = dst_node.get_socket(record["dst_socket"])
+                if not (src_sock and dst_sock):
+                    continue
+                self.scene._enforce_connection_rules(src_sock, dst_sock)
+                conn = Connection(src_sock, dst_sock)
+                self.scene.addItem(conn)
+                self.connections.append(conn)
+                if restore_selection and record.get("selected", False):
+                    conn.setSelected(True)
+            except Exception as exc:
+                log_and_explain("Skipped unreadable connection", exc)
                 continue
-            src_sock = src_node.get_socket(record["src_socket"])
-            dst_sock = dst_node.get_socket(record["dst_socket"])
-            if not (src_sock and dst_sock):
-                continue
-            self.scene._enforce_connection_rules(src_sock, dst_sock)
-            conn = Connection(src_sock, dst_sock)
-            self.scene.addItem(conn)
-            self.connections.append(conn)
-            if restore_selection and record.get("selected", False):
-                conn.setSelected(True)
 
     def _capture(self, include_selection: bool) -> dict:
         node_id_map: Dict[MetaNode, int] = {}
@@ -218,7 +226,12 @@ class NodeEditorWindow(QMainWindow):
 
         id_to_node: Dict[int, MetaNode] = {}
         for record in payload.get("nodes", []):
-            node = self._deserialize_node(record, QPointF(record["x"], record["y"]))
+            # Isolate per node: one corrupt record must not discard the whole project.
+            try:
+                node = self._deserialize_node(record, QPointF(record["x"], record["y"]))
+            except Exception as exc:
+                log_and_explain(f"Skipped unreadable node ({record.get('type', 'unknown')})", exc)
+                continue
             if node is None:
                 continue
             id_to_node[record["id"]] = node
@@ -242,6 +255,9 @@ class NodeEditorWindow(QMainWindow):
         elif event.key() == Qt.Key_S and event.modifiers() == Qt.ControlModifier:
             self.save_project()
             event.accept()
+        elif event.key() == Qt.Key_S and event.modifiers() == (Qt.ControlModifier | Qt.ShiftModifier):
+            self.save_project(save_as=True)
+            event.accept()
         elif event.key() == Qt.Key_O and event.modifiers() == Qt.ControlModifier:
             self.load_project()
             event.accept()
@@ -263,6 +279,10 @@ class NodeEditorWindow(QMainWindow):
         elif event.key() == Qt.Key_G and event.modifiers() == Qt.NoModifier:
             self.scene.grid_visible = not getattr(self.scene, "grid_visible", True)
             self.scene.update()
+            event.accept()
+        elif event.key() == Qt.Key_F and event.modifiers() == Qt.NoModifier:
+            selected = [i for i in self.scene.selectedItems() if isinstance(i, MetaNode)]
+            self.view.frame_content(selected or None)
             event.accept()
         elif event.key() == Qt.Key_F11:
             if self.isFullScreen():
@@ -384,15 +404,21 @@ class NodeEditorWindow(QMainWindow):
             self._block_undo_push = False
         self.push_undo_state()
 
-    def save_project(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Save Project", "", "NodeRC Project (*.json)")
-        if not path:
-            return
+    def save_project(self, save_as: bool = False):
+        path = self._project_path
+        if save_as or not path:
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Save Project", path or "", "NodeRC Project (*.json)")
+            if not path:
+                return
         try:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(self._capture(include_selection=False), f, indent=2)
         except Exception as exc:
             QMessageBox.critical(self, "Save Error", log_and_explain("Failed to save project", exc))
+            return
+        self._project_path = path
+        self._set_dirty(False)
 
     def load_project(self):
         path, _ = QFileDialog.getOpenFileName(self, "Load Project", "", "NodeRC Project (*.json)")
@@ -405,6 +431,13 @@ class NodeEditorWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, "Load Error", log_and_explain("Failed to load project", exc))
             self._add_start_node()
+            return
+        # A loaded project is the new baseline: undo must not cross back into the old graph.
+        self._project_path = path
+        self.history = []
+        self.history_index = -1
+        self.push_undo_state()
+        self._set_dirty(False)
 
     def get_project_state(self) -> dict:
         return self._capture(include_selection=True)
@@ -422,11 +455,22 @@ class NodeEditorWindow(QMainWindow):
         state = self.get_project_state()
         if self.history_index >= 0 and self.history[self.history_index] == state:
             return
+        had_history = self.history_index >= 0  # the very first push is the baseline, not an edit
         self.history = self.history[:self.history_index + 1]
         self.history.append(state)
         if len(self.history) > UNDO_HISTORY_LIMIT:
             self.history.pop(0)
         self.history_index = len(self.history) - 1
+        if had_history:
+            self._set_dirty(True)
+
+    def _set_dirty(self, dirty: bool):
+        self._dirty = dirty
+        self._update_title()
+
+    def _update_title(self):
+        name = os.path.basename(self._project_path) if self._project_path else "Untitled"
+        self.setWindowTitle(f"NodeRC Editor — {name}{'*' if self._dirty else ''}")
 
     def undo(self):
         if self.history_index > 0:

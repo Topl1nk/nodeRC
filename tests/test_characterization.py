@@ -211,6 +211,216 @@ def test_vector_toggle_preserves_selection(window):
     assert rebuilt.isSelected()
 
 
+def test_restore_isolates_a_corrupt_node(window):
+    # Article 5.2: a single unreadable node must not lose the whole project.
+    good_a = _param(window, "string", x=0); good_a.set_value_state("A")
+    good_b = _param(window, "integer", x=120); good_b.set_value_state(9)
+    payload = window.get_project_state()
+    payload["nodes"].insert(1, {"id": 999, "type": "CommandNode", "x": 0, "y": 0})  # no cmd_def
+
+    window.set_project_state(payload)
+
+    assert _nodes_of(window, nc.StringParamNode)[0].get_value_state() == "A"
+    assert _nodes_of(window, nc.IntParamNode)[0].get_value_state() == 9
+
+
+def test_restore_isolates_a_corrupt_connection(window):
+    a = _param(window, "string", x=0)
+    payload = window.get_project_state()
+    payload["connections"].append({"src_node": a.scenePos and 1})  # malformed record
+
+    window.set_project_state(payload)  # must not raise
+
+    assert len(_nodes_of(window, nc.StringParamNode)) == 1
+
+
+# ── file UX: remembered path, dirty marker, window title ────────────────────────
+
+def test_new_window_title_is_untitled_and_clean(window):
+    assert "Untitled" in window.windowTitle()
+    assert not window.windowTitle().endswith("*")
+    assert window._dirty is False
+
+
+def test_edit_marks_dirty_and_save_to_known_path_clears_it(window, tmp_path):
+    _param(window, "string")  # add_param_node pushes an undo state → an edit
+    assert window._dirty is True
+    assert window.windowTitle().endswith("*")
+
+    path = str(tmp_path / "proj.json")
+    window._project_path = path
+    window.save_project()  # known path → no dialog
+
+    assert os.path.exists(path)
+    assert window._dirty is False
+    assert os.path.basename(path) in window.windowTitle()
+    assert not window.windowTitle().endswith("*")
+
+
+def test_load_clears_dirty_and_resets_undo_baseline(window, tmp_path, monkeypatch):
+    node = _param(window, "string"); node.set_value_state("saved")
+    path = str(tmp_path / "y.json")
+    window._project_path = path
+    window.save_project()
+
+    node.set_value_state("changed_after_save"); node._on_widget_user_edit()
+    assert window._dirty is True
+
+    from PyQt5.QtWidgets import QFileDialog
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a, **k: (path, ""))
+    window.load_project()
+
+    assert window._dirty is False
+    assert window.history_index == 0  # loaded graph is the new baseline
+    assert _nodes_of(window, nc.StringParamNode)[0].get_value_state() == "saved"
+
+
+# ── view framing / zoom clamp ───────────────────────────────────────────────────
+
+def test_frame_content_keeps_zoom_within_bounds(window):
+    import configuration as cfg
+    window.resize(800, 600)
+    _param(window, "string", x=0)
+    window.view.frame_content(None)
+    assert window.view.transform().m11() <= cfg.VIEW_ZOOM_MAX + 1e-6
+
+
+def test_frame_content_is_safe_on_empty_scene(window):
+    for item in list(window.scene.items()):
+        window.scene.removeItem(item)
+    window.view.frame_content(None)  # must not raise
+
+
+# ── search menu keyboard flow ───────────────────────────────────────────────────
+
+def test_search_menu_enter_creates_first_match(app):
+    from search_menu import SearchMenuDialog
+    dialog = SearchMenuDialog({}, None)
+    dialog.search_bar.setText("string")
+    assert dialog.tree.currentItem() is not None  # first match auto-selected
+    dialog._activate_selection()
+    assert dialog.payload is not None
+    assert dialog.payload.get("param_type") == "string"
+
+
+def test_search_menu_arrow_moves_selection(app):
+    from search_menu import SearchMenuDialog
+    dialog = SearchMenuDialog({}, None)
+    dialog.search_bar.setText("")  # show every parameter type
+    dialog._select_first_match()
+    first = dialog.tree.currentItem()
+    dialog._move_selection(1)
+    assert dialog.tree.currentItem() is not None
+    assert dialog.tree.currentItem() is not first
+
+
+def _search_dialog(app):
+    from search_menu import SearchMenuDialog
+    cats = {"Geometry": {"__root__": [
+        {"command": "-align", "display": "Align Cameras", "action": "align",
+         "description": "register photos together", "required": [], "optional": []},
+        {"command": "-calculateModel", "display": "Calculate Model", "action": "calculate",
+         "description": "build a dense mesh from the alignment", "required": [], "optional": []},
+    ]}}
+    return SearchMenuDialog(cats, None)
+
+
+def _result_payloads(dialog):
+    from PyQt5.QtCore import Qt
+    return [dialog.tree.topLevelItem(i).data(0, Qt.UserRole)
+            for i in range(dialog.tree.topLevelItemCount())]
+
+
+def test_search_empty_shows_browse_categories(app):
+    dialog = _search_dialog(app)
+    dialog.search_bar.setText("")
+    tops = [dialog.tree.topLevelItem(i).text(0) for i in range(dialog.tree.topLevelItemCount())]
+    assert any("Parameters" in t for t in tops)
+    assert any("Commands" in t for t in tops)
+
+
+def test_search_ranks_label_match_first_and_flattens(app):
+    dialog = _search_dialog(app)
+    dialog.search_bar.setText("align")
+    payloads = _result_payloads(dialog)
+    # Flat result list (no category rows), best label match first.
+    assert payloads and payloads[0].get("display") == "Align Cameras"
+    assert dialog.tree.currentItem() is dialog.tree.topLevelItem(0)
+
+
+def test_search_multiword_and_across_fields(app):
+    dialog = _search_dialog(app)
+    dialog.search_bar.setText("calc model")
+    payloads = _result_payloads(dialog)
+    assert payloads[0].get("display") == "Calculate Model"
+
+
+def test_search_matches_description_keyword(app):
+    dialog = _search_dialog(app)
+    dialog.search_bar.setText("dense")  # appears only in the description
+    displays = [p.get("display") for p in _result_payloads(dialog)]
+    assert "Calculate Model" in displays
+
+
+def test_search_fuzzy_subsequence(app):
+    dialog = _search_dialog(app)
+    dialog.search_bar.setText("almod")  # subsequence of "Calculate Model"
+    displays = [p.get("display") for p in _result_payloads(dialog)]
+    assert "Calculate Model" in displays
+
+
+def test_search_enter_creates_best_match(app):
+    dialog = _search_dialog(app)
+    dialog.search_bar.setText("calc")
+    dialog._activate_selection()
+    assert dialog.payload is not None
+    assert dialog.payload.get("command") == "-calculateModel"
+
+
+# ── performance invariants ──────────────────────────────────────────────────────
+
+def test_node_bounds_include_selection_margin(window):
+    import configuration as cfg
+    node = _param(window, "string")
+    bounds = node.boundingRect()
+    assert bounds.left() == -cfg.NODE_BOUNDS_MARGIN
+    assert bounds.top() == -cfg.NODE_BOUNDS_MARGIN
+
+
+def test_view_uses_partial_updates(window):
+    from PyQt5.QtWidgets import QGraphicsView
+    assert window.view.viewportUpdateMode() == QGraphicsView.SmartViewportUpdate
+
+
+def test_vignette_is_under_items_not_dimming_them(window, app):
+    from PyQt5.QtWidgets import QGraphicsView, QGraphicsRectItem
+    from PyQt5.QtGui import QColor, QBrush
+    from PyQt5.QtCore import QRectF
+    window.resize(600, 400)
+    window.show()
+    app.processEvents()
+    bright = QGraphicsRectItem(QRectF(-5000, -5000, 10000, 10000))
+    bright.setBrush(QBrush(QColor(255, 255, 255)))
+    bright.setZValue(-5)  # above the background/vignette, like any node
+    window.scene.addItem(bright)
+    app.processEvents()
+
+    image = window.view.viewport().grab().toImage()
+    corner = image.pixelColor(3, 3)
+    # An item over the strongest vignette corner must stay fully bright — the
+    # vignette darkens only the canvas/grid beneath, never the items.
+    assert (corner.red(), corner.green(), corner.blue()) == (255, 255, 255)
+    assert window.view._vignette_brush is not None
+
+
+def test_scene_rect_recalc_is_debounced(window):
+    # Adding nodes schedules a single coalesced recalc rather than one per node.
+    window.scene._rect_recalc_pending = False
+    _param(window, "string", x=0)
+    _param(window, "string", x=40)
+    assert window.scene._rect_recalc_pending is True
+
+
 def test_auto_create_promotes_integer_named_params(window):
     cmd = _command(window, required=["width", "name"])
     reqs = []
