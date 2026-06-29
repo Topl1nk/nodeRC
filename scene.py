@@ -112,7 +112,30 @@ class NodeScene(QGraphicsScene):
         super().addItem(self._drag_preview_line)
 
     def mousePressEvent(self, event):
-        super().mousePressEvent(event)
+        selected_before = self.selectedItems()
+        self._pre_click_selection = selected_before
+        from PyQt5.QtGui import QTransform
+        from PyQt5.QtWidgets import QGraphicsProxyWidget
+        clicked_item = self.itemAt(event.scenePos(), QTransform())
+        
+        is_proxy_click = False
+        curr = clicked_item
+        while curr:
+            if isinstance(curr, QGraphicsProxyWidget):
+                is_proxy_click = True
+                break
+            curr = curr.parentItem()
+
+        try:
+            super().mousePressEvent(event)
+        finally:
+            self._pre_click_selection = None
+
+        if is_proxy_click and selected_before:
+            for item in selected_before:
+                if item.scene() == self:
+                    item.setSelected(True)
+
         self._drag_start_positions = {item: item.pos() for item in self.selectedItems() if isinstance(item, MetaNode)}
 
     def mouseMoveEvent(self, event):

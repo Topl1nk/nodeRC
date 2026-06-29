@@ -61,18 +61,15 @@ class GraphicsView(QGraphicsView):
             return
         self.scale(factor, factor)
 
-    def frame_content(self, items=None):
-        """Fit the view to the given items, or to the whole graph when none are given."""
+    def frame_content(self, items):
+        """Fit the view to the given list of items (MetaNodes or any scene items)."""
         scene = self.scene()
-        if scene is None:
+        if scene is None or not items:
             return
-        if items:
-            rect = QRectF()
-            for item in items:
-                rect = rect.united(item.sceneBoundingRect())
-        else:
-            rect = scene.itemsBoundingRect()
-        if rect.isNull() or rect.isEmpty():
+        rect = items[0].sceneBoundingRect()
+        for item in items[1:]:
+            rect = rect.united(item.sceneBoundingRect())
+        if not rect.isValid() or rect.isNull():
             return
         self.fitInView(rect.adjusted(-VIEW_FRAME_MARGIN, -VIEW_FRAME_MARGIN,
                                      VIEW_FRAME_MARGIN, VIEW_FRAME_MARGIN), Qt.KeepAspectRatio)

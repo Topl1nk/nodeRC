@@ -20,6 +20,11 @@ from configuration import (
     WINDOW_BACKGROUND_COLOR, UNDO_HISTORY_LIMIT,
     DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR,
     TEXT_COLOR, VECTOR_PARAM_TYPES,
+    KEY_SPAWN_MENU, KEY_DELETE, KEY_SAVE, KEY_OPEN,
+    KEY_COPY, KEY_PASTE, KEY_UNDO, KEY_REDO,
+    KEY_TOGGLE_GRID, KEY_FIT_VIEW, KEY_FULLSCREEN,
+    KEY_RENAME_NODE, KEY_SELECT_ALL,
+    MOD_NONE, MOD_CTRL, MOD_CTRL_SHIFT,
 )
 from diagnostics import log_and_explain
 from nodeRC import builtin_command_defaults
@@ -243,48 +248,71 @@ class NodeEditorWindow(QMainWindow):
             node._refresh_connections()
         self.scene.recalculate_scene_rect()
 
+    def select_all(self):
+        for item in self.scene.items():
+            if isinstance(item, (MetaNode, Connection)):
+                item.setSelected(True)
+
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Space:
+        key  = event.key()
+        mods = event.modifiers()
+        if key == KEY_SPAWN_MENU:
             cursor_in_scene = self.view.mapToScene(
                 self.view.mapFromGlobal(QCursor.pos()))
             self.scene._show_node_creation_menu(cursor_in_scene, QCursor.pos())
             event.accept()
-        elif event.key() == Qt.Key_Delete:
+        elif key == KEY_DELETE:
             self._delete_selected_items()
             event.accept()
-        elif event.key() == Qt.Key_S and event.modifiers() == Qt.ControlModifier:
+        elif key == KEY_SAVE and mods == MOD_CTRL:
             self.save_project()
             event.accept()
-        elif event.key() == Qt.Key_S and event.modifiers() == (Qt.ControlModifier | Qt.ShiftModifier):
+        elif key == KEY_SAVE and mods == MOD_CTRL_SHIFT:
             self.save_project(save_as=True)
             event.accept()
-        elif event.key() == Qt.Key_O and event.modifiers() == Qt.ControlModifier:
+        elif key == KEY_OPEN and mods == MOD_CTRL:
             self.load_project()
             event.accept()
-        elif event.key() == Qt.Key_C and event.modifiers() == Qt.ControlModifier:
+        elif key == KEY_COPY and mods == MOD_CTRL:
             self.copy_nodes()
             event.accept()
-        elif event.key() == Qt.Key_V and event.modifiers() == Qt.ControlModifier:
+        elif key == KEY_PASTE and mods == MOD_CTRL:
             self.paste_nodes()
             event.accept()
-        elif event.key() == Qt.Key_Z and event.modifiers() == Qt.ControlModifier:
+        elif key == KEY_UNDO and mods == MOD_CTRL:
             self.undo()
             event.accept()
-        elif event.key() == Qt.Key_Z and event.modifiers() == (Qt.ControlModifier | Qt.ShiftModifier):
+        elif key == KEY_UNDO and mods == MOD_CTRL_SHIFT:
             self.redo()
             event.accept()
-        elif event.key() == Qt.Key_Y and event.modifiers() == Qt.ControlModifier:
+        elif key == KEY_REDO and mods == MOD_CTRL:
             self.redo()
             event.accept()
-        elif event.key() == Qt.Key_G and event.modifiers() == Qt.NoModifier:
+        elif key == KEY_TOGGLE_GRID and mods == MOD_NONE:
             self.scene.grid_visible = not getattr(self.scene, "grid_visible", True)
             self.scene.update()
             event.accept()
-        elif event.key() == Qt.Key_F and event.modifiers() == Qt.NoModifier:
-            selected = [i for i in self.scene.selectedItems() if isinstance(i, MetaNode)]
-            self.view.frame_content(selected or None)
+        elif key == KEY_FIT_VIEW and mods == MOD_NONE:
+            selected_nodes = [i for i in self.scene.selectedItems() if isinstance(i, MetaNode)]
+            target = selected_nodes or [i for i in self.scene.items() if isinstance(i, MetaNode)]
+            if target:
+                self.view.frame_content(target)
             event.accept()
-        elif event.key() == Qt.Key_F11:
+        elif key == KEY_RENAME_NODE and mods == MOD_NONE:
+            selected = [
+                i for i in self.scene.selectedItems()
+                if isinstance(i, MetaNode) and hasattr(i, "_begin_rename")
+            ]
+            if len(selected) == 1:
+                selected[0]._begin_rename()
+                # Transfer keyboard focus to the view so the scene routes key events
+                # to the text item that _begin_rename() just put into edit mode.
+                self.view.setFocus(Qt.OtherFocusReason)
+            event.accept()
+        elif key == KEY_SELECT_ALL and mods == MOD_CTRL:
+            self.select_all()
+            event.accept()
+        elif key == KEY_FULLSCREEN:
             if self.isFullScreen():
                 self.showNormal()
             else:
@@ -402,6 +430,48 @@ class NodeEditorWindow(QMainWindow):
                 node._refresh_connections()
         finally:
             self._block_undo_push = False
+        self.push_undo_state()
+
+    def duplicate_nodes(self):
+        self.copy_nodes()
+        clipboard_text = QApplication.clipboard().text()
+        if not clipboard_text.startswith("NODERC_CLIPBOARD:"):
+            return
+        try:
+            clipboard_payload = json.loads(clipboard_text.replace("NODERC_CLIPBOARD:", "", 1))
+        except Exception as exc:
+            log_and_explain("Failed to parse nodes for duplication", exc)
+            return
+
+        self._block_undo_push = True
+        try:
+            self.scene.clearSelection()
+            cursor = self.view.mapToScene(self.view.viewport().rect().center())
+            id_to_node: Dict[int, MetaNode] = {}
+            for record in clipboard_payload.get("nodes", []):
+                pos = QPointF(cursor.x() + record["rel_x"] + 50, cursor.y() + record["rel_y"] + 50)
+                node = self._deserialize_node(record, pos)
+                if node is None:
+                    continue
+                id_to_node[record["id"]] = node
+                node.setSelected(True)
+            self._rebuild_connections(clipboard_payload.get("connections", []), id_to_node)
+            for node in id_to_node.values():
+                node._refresh_connections()
+        finally:
+            self._block_undo_push = False
+        self.push_undo_state()
+
+    def group_selected_nodes(self):
+        selected = [i for i in self.scene.selectedItems() if isinstance(i, MetaNode)]
+        if not selected: return
+        rect = selected[0].sceneBoundingRect()
+        for node in selected[1:]:
+            rect = rect.united(node.sceneBoundingRect())
+        rect = rect.adjusted(-20, -40, 20, 20)
+        from nodes_base import GroupFrameItem
+        frame = GroupFrameItem(rect, title="Logical Group")
+        self.scene.addItem(frame)
         self.push_undo_state()
 
     def save_project(self, save_as: bool = False):

@@ -91,7 +91,8 @@ VIEW_FRAME_MARGIN = 60  # padding (scene px) around framed content when fitting 
 
 # ── Auto-spawned parameter placement ───────────────────────────────────────────
 AUTOSPAWN_X_GAP    = 280  # distance left of the command node for a created param node
-AUTOSPAWN_Y_OFFSET = -40  # vertical nudge aligning the param node to its target socket
+AUTOSPAWN_Y_OFFSET = -40  # vertical start offset of the first created param node
+AUTOSPAWN_V_GAP    = 14   # vertical gap between stacked created param nodes (no overlap)
 
 # ── Socket/node color schema per type ─────────────────────────────────────────
 # Blueprint scheme: dark blue backgrounds, distinct pastel outlines/sockets
@@ -113,7 +114,35 @@ SOCKET_COLOR_SCHEMA: dict[str, dict[str, str]] = {
 }
 SOCKET_HOVER_COLOR = "#FFFFFF"
 
-# ── General Interface Colors ───────────────────────────────────────────────────
+# ── UI Dimensions & Colors ─────────────────────────────────────────────────────
+
+from PyQt5.QtCore import Qt
+
+# ── Keyboard Shortcuts ─────────────────────────────────────────────────────────
+KEY_SPAWN_MENU   = Qt.Key_Space
+KEY_DELETE       = Qt.Key_Delete
+KEY_SAVE         = Qt.Key_S
+KEY_OPEN         = Qt.Key_O
+KEY_COPY         = Qt.Key_C
+KEY_PASTE        = Qt.Key_V
+KEY_UNDO         = Qt.Key_Z
+KEY_REDO         = Qt.Key_Y
+KEY_TOGGLE_GRID  = Qt.Key_G
+KEY_FIT_VIEW     = Qt.Key_F
+KEY_FULLSCREEN   = Qt.Key_F11
+KEY_COMMIT_EDIT  = [Qt.Key_Return, Qt.Key_Enter]
+KEY_CANCEL_EDIT  = Qt.Key_Escape
+KEY_RENAME_NODE  = Qt.Key_F2
+KEY_SELECT_ALL   = Qt.Key_A
+
+# ── Keyboard Modifiers ────────────────────────────────────────────────────────
+MOD_NONE       = Qt.NoModifier
+MOD_CTRL       = Qt.ControlModifier
+MOD_CTRL_SHIFT = Qt.ControlModifier | Qt.ShiftModifier
+
+# General Node Defaults
+NODE_CORNER_RADIUS = 5.0
+
 NODE_BORDER_COLOR = "#3A76B8"
 NODE_SELECTED_COLOR = "#FFFFFF"
 CONNECTION_SELECTED_COLOR = "#FFFFFF"

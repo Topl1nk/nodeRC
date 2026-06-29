@@ -423,13 +423,56 @@ def test_scene_rect_recalc_is_debounced(window):
 
 def test_auto_create_promotes_integer_named_params(window):
     cmd = _command(window, required=["width", "name"])
-    reqs = []
-    for p in nc.group_xyz_params(cmd.cmd_def["required"], set()):
-        sock = cmd.get_socket(nc.param_spec_name(p))
-        if sock:
-            reqs.append((p, sock))
-    cmd.auto_create_required_parameters(reqs)
+    cmd.auto_create_required_parameters()
 
     displays = [p.creation_data["display"] for p in _nodes_of(window, nb._BaseParamNode)]
     assert any(d.startswith("[I] width") for d in displays)
     assert any(d.startswith("[S] name") for d in displays)
+
+
+def test_auto_create_works_when_some_params_already_connected(window):
+    cmd = _command(window, required=["width", "height"])
+    # pre-connect one param
+    p = _param(window, "integer")
+    ws = cmd.get_socket("width")
+    o = p.get_socket("value_out")
+    from nodes_base import Connection
+    window.scene._enforce_connection_rules(o, ws)
+    c = Connection(o, ws)
+    window.scene.addItem(c)
+    window.connections.append(c)
+    assert len(window.connections) == 1
+
+    cmd.auto_create_required_parameters()
+    # both params created/wired; original manual wire replaced
+    created = _nodes_of(window, nb._BaseParamNode)
+    assert len(created) >= 2
+    assert len(window.connections) >= 2
+
+
+def test_f2_rename_param_node(window):
+    p = _param(window, "string")
+    p._begin_rename()
+    assert p.title_item.textInteractionFlags() != 0
+    p.title_item.setPlainText("renamed")
+    p._commit_rename()
+    assert "renamed" in p.title_item.toHtml()
+    assert p.creation_data["display"] == "renamed"
+
+
+def test_f2_rename_command_node(window):
+    cmd = _command(window)
+    cmd._begin_rename()
+    assert cmd.title_item.textInteractionFlags() != 0
+    cmd.title_item.setPlainText("my command")
+    cmd._commit_rename()
+    assert "my command" in cmd.title_item.toHtml()
+
+
+def test_rename_cancel_restores_title(window):
+    p = _param(window, "string", x=0)
+    original = p.title_item.toPlainText()
+    p._begin_rename()
+    p.title_item.setPlainText("garbage")
+    p._cancel_rename()
+    assert p.title_item.toPlainText() == original

@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (
     QGraphicsProxyWidget, QLineEdit, QCheckBox,
     QSpinBox, QComboBox, QGraphicsPathItem, QWidget,
     QHBoxLayout, QToolButton, QStyle, QLabel,
-    QApplication, QAbstractSpinBox,
+    QApplication, QAbstractSpinBox, QMenu, QGraphicsRectItem,
 )
 from PyQt5.QtGui import (
     QPen, QBrush, QColor, QPainterPath, QFont, QPainter, QPolygonF,
@@ -32,6 +32,8 @@ from configuration import (
     NODE_SOCKET_Z, NODE_WIDGET_Z_BASE, NODE_LINKED_FIELD_Z,
     FIELD_QSS, COMBOBOX_QSS, SPINBOX_QSS, CHECKBOX_QSS,
     TOOLBTN_QSS, VECTOR_TOGGLE_QSS, VECTOR_AXIS_LABEL_QSS,
+    CONTEXT_MENU_STYLESHEET,
+    KEY_COMMIT_EDIT, KEY_CANCEL_EDIT,
 )
 
 
@@ -193,13 +195,9 @@ class Connection(QGraphicsPathItem):
                          QPointF(p2.x() - ctrl, p2.y()), p2)
             self.setPath(path)
         except RuntimeError:
-            # An endpoint's underlying C++ socket was already deleted (node removed
-            # mid-refresh); the wire is about to be dropped too, so there is nothing
-            # to draw and nothing to report.
             pass
 
     def boundingRect(self) -> QRectF:
-        # Pad past the widest (selected) pen so partial repaints leave no wire trail.
         return super().boundingRect().adjusted(
             -NODE_BOUNDS_MARGIN, -NODE_BOUNDS_MARGIN,
             NODE_BOUNDS_MARGIN, NODE_BOUNDS_MARGIN)
@@ -210,6 +208,29 @@ class Connection(QGraphicsPathItem):
         self.setPen(self._pen_selected if self.isSelected() else self._pen)
         painter.setRenderHint(QPainter.Antialiasing)
         super().paint(painter, option, widget)
+
+
+class GroupFrameItem(QGraphicsRectItem):
+    """A visual frame for grouping nodes. Resizes automatically to fit grouped nodes, or can be static."""
+    def __init__(self, rect: QRectF, title: str = "Group"):
+        super().__init__(rect)
+        self.title = title
+        self.setZValue(-100) # Deep background
+        self.setFlag(QGraphicsItem.ItemIsSelectable)
+        self.setFlag(QGraphicsItem.ItemIsMovable)
+        self.setBrush(QBrush(QColor(30, 30, 30, 150)))
+        self.setPen(QPen(QColor("#404040"), 2, Qt.DashLine))
+
+    def paint(self, painter, option, widget):
+        super().paint(painter, option, widget)
+        painter.setPen(QColor(TEXT_COLOR))
+        painter.setFont(QFont("Consolas", 12, QFont.Bold))
+        painter.drawText(self.rect().adjusted(10, 10, -10, -10), Qt.AlignTop | Qt.AlignLeft, self.title)
+        if self.isSelected():
+            painter.setPen(QPen(QColor(NODE_SELECTED_COLOR), 1, Qt.DashLine))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(self.rect())
+
 
 
 class _SelectionOverlay(QGraphicsItem):
@@ -297,7 +318,7 @@ class MetaNode(QGraphicsObject):
         self.update_vector_buttons_visibility()
 
     def _build_title_item(self, html: str) -> QGraphicsTextItem:
-        item = QGraphicsTextItem(self)
+        item = _EditableTitleItem(self)
         item.setHtml(html)
         return item
 
@@ -306,6 +327,51 @@ class MetaNode(QGraphicsObject):
             NODE_HORIZONTAL_PAD,
             (NODE_HEADER_HEIGHT - self.title_item.boundingRect().height()) / 2.0,
         )
+
+    # ── In-place rename ───────────────────────────────────────────────────────
+
+    def _begin_rename(self):
+        item = self.title_item
+        self._rename_backup = item.toPlainText()
+        item.setDefaultTextColor(QColor(TEXT_COLOR))
+        item.setFont(QFont("Consolas", 9))
+        item.setPlainText(self._rename_backup)
+        item.setZValue(NODE_SOCKET_Z)
+        item.setTextInteractionFlags(Qt.TextEditorInteraction)
+        item.setFocus(Qt.OtherFocusReason)
+        cursor = item.textCursor()
+        cursor.select(QTextCursor.Document)
+        item.setTextCursor(cursor)
+
+    def _end_rename(self) -> bool:
+        item = self.title_item
+        if item.textInteractionFlags() == Qt.NoTextInteraction:
+            return False
+        item.setTextInteractionFlags(Qt.NoTextInteraction)
+        item.setZValue(0)
+        return True
+
+    def _commit_rename(self):
+        if not self._end_rename():
+            return
+        name = self.title_item.toPlainText().strip() or self._rename_backup
+        self._apply_title(name)
+        self._on_renamed(name)
+        win = self._editor_window()
+        if win:
+            win.push_undo_state()
+
+    def _cancel_rename(self):
+        if not self._end_rename():
+            return
+        self._apply_title(self._rename_backup)
+
+    def _apply_title(self, text: str):
+        self.title_item.setHtml(_html_title(text))
+        self._center_title()
+
+    def _on_renamed(self, name: str):
+        """Override to react to a committed rename (e.g. update creation_data)."""
 
     def boundingRect(self) -> QRectF:
         d = self.node_def
@@ -322,8 +388,12 @@ class MetaNode(QGraphicsObject):
         painter.setRenderHint(QPainter.Antialiasing)
         d = self.node_def
 
+        win = self._editor_window()
+        is_linked = win is not None and self in getattr(win, '_linked_group', [])
+        visually_selected = self.isSelected() or is_linked
+
         painter.setPen(
-            QPen(QColor(NODE_SELECTED_COLOR), 2.0) if self.isSelected()
+            QPen(QColor(NODE_SELECTED_COLOR), 2.0) if visually_selected
             else QPen(QColor(NODE_BORDER_COLOR), 1.0)
         )
         painter.setBrush(QBrush(QColor(d.body_color)))
@@ -348,7 +418,10 @@ class MetaNode(QGraphicsObject):
         if change == QGraphicsItem.ItemPositionHasChanged and self.scene():
             self._refresh_connections()
         if change == QGraphicsItem.ItemSelectedHasChanged:
-            self._selection_overlay.setVisible(bool(value))
+            if hasattr(self, "_refresh_selection_visuals"):
+                self._refresh_selection_visuals()
+            else:
+                self._selection_overlay.setVisible(bool(value))
         return super().itemChange(change, value)
 
     def mouseReleaseEvent(self, event):
@@ -436,6 +509,58 @@ class MetaNode(QGraphicsObject):
     def get_socket(self, name: str) -> Optional[SocketItem]:
         return self.sockets.get(name)
 
+    def _editor_window(self):
+        scene = self.scene()
+        return getattr(scene, "nodeEditorWindow", None) if scene else None
+
+    def _run_context_menu(self, event, actions):
+        """Show a node context menu.
+
+        Each entry in `actions` is either:
+          - ``(label, callback, enabled)`` — a normal action
+          - ``None``                       — a visual separator
+        """
+        menu = QMenu()
+        menu.setStyleSheet(CONTEXT_MENU_STYLESHEET)
+        handlers = {}
+        for item in actions:
+            if item is None:
+                menu.addSeparator()
+                continue
+            label, callback, enabled = item
+            entry = menu.addAction(label)
+            entry.setEnabled(enabled and callback is not None)
+            handlers[entry] = callback
+        chosen = menu.exec_(event.screenPos())
+        if chosen is not None and handlers.get(chosen):
+            handlers[chosen]()
+        event.accept()
+
+    def _delete_self(self):
+        win = self._editor_window()
+        if win:
+            self.setSelected(True)
+            win._delete_selected_items()
+
+    def contextMenuEvent(self, event):
+        win = self._editor_window()
+        if not win:
+            super().contextMenuEvent(event)
+            return
+
+        is_param = isinstance(self, _BaseParamNode)
+
+        self._run_context_menu(event, [
+            ("Rename",         getattr(self, "_begin_rename", None), is_param),
+            None,
+            ("Duplicate",      getattr(win, "duplicate_nodes",      None), True),
+            ("Copy",           getattr(win, "copy_nodes",           None), True),
+            ("Paste",          getattr(win, "paste_nodes",          None), True),
+            ("Group in Frame", getattr(win, "group_selected_nodes", None), True),
+            None,
+            ("Delete Node",    self._delete_self,                          True),
+        ])
+
     def serialize_payload(self) -> dict:
         """Type-specific fields needed to reconstruct this node (sans id/position).
 
@@ -461,7 +586,7 @@ class NodeComboBox(QComboBox):
 class _EditableTitleItem(QGraphicsTextItem):
     """Header title that edits in place; commits on Enter/focus-out, reverts on Esc."""
 
-    def __init__(self, node: _BaseParamNode):
+    def __init__(self, node: MetaNode):
         super().__init__(node)
         self._node = node
 
@@ -474,10 +599,10 @@ class _EditableTitleItem(QGraphicsTextItem):
         super().paint(painter, option, widget)
 
     def keyPressEvent(self, event):
-        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+        if event.key() in KEY_COMMIT_EDIT:
             self._node._commit_rename()
             event.accept()
-        elif event.key() == Qt.Key_Escape:
+        elif event.key() == KEY_CANCEL_EDIT:
             self._node._cancel_rename()
             event.accept()
         else:
@@ -493,11 +618,6 @@ class _BaseParamNode(MetaNode):
         super().__init__(node_def)
         self._update_scheduled = False
 
-    def _build_title_item(self, html: str) -> QGraphicsTextItem:
-        item = _EditableTitleItem(self)
-        item.setHtml(html)
-        return item
-
     def serialize_payload(self) -> dict:
         return {
             "creation_data": getattr(self, "creation_data",
@@ -505,56 +625,18 @@ class _BaseParamNode(MetaNode):
             "current_value": self.get_value_state(),
         }
 
+    def _on_renamed(self, name: str):
+        creation_data = dict(getattr(self, "creation_data", {}) or {})
+        creation_data.setdefault("param_type", self.TYPE_ID)
+        creation_data["display"] = name
+        self.creation_data = creation_data
+
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.LeftButton:
             self._begin_rename()
             event.accept()
         else:
             super().mouseDoubleClickEvent(event)
-
-    def _begin_rename(self):
-        item = self.title_item
-        self._rename_backup = item.toPlainText()
-        item.setDefaultTextColor(QColor(TEXT_COLOR))
-        item.setFont(QFont("Consolas", 9))
-        item.setPlainText(self._rename_backup)
-        item.setZValue(NODE_SOCKET_Z)
-        item.setTextInteractionFlags(Qt.TextEditorInteraction)
-        item.setFocus(Qt.MouseFocusReason)
-        cursor = item.textCursor()
-        cursor.select(QTextCursor.Document)
-        item.setTextCursor(cursor)
-
-    def _end_rename(self) -> bool:
-        item = self.title_item
-        if item.textInteractionFlags() == Qt.NoTextInteraction:
-            return False
-        item.setTextInteractionFlags(Qt.NoTextInteraction)
-        item.setZValue(0)
-        return True
-
-    def _commit_rename(self):
-        if not self._end_rename():
-            return
-        name = self.title_item.toPlainText().strip() or self._rename_backup
-        self._apply_title(name)
-        creation_data = dict(getattr(self, "creation_data", {}) or {})
-        creation_data.setdefault("param_type", self.TYPE_ID)
-        creation_data["display"] = name
-        self.creation_data = creation_data
-        scene = self.scene()
-        win = getattr(scene, 'nodeEditorWindow', None) if scene else None
-        if win:
-            win.push_undo_state()
-
-    def _cancel_rename(self):
-        if not self._end_rename():
-            return
-        self._apply_title(self._rename_backup)
-
-    def _apply_title(self, text: str):
-        self.title_item.setHtml(_html_title(text))
-        self._center_title()
 
     def itemChange(self, change, value):
         result = super().itemChange(change, value)
@@ -673,10 +755,6 @@ class _BaseParamNode(MetaNode):
 
     _broadcasting: bool = False
 
-    def _editor_window(self) -> Optional[Any]:
-        scene = self.scene()
-        return getattr(scene, "nodeEditorWindow", None) if scene else None
-
     def _watch_field_focus(self, widget: QWidget):
         from PyQt5.QtWidgets import QAbstractButton
         for w in (widget, *widget.findChildren(QWidget)):
@@ -719,8 +797,12 @@ class _BaseParamNode(MetaNode):
         scene = self.scene()
         if not win or not scene:
             return
+        
+        pre_click = getattr(scene, '_pre_click_selection', None)
+        selected_items = pre_click if pre_click is not None else scene.selectedItems()
+        
         same_type = [
-            n for n in scene.selectedItems()
+            n for n in selected_items
             if isinstance(n, _BaseParamNode) and n.TYPE_ID == self.TYPE_ID
         ]
         group = same_type if self in same_type else [self, *same_type]
@@ -764,10 +846,30 @@ class _BaseParamNode(MetaNode):
         win.push_undo_state()
 
     def _refresh_selection_visuals(self):
-        self._selection_overlay.setVisible(self.isSelected())
+        win = self._editor_window()
+        is_linked = win is not None and self in getattr(win, '_linked_group', [])
+        self._selection_overlay.setVisible(self.isSelected() or is_linked)
+        self.update()
         self._adjust_proxy_z_values()
 
     def _adjust_proxy_z_values(self):
+        """
+        MASS EDIT / LINKED EDIT DESIGN MECHANICS:
+        
+        1. Linked Grouping: Clicking any parameter widget (QLineEdit, QComboBox, etc.) 
+           gathers all selected parameter nodes of the same type into `win._linked_group`.
+        2. Pre-Click Selection Tracking: By default, clicking a widget triggers a deselection 
+           pass in QGraphicsScene before focus is established. To counter this, `NodeScene` 
+           stores the pre-click selection state in `scene._pre_click_selection`, allowing 
+           us to reconstruct the full group correctly inside `_enter_linked_editing`.
+        3. Visual Wash Overlay: All selected/linked nodes have a white translucent 
+           `_SelectionOverlay` (Z = 2000) visible on top of their body.
+        4. Field Key Isolation: Only the actively edited field matches `win._active_field_key`. 
+           Its proxy Z-value is raised to `NODE_LINKED_FIELD_Z` (2500) so it paints above 
+           the selection overlay, removing the white haze only from the active input.
+        5. Inactive fields and other nodes in the selection group keep their original Z-values 
+           (below 2000), leaving them covered by the selection wash as expected.
+        """
         win = self._editor_window()
         is_edited = win is not None and self in win._linked_group
         active_key = getattr(win, '_active_field_key', None) if is_edited else None
@@ -783,6 +885,7 @@ class _BaseParamNode(MetaNode):
                 else:
                     if hasattr(child, '_original_z_value'):
                         child.setZValue(child._original_z_value)
+                        delattr(child, '_original_z_value')
                         child.update()
         
         self.update()

@@ -4,16 +4,17 @@ import xml.etree.ElementTree as ET
 from typing import List, Dict, Optional, Any
 
 from PyQt5.QtWidgets import (
-    QPushButton, QWidget, QHBoxLayout, QGraphicsProxyWidget, QFileDialog, QMenu,
+    QPushButton, QWidget, QHBoxLayout, QGraphicsProxyWidget, QFileDialog,
 )
 from PyQt5.QtGui import QDoubleValidator
-from PyQt5.QtCore import QPointF
+from PyQt5.QtCore import QPointF, Qt
 
 from configuration import (
     NODE_HEADER_HEIGHT, NODE_ROW_HEIGHT,
     NODE_HORIZONTAL_PAD, NODE_WIDGET_V_OFFSET,
-    INTEGER_PARAM_NAMES, PUSHBTN_QSS, CONTEXT_MENU_STYLESHEET,
-    AUTOSPAWN_X_GAP, AUTOSPAWN_Y_OFFSET,
+    INTEGER_PARAM_NAMES, PUSHBTN_QSS,
+    AUTOSPAWN_X_GAP, AUTOSPAWN_Y_OFFSET, AUTOSPAWN_V_GAP,
+    NODE_BORDER_COLOR,
 )
 from nodes_base import (
     SocketDef, NodeDef, MetaNode, _BaseParamNode, _VectorParamNode,
@@ -97,7 +98,7 @@ def _start_node_def() -> NodeDef:
         )],
         width=185,
         has_footer=False,
-        extra_rows=3.5,
+        extra_rows=5.0,
     )
 
 
@@ -157,7 +158,7 @@ class StartNode(MetaNode):
         rows = max(param_rows, default=-1) + 1
         btn_w = self.node_def.width - NODE_HORIZONTAL_PAD * 2
 
-        def _add_btn(label: str, tooltip: str, callback, row_offset: int):
+        def _add_btn(label: str, tooltip: str, callback, row_offset: float):
             btn = QPushButton(label)
             btn.setStyleSheet(PUSHBTN_QSS)
             btn.setFixedWidth(btn_w)
@@ -168,9 +169,25 @@ class StartNode(MetaNode):
             y = NODE_HEADER_HEIGHT + (rows + row_offset) * NODE_ROW_HEIGHT + NODE_WIDGET_V_OFFSET
             proxy.setPos(NODE_HORIZONTAL_PAD, y)
 
-        _add_btn("> Launch", "", self._request_chain_execution, 0)
-        _add_btn("Open",     "Ctrl+O", self._request_open,            1)
-        _add_btn("Save",     "Ctrl+S", self._request_save,            2)
+        # Launch sits alone at the top; file-management buttons are grouped below
+        # the separator so accidental clicks on Launch are physically impossible.
+        _add_btn("> Launch", "",              self._request_chain_execution, 0.0)
+
+        # Horizontal separator — visually isolates Launch from file operations
+        sep = QWidget()
+        sep.setFixedWidth(btn_w)
+        sep.setFixedHeight(2)
+        sep.setStyleSheet(f"background-color: {NODE_BORDER_COLOR};")
+        sep_proxy = QGraphicsProxyWidget(self)
+        sep_proxy.setWidget(sep)
+        sep_proxy.setPos(
+            NODE_HORIZONTAL_PAD,
+            NODE_HEADER_HEIGHT + (rows + 1.35) * NODE_ROW_HEIGHT + NODE_WIDGET_V_OFFSET,
+        )
+
+        _add_btn("Open",    "Ctrl+O",       self._request_open,    2.0)
+        _add_btn("Save",    "Ctrl+S",       self._request_save,    3.0)
+        _add_btn("Save As", "Ctrl+Shift+S", self._request_save_as, 4.0)
 
     def _request_chain_execution(self):
         scene = self.scene()
@@ -189,6 +206,12 @@ class StartNode(MetaNode):
         win = getattr(scene, 'nodeEditorWindow', None) if scene else None
         if win:
             win.save_project()
+
+    def _request_save_as(self):
+        scene = self.scene()
+        win = getattr(scene, 'nodeEditorWindow', None) if scene else None
+        if win:
+            win.save_project(save_as=True)
 
 
 class CommandNode(MetaNode):
@@ -241,76 +264,94 @@ class CommandNode(MetaNode):
         conn.source.meta_node._refresh_connections()
         conn.dest.meta_node._refresh_connections()
 
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._begin_rename()
+            event.accept()
+        else:
+            super().mouseDoubleClickEvent(event)
+
     def contextMenuEvent(self, event):
-        scene = self.scene()
-        win = getattr(scene, 'nodeEditorWindow', None) if scene else None
-        if not win:
+        if not self._editor_window():
             super().contextMenuEvent(event)
             return
+        has_required = bool(self.cmd_def.get("required", []))
+        win = self._editor_window()
+        self._run_context_menu(event, [
+            ("Rename",         self._begin_rename,                         True),
+            ("Auto-Create Required Parameters",
+             self.auto_create_required_parameters,
+             has_required),
+            None,
+            ("Duplicate",      getattr(win, "duplicate_nodes",      None), True),
+            ("Copy",           getattr(win, "copy_nodes",           None), True),
+            ("Paste",          getattr(win, "paste_nodes",          None), True),
+            ("Group in Frame", getattr(win, "group_selected_nodes", None), True),
+            None,
+            ("Delete Node",    self._delete_self,                          True),
+        ])
 
-        menu = QMenu()
-        menu.setStyleSheet(CONTEXT_MENU_STYLESHEET)
-
-        # Check if there are any required parameters that are NOT connected (grouped correctly)
-        required_grouped = group_xyz_params(self.cmd_def.get("required", []), self.expanded_vectors)
-        unconnected_reqs = []
-        for p in required_grouped:
-            p_name = p if isinstance(p, str) else p["name"]
-            socket = self.get_socket(p_name)
+    def _all_required_params(self):
+        """All required-parameter sockets on this command, connected or not."""
+        result = []
+        for param in group_xyz_params(self.cmd_def.get("required", []), self.expanded_vectors):
+            socket = self.get_socket(param_spec_name(param))
             if socket:
-                connected = False
-                for conn in win.connections:
-                    if conn.dest is socket:
-                        connected = True
-                        break
-                if not connected:
-                    unconnected_reqs.append((p, socket))
+                result.append((param, socket))
+        return result
 
-        auto_action = menu.addAction("Auto-Create Required Parameters")
-        auto_action.setEnabled(len(unconnected_reqs) > 0)
+    def auto_create_required_parameters(self):
+        """Create param nodes for every required parameter, replacing any existing wires.
 
-        action = menu.exec_(event.screenPos())
-        if action == auto_action:
-            self.auto_create_required_parameters(unconnected_reqs)
-        event.accept()
-
-    def auto_create_required_parameters(self, unconnected_reqs):
+        Always operates on the full required-param list so the result is identical
+        regardless of what was manually connected beforehand.
+        """
         scene = self.scene()
-        win = getattr(scene, 'nodeEditorWindow', None) if scene else None
+        win = self._editor_window()
         if not win or not scene:
             return
 
+        all_required = self._all_required_params()
         win._block_undo_push = True
         try:
             command_pos = self.scenePos()
+            spawn_y = command_pos.y() + AUTOSPAWN_Y_OFFSET
 
-            for param, socket in unconnected_reqs:
-                param_name   = param_spec_name(param)
-                param_type   = _resolve_param_type(param_name, param)
-                param_values = [] if isinstance(param, str) else param.get("values", [])
+            for param, socket in all_required:
+                try:
+                    # Remove any existing incoming wire on this socket so the
+                    # auto-created node becomes the one true source.
+                    for c in [c for c in win.connections if c.dest is socket]:
+                        scene.removeItem(c)
+                        win.connections.remove(c)
 
-                prefix = PARAM_TYPE_PREFIX.get(param_type, "")
-                creation_data = {
-                    "param_type": param_type,
-                    "display": f"{prefix} {param_name}" if prefix else param_name,
-                    "values": param_values,
-                }
+                    param_name   = param_spec_name(param)
+                    param_type   = _resolve_param_type(param_name, param)
+                    param_values = [] if isinstance(param, str) else param.get("values", [])
 
-                param_pos = QPointF(
-                    command_pos.x() - AUTOSPAWN_X_GAP,
-                    command_pos.y() + socket.pos().y() + AUTOSPAWN_Y_OFFSET,
-                )
-                param_node = win.add_param_node(param_pos, creation_data)
-                if not param_node:
-                    continue
+                    prefix = PARAM_TYPE_PREFIX.get(param_type, "")
+                    creation_data = {
+                        "param_type": param_type,
+                        "display": f"{prefix} {param_name}" if prefix else param_name,
+                        "values": param_values,
+                    }
 
-                out_socket = (
-                    param_node.get_socket("dirpath_out") if param_type == "dirpath"
-                    else param_node.get_socket("path_out") if param_type == "filepath"
-                    else param_node.get_socket("value_out")
-                )
-                if out_socket:
-                    self._rewire(scene, win, out_socket, socket)
+                    param_node = win.add_param_node(
+                        QPointF(command_pos.x() - AUTOSPAWN_X_GAP, spawn_y), creation_data)
+                    if not param_node:
+                        continue
+                    spawn_y += param_node.node_def.body_height + AUTOSPAWN_V_GAP
+
+                    out_socket = (
+                        param_node.get_socket("dirpath_out") if param_type == "dirpath"
+                        else param_node.get_socket("path_out") if param_type == "filepath"
+                        else param_node.get_socket("value_out")
+                    )
+                    if out_socket:
+                        self._rewire(scene, win, out_socket, socket)
+                except Exception as exc:
+                    from diagnostics import log_and_explain
+                    log_and_explain(f"Skipped auto-creating parameter {param}", exc)
 
             self._refresh_connections()
             for p_node in [c.source.meta_node for c in win.connections if c.dest.meta_node is self]:
@@ -524,7 +565,7 @@ class EnumParamNode(_BaseParamNode):
             win = getattr(self.scene(), 'nodeEditorWindow', None)
             if win:
                 for conn in win.connections:
-                    if conn.dest is src_socket:
+                    if conn.dest.meta_node is self and conn.dest.sock_def.name == src_socket.sock_def.name:
                         self._populate_from_source(
                             conn.source.meta_node.get_value(conn.source.sock_def.name)
                         )
