@@ -10,7 +10,7 @@ from configuration import (
     GRID_COLOR_SMALL, GRID_COLOR_LARGE, SCENE_PADDING
 )
 from search_menu import SearchMenuDialog
-from nodes_base import Connection, SocketItem, MetaNode
+from nodes_base import Connection, SocketItem, MetaNode, GroupFrameItem
 
 
 class NodeScene(QGraphicsScene):
@@ -114,6 +114,18 @@ class NodeScene(QGraphicsScene):
     def mousePressEvent(self, event):
         selected_before = self.selectedItems()
         self._pre_click_selection = selected_before
+        
+        # Capture start-of-drag nodes inside each group frame
+        for item in self.items():
+            if isinstance(item, GroupFrameItem):
+                item._dragged_inner_nodes = []
+                frame_scene_rect = item.mapToScene(item.rect()).boundingRect()
+                for other in self.items():
+                    if isinstance(other, MetaNode) and other != item:
+                        node_center = other.sceneBoundingRect().center()
+                        if frame_scene_rect.contains(node_center):
+                            item._dragged_inner_nodes.append(other)
+
         from PyQt5.QtGui import QTransform
         from PyQt5.QtWidgets import QGraphicsProxyWidget
         clicked_item = self.itemAt(event.scenePos(), QTransform())
@@ -137,6 +149,33 @@ class NodeScene(QGraphicsScene):
                     item.setSelected(True)
 
         self._drag_start_positions = {item: item.pos() for item in self.selectedItems() if isinstance(item, MetaNode)}
+        
+        # Raise Z-value of all dragged nodes to 10000 to keep them on top during movement
+        self._dragged_nodes = []
+        selected_meta = [item for item in self.selectedItems() if isinstance(item, MetaNode)]
+        self._dragged_nodes.extend(selected_meta)
+        for item in self.selectedItems():
+            if isinstance(item, GroupFrameItem):
+                for other in getattr(item, '_dragged_inner_nodes', []):
+                    if other not in self._dragged_nodes:
+                        self._dragged_nodes.append(other)
+                        
+        for node in self._dragged_nodes:
+            if not hasattr(node, '_original_z'):
+                node._original_z = node.zValue()
+            node.setZValue(10000)
+
+    def _restore_dragged_z(self):
+        # Undo the press-time Z lift that kept dragged nodes on top, and drop the
+        # per-frame inner-node capture so the next drag recomputes membership.
+        for node in getattr(self, '_dragged_nodes', []):
+            if hasattr(node, '_original_z'):
+                node.setZValue(node._original_z)
+                del node._original_z
+        self._dragged_nodes = []
+        for item in self.items():
+            if isinstance(item, GroupFrameItem):
+                item._dragged_inner_nodes = []
 
     def mouseMoveEvent(self, event):
         if self._drag_active and self._drag_preview_line and self._drag_source:
@@ -194,6 +233,7 @@ class NodeScene(QGraphicsScene):
                 self._drag_start_positions = {}
             if moved and self.nodeEditorWindow:
                 self.nodeEditorWindow.push_undo_state()
+        self._restore_dragged_z()
 
     def _find_compatible_socket(self, scene_pos: QPointF) -> Optional[SocketItem]:
         """

@@ -152,6 +152,8 @@ def _command_node_def(cmd_def: dict, expanded_vectors: set = None) -> NodeDef:
 
 
 class StartNode(MetaNode):
+    is_protected = True  # the chain's root: bulk delete and group-clear must spare it
+
     def __init__(self):
         super().__init__(_start_node_def())
         param_rows = [s.row for s in self.node_def.sockets if not s.is_exec]

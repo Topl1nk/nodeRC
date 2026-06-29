@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QMessageBox, QFileDialog, QApplication, QVBoxLayout
 )
 from PyQt5.QtGui import QCursor, QColor
-from PyQt5.QtCore import Qt, QPointF
+from PyQt5.QtCore import Qt, QPointF, QRectF
 
 from configuration import (
     RC_EXECUTABLE, COMMAND_DB_JSON,
@@ -23,15 +23,17 @@ from configuration import (
     KEY_SPAWN_MENU, KEY_DELETE, KEY_SAVE, KEY_OPEN,
     KEY_COPY, KEY_PASTE, KEY_UNDO, KEY_REDO,
     KEY_TOGGLE_GRID, KEY_FIT_VIEW, KEY_FULLSCREEN,
-    KEY_RENAME_NODE, KEY_SELECT_ALL,
+    KEY_RENAME_NODE, KEY_SELECT_ALL, KEY_GROUP, KEY_DUPLICATE,
     MOD_NONE, MOD_CTRL, MOD_CTRL_SHIFT,
+    GROUP_FRAME_PAD_LEFT, GROUP_FRAME_PAD_TOP,
+    GROUP_FRAME_PAD_RIGHT, GROUP_FRAME_PAD_BOTTOM,
 )
 from diagnostics import log_and_explain
 from nodeRC import builtin_command_defaults
 
 from view import GraphicsView
 from scene import NodeScene
-from nodes_base import Connection, MetaNode, _BaseParamNode
+from nodes_base import Connection, MetaNode, _BaseParamNode, GroupFrameItem
 from nodes_concrete import (
     StartNode, CommandNode, PARAM_NODE_TYPES, group_xyz_params, StringParamNode, EnumParamNode
 )
@@ -209,23 +211,37 @@ class NodeEditorWindow(QMainWindow):
     def _capture(self, include_selection: bool) -> dict:
         node_id_map: Dict[MetaNode, int] = {}
         node_records = []
+        group_records = []
         for idx, item in enumerate(self.scene.items()):
-            if not isinstance(item, MetaNode):
-                continue
-            node_id_map[item] = idx
-            pos = item.scenePos()
-            record = {"id": idx, "x": pos.x(), "y": pos.y(), **self._serialize_node(item)}
-            if include_selection:
-                record["selected"] = item.isSelected()
-            node_records.append(record)
+            if isinstance(item, MetaNode):
+                node_id_map[item] = idx
+                pos = item.scenePos()
+                record = {"id": idx, "x": pos.x(), "y": pos.y(), **self._serialize_node(item)}
+                if include_selection:
+                    record["selected"] = item.isSelected()
+                node_records.append(record)
+            elif isinstance(item, GroupFrameItem):
+                pos = item.pos()
+                rect = item.rect()
+                record = {
+                    "title": item.title,
+                    "x": pos.x(),
+                    "y": pos.y(),
+                    "width": rect.width(),
+                    "height": rect.height(),
+                }
+                if include_selection:
+                    record["selected"] = item.isSelected()
+                group_records.append(record)
         return {
             "nodes": node_records,
             "connections": self._serialize_connections(node_id_map, include_selection),
+            "groups": group_records,
         }
 
     def _restore(self, payload: dict, restore_selection: bool):
         self._linked_group = []
-        for item in [i for i in self.scene.items() if isinstance(i, (MetaNode, Connection))]:
+        for item in [i for i in self.scene.items() if isinstance(i, (MetaNode, Connection, GroupFrameItem))]:
             self.scene.removeItem(item)
         self.connections.clear()
 
@@ -243,15 +259,32 @@ class NodeEditorWindow(QMainWindow):
             if restore_selection and record.get("selected", False):
                 node.setSelected(True)
 
+        for record in payload.get("groups", []):
+            try:
+                rect = QRectF(0, 0, record.get("width", 100), record.get("height", 100))
+                frame = GroupFrameItem(rect, title=record.get("title", "Group"))
+                frame.setPos(record["x"], record["y"])
+                self.scene.addItem(frame)
+                if restore_selection and record.get("selected", False):
+                    frame.setSelected(True)
+            except Exception as exc:
+                log_and_explain("Skipped unreadable group frame", exc)
+
         self._rebuild_connections(payload.get("connections", []), id_to_node, restore_selection)
         for node in id_to_node.values():
             node._refresh_connections()
         self.scene.recalculate_scene_rect()
 
     def select_all(self):
-        for item in self.scene.items():
-            if isinstance(item, (MetaNode, Connection)):
-                item.setSelected(True)
+        selectable = [
+            item for item in self.scene.items()
+            if isinstance(item, (MetaNode, Connection, GroupFrameItem))
+        ]
+        if not selectable:
+            return
+        all_selected = all(item.isSelected() for item in selectable)
+        for item in selectable:
+            item.setSelected(not all_selected)
 
     def keyPressEvent(self, event):
         key  = event.key()
@@ -301,16 +334,20 @@ class NodeEditorWindow(QMainWindow):
         elif key == KEY_RENAME_NODE and mods == MOD_NONE:
             selected = [
                 i for i in self.scene.selectedItems()
-                if isinstance(i, MetaNode) and hasattr(i, "_begin_rename")
+                if hasattr(i, "_begin_rename")
             ]
             if len(selected) == 1:
                 selected[0]._begin_rename()
-                # Transfer keyboard focus to the view so the scene routes key events
-                # to the text item that _begin_rename() just put into edit mode.
                 self.view.setFocus(Qt.OtherFocusReason)
             event.accept()
         elif key == KEY_SELECT_ALL and mods == MOD_CTRL:
             self.select_all()
+            event.accept()
+        elif key == KEY_GROUP and mods == MOD_CTRL:
+            self.group_selected_nodes()
+            event.accept()
+        elif key == KEY_DUPLICATE and mods == MOD_CTRL:
+            self.duplicate_nodes()
             event.accept()
         elif key == KEY_FULLSCREEN:
             if self.isFullScreen():
@@ -336,7 +373,9 @@ class NodeEditorWindow(QMainWindow):
                         self.connections.remove(item)
                     if dest_node:
                         dest_node._refresh_connections()
-                elif isinstance(item, MetaNode) and not isinstance(item, StartNode):
+                elif isinstance(item, GroupFrameItem):
+                    self.scene.removeItem(item)
+                elif isinstance(item, MetaNode) and not item.is_protected:
                     incoming_exec = None
                     outgoing_exec = None
                     for c in self.connections:
@@ -379,11 +418,13 @@ class NodeEditorWindow(QMainWindow):
     def copy_nodes(self):
         selected_nodes = [i for i in self.scene.selectedItems()
                           if isinstance(i, MetaNode) and not isinstance(i, StartNode)]
-        if not selected_nodes:
+        selected_groups = [i for i in self.scene.selectedItems() if isinstance(i, GroupFrameItem)]
+        if not selected_nodes and not selected_groups:
             return
 
-        center_x = sum(n.scenePos().x() for n in selected_nodes) / len(selected_nodes)
-        center_y = sum(n.scenePos().y() for n in selected_nodes) / len(selected_nodes)
+        all_items = selected_nodes + selected_groups
+        center_x = sum(item.scenePos().x() for item in all_items) / len(all_items)
+        center_y = sum(item.scenePos().y() for item in all_items) / len(all_items)
 
         node_id_map: Dict[MetaNode, int] = {}
         node_records = []
@@ -394,9 +435,23 @@ class NodeEditorWindow(QMainWindow):
                 "id": idx, "rel_x": pos.x() - center_x, "rel_y": pos.y() - center_y,
                 **self._serialize_node(node),
             })
+            
+        group_records = []
+        for g in selected_groups:
+            pos = g.pos()
+            rect = g.rect()
+            group_records.append({
+                "title": g.title,
+                "rel_x": pos.x() - center_x,
+                "rel_y": pos.y() - center_y,
+                "width": rect.width(),
+                "height": rect.height(),
+            })
+
         clipboard_payload = {
             "nodes": node_records,
             "connections": self._serialize_connections(node_id_map),
+            "groups": group_records,
         }
         try:
             QApplication.clipboard().setText("NODERC_CLIPBOARD:" + json.dumps(clipboard_payload))
@@ -425,6 +480,15 @@ class NodeEditorWindow(QMainWindow):
                     continue
                 id_to_node[record["id"]] = node
                 node.setSelected(True)
+            
+            for record in clipboard_payload.get("groups", []):
+                rect = QRectF(0, 0, record.get("width", 100), record.get("height", 100))
+                frame = GroupFrameItem(rect, title=record.get("title", "Group"))
+                pos = QPointF(cursor.x() + record["rel_x"], cursor.y() + record["rel_y"])
+                frame.setPos(pos)
+                self.scene.addItem(frame)
+                frame.setSelected(True)
+
             self._rebuild_connections(clipboard_payload.get("connections", []), id_to_node)
             for node in id_to_node.values():
                 node._refresh_connections()
@@ -455,6 +519,15 @@ class NodeEditorWindow(QMainWindow):
                     continue
                 id_to_node[record["id"]] = node
                 node.setSelected(True)
+                
+            for record in clipboard_payload.get("groups", []):
+                rect = QRectF(0, 0, record.get("width", 100), record.get("height", 100))
+                frame = GroupFrameItem(rect, title=record.get("title", "Group"))
+                pos = QPointF(cursor.x() + record["rel_x"] + 50, cursor.y() + record["rel_y"] + 50)
+                frame.setPos(pos)
+                self.scene.addItem(frame)
+                frame.setSelected(True)
+
             self._rebuild_connections(clipboard_payload.get("connections", []), id_to_node)
             for node in id_to_node.values():
                 node._refresh_connections()
@@ -464,12 +537,13 @@ class NodeEditorWindow(QMainWindow):
 
     def group_selected_nodes(self):
         selected = [i for i in self.scene.selectedItems() if isinstance(i, MetaNode)]
-        if not selected: return
+        if not selected:
+            return
         rect = selected[0].sceneBoundingRect()
         for node in selected[1:]:
             rect = rect.united(node.sceneBoundingRect())
-        rect = rect.adjusted(-20, -40, 20, 20)
-        from nodes_base import GroupFrameItem
+        rect = rect.adjusted(-GROUP_FRAME_PAD_LEFT, -GROUP_FRAME_PAD_TOP,
+                             GROUP_FRAME_PAD_RIGHT, GROUP_FRAME_PAD_BOTTOM)
         frame = GroupFrameItem(rect, title="Logical Group")
         self.scene.addItem(frame)
         self.push_undo_state()

@@ -134,6 +134,8 @@ KEY_COMMIT_EDIT  = [Qt.Key_Return, Qt.Key_Enter]
 KEY_CANCEL_EDIT  = Qt.Key_Escape
 KEY_RENAME_NODE  = Qt.Key_F2
 KEY_SELECT_ALL   = Qt.Key_A
+KEY_GROUP        = Qt.Key_G  # with Ctrl — frames the selection (bare G toggles the grid)
+KEY_DUPLICATE    = Qt.Key_D  # with Ctrl — clones the selection in place
 
 # ── Keyboard Modifiers ────────────────────────────────────────────────────────
 MOD_NONE       = Qt.NoModifier
@@ -160,6 +162,27 @@ GRID_COLOR_LARGE = (255, 255, 255, 30)
 
 SCROLLBAR_TOGGLE_BG = "rgba(38,50,56,180)"
 SCROLLBAR_TOGGLE_HOVER = "rgba(38,50,56,240)"
+
+# ── Group frame ────────────────────────────────────────────────────────────────
+# A backdrop region that holds nodes. Sits below everything (negative Z) so its
+# body never intercepts clicks meant for the nodes it contains; only the border
+# strip — the resize zone — stays reachable.
+GROUP_FRAME_Z                = -100
+GROUP_FRAME_FILL_RGBA        = (58, 118, 184, 28)   # faint wash of NODE_BORDER_COLOR
+GROUP_FRAME_BORDER_COLOR     = NODE_BORDER_COLOR
+GROUP_FRAME_BORDER_WIDTH     = 2
+GROUP_FRAME_TITLE_COLOR      = TEXT_COLOR
+GROUP_FRAME_TITLE_FONT       = "Consolas"
+GROUP_FRAME_TITLE_FONT_SIZE  = 12
+GROUP_FRAME_TITLE_MARGIN     = 10   # title inset from the frame's top-left corner
+GROUP_FRAME_HANDLE           = 12   # edge/corner pixels that grab a resize
+GROUP_FRAME_MIN_SIZE         = 80   # smallest width/height a resize may produce
+# Slack added around the bounding box of grouped nodes when a frame is created or
+# refitted; the extra top band leaves room for the title above the first node.
+GROUP_FRAME_PAD_LEFT         = 20
+GROUP_FRAME_PAD_TOP          = 40
+GROUP_FRAME_PAD_RIGHT        = 20
+GROUP_FRAME_PAD_BOTTOM       = 20
 
 # ── Canvas ─────────────────────────────────────────────────────────────────────
 SCENE_PADDING            = 1500

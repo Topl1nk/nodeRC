@@ -34,6 +34,10 @@ from configuration import (
     TOOLBTN_QSS, VECTOR_TOGGLE_QSS, VECTOR_AXIS_LABEL_QSS,
     CONTEXT_MENU_STYLESHEET,
     KEY_COMMIT_EDIT, KEY_CANCEL_EDIT,
+    GROUP_FRAME_Z, GROUP_FRAME_FILL_RGBA, GROUP_FRAME_BORDER_COLOR,
+    GROUP_FRAME_BORDER_WIDTH, GROUP_FRAME_TITLE_COLOR,
+    GROUP_FRAME_TITLE_FONT, GROUP_FRAME_TITLE_FONT_SIZE, GROUP_FRAME_TITLE_MARGIN,
+    GROUP_FRAME_HANDLE, GROUP_FRAME_MIN_SIZE,
 )
 
 
@@ -211,25 +215,324 @@ class Connection(QGraphicsPathItem):
 
 
 class GroupFrameItem(QGraphicsRectItem):
-    """A visual frame for grouping nodes. Resizes automatically to fit grouped nodes, or can be static."""
+    """A backdrop frame that holds nodes: drag the body to move it (and its
+    contents), drag any edge or corner to resize it, drag to fit, or refit it to
+    the nodes it overlaps."""
+
+    _RESIZE_NONE = (False, False, False, False)
+
     def __init__(self, rect: QRectF, title: str = "Group"):
-        super().__init__(rect)
+        # One coordinate convention everywhere: the item's own rect is anchored at
+        # (0, 0) and its scene placement lives entirely in pos(). Callers may hand
+        # us a scene-positioned rect (e.g. the bounding box of grouped nodes); we
+        # split it so the title, hit-testing and resize math never have to guess
+        # whether the offset sits in rect() or in pos(). Snapping here keeps every
+        # edge on the grid, so later drags and resizes stay jump-free.
+        super().__init__(QRectF(
+            0, 0,
+            max(GROUP_FRAME_MIN_SIZE, self._snap(rect.width())),
+            max(GROUP_FRAME_MIN_SIZE, self._snap(rect.height())),
+        ))
+        self.setPos(self._snap(rect.x()), self._snap(rect.y()))
         self.title = title
-        self.setZValue(-100) # Deep background
-        self.setFlag(QGraphicsItem.ItemIsSelectable)
-        self.setFlag(QGraphicsItem.ItemIsMovable)
-        self.setBrush(QBrush(QColor(30, 30, 30, 150)))
-        self.setPen(QPen(QColor("#404040"), 2, Qt.DashLine))
+        self.setZValue(GROUP_FRAME_Z)
+        self.setFlags(
+            QGraphicsItem.ItemIsSelectable |
+            QGraphicsItem.ItemIsMovable |
+            QGraphicsItem.ItemSendsGeometryChanges
+        )
+        self.setAcceptHoverEvents(True)
+        self.setBrush(QBrush(QColor(*GROUP_FRAME_FILL_RGBA)))
+        self.setPen(QPen(QColor(GROUP_FRAME_BORDER_COLOR), GROUP_FRAME_BORDER_WIDTH, Qt.DashLine))
+
+        self._resizing = False
+        self._resize_edges = self._RESIZE_NONE
+
+        self.title_item = _EditableTitleItem(self)
+        self.title_item.setFont(QFont(GROUP_FRAME_TITLE_FONT, GROUP_FRAME_TITLE_FONT_SIZE))
+        self.title_item.setHtml(self._title_html(title))
+        self._center_title()
+
+    # ── Appearance ────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _title_html(name: str) -> str:
+        return (f"<font color='{GROUP_FRAME_TITLE_COLOR}'>"
+                f"<b>{html.escape(name)}</b></font>")
+
+    def _center_title(self):
+        if hasattr(self, 'title_item'):
+            r = self.rect()
+            self.title_item.setPos(r.left() + GROUP_FRAME_TITLE_MARGIN,
+                                   r.top() + GROUP_FRAME_TITLE_MARGIN)
+
+    def title_edit_background(self) -> str:
+        return GROUP_FRAME_BORDER_COLOR
+
+    def _editor_window(self):
+        scene = self.scene()
+        return getattr(scene, 'nodeEditorWindow', None) if scene else None
 
     def paint(self, painter, option, widget):
         super().paint(painter, option, widget)
-        painter.setPen(QColor(TEXT_COLOR))
-        painter.setFont(QFont("Consolas", 12, QFont.Bold))
-        painter.drawText(self.rect().adjusted(10, 10, -10, -10), Qt.AlignTop | Qt.AlignLeft, self.title)
         if self.isSelected():
             painter.setPen(QPen(QColor(NODE_SELECTED_COLOR), 1, Qt.DashLine))
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(self.rect())
+
+    @staticmethod
+    def _snap(value: float) -> float:
+        return round(value / GRID_SIZE_SMALL) * GRID_SIZE_SMALL
+
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.ItemPositionChange and self.scene():
+            # A resize drives pos() to an exact, already-snapped corner; re-snapping
+            # here would nudge the anchored corner off the grid and drag the
+            # opposite edge with it, so leave a resize's position untouched.
+            if self._resizing:
+                return value
+            snapped = QPointF(self._snap(value.x()), self._snap(value.y()))
+            delta = snapped - self.pos()
+            if delta.manhattanLength() > 0.01:
+                for item in getattr(self, '_dragged_inner_nodes', []):
+                    if item.scene() and not item.isSelected():
+                        item.moveBy(delta.x(), delta.y())
+            return snapped
+        return super().itemChange(change, value)
+
+    # ── Manual resize ─────────────────────────────────────────────────────────
+
+    def _edge_at(self, pos: QPointF):
+        """Which edges the point grabs, as (left, top, right, bottom); None if the
+        point is on the body rather than the resize strip."""
+        r = self.rect()
+        h = GROUP_FRAME_HANDLE
+        within_x = r.left() - h <= pos.x() <= r.right() + h
+        within_y = r.top() - h <= pos.y() <= r.bottom() + h
+        left   = abs(pos.x() - r.left())   <= h and within_y
+        right  = abs(pos.x() - r.right())  <= h and within_y
+        top    = abs(pos.y() - r.top())    <= h and within_x
+        bottom = abs(pos.y() - r.bottom()) <= h and within_x
+        edges = (left, top, right, bottom)
+        return edges if edges != self._RESIZE_NONE else None
+
+    @staticmethod
+    def _cursor_for_edges(edges) -> Qt.CursorShape:
+        left, top, right, bottom = edges
+        if (left and top) or (right and bottom):
+            return Qt.SizeFDiagCursor
+        if (right and top) or (left and bottom):
+            return Qt.SizeBDiagCursor
+        if left or right:
+            return Qt.SizeHorCursor
+        return Qt.SizeVerCursor
+
+    def hoverMoveEvent(self, event):
+        edges = self._edge_at(event.pos())
+        if edges:
+            self.setCursor(self._cursor_for_edges(edges))
+        else:
+            self.unsetCursor()
+        super().hoverMoveEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self.unsetCursor()
+        super().hoverLeaveEvent(event)
+
+    def mousePressEvent(self, event):
+        edges = self._edge_at(event.pos()) if event.button() == Qt.LeftButton else None
+        if edges:
+            self._resizing = True
+            self._resize_edges = edges
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._resizing:
+            self._apply_resize(event.scenePos())
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._resizing:
+            self._resizing = False
+            self._resize_edges = self._RESIZE_NONE
+            win = self._editor_window()
+            if win:
+                win.push_undo_state()
+            event.accept()
+        else:
+            super().mouseReleaseEvent(event)
+
+    def _apply_resize(self, scene_pos: QPointF):
+        left, top, right, bottom = self._resize_edges
+        rect = self.rect()
+        # Work in scene space from the rect's actual scene corners, so the math is
+        # correct regardless of any offset that lives in rect() rather than pos().
+        x0, y0 = self.pos().x() + rect.left(), self.pos().y() + rect.top()
+        x1, y1 = x0 + rect.width(), y0 + rect.height()
+        sx, sy = self._snap(scene_pos.x()), self._snap(scene_pos.y())
+        m = GROUP_FRAME_MIN_SIZE
+        if left:   x0 = min(sx, x1 - m)
+        if right:  x1 = max(sx, x0 + m)
+        if top:    y0 = min(sy, y1 - m)
+        if bottom: y1 = max(sy, y0 + m)
+        self.setPos(x0, y0)
+        self.setRect(0, 0, x1 - x0, y1 - y0)
+        self._center_title()
+
+    # ── Rename ────────────────────────────────────────────────────────────────
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton and not self._edge_at(event.pos()):
+            self._begin_rename()
+            event.accept()
+        else:
+            super().mouseDoubleClickEvent(event)
+
+    def _begin_rename(self):
+        item = self.title_item
+        self._rename_backup = self.title
+        item.setDefaultTextColor(QColor(GROUP_FRAME_TITLE_COLOR))
+        item.setFont(QFont(GROUP_FRAME_TITLE_FONT, GROUP_FRAME_TITLE_FONT_SIZE))
+        item.setPlainText(self._rename_backup)
+        item.setZValue(NODE_SOCKET_Z)
+        item.setTextInteractionFlags(Qt.TextEditorInteraction)
+        item.setFocus(Qt.OtherFocusReason)
+        cursor = item.textCursor()
+        cursor.select(QTextCursor.Document)
+        item.setTextCursor(cursor)
+
+    def _end_rename(self) -> bool:
+        item = self.title_item
+        if item.textInteractionFlags() == Qt.NoTextInteraction:
+            return False
+        item.setTextInteractionFlags(Qt.NoTextInteraction)
+        item.setZValue(0)
+        return True
+
+    def _commit_rename(self):
+        if not self._end_rename():
+            return
+        name = self.title_item.toPlainText().strip() or self._rename_backup
+        self.title = name
+        self.title_item.setHtml(self._title_html(name))
+        self._center_title()
+        win = self._editor_window()
+        if win:
+            win.push_undo_state()
+
+    def _cancel_rename(self):
+        if not self._end_rename():
+            return
+        self.title_item.setHtml(self._title_html(self._rename_backup))
+        self._center_title()
+
+    # ── Context menu and contained-node operations ────────────────────────────
+
+    def contextMenuEvent(self, event):
+        win = self._editor_window()
+        if not win:
+            super().contextMenuEvent(event)
+            return
+
+        menu = QMenu()
+        menu.setStyleSheet(CONTEXT_MENU_STYLESHEET)
+
+        rename_act = menu.addAction("Rename Group")
+        fit_act    = menu.addAction("Fit to Grouped Nodes")
+        menu.addSeparator()
+        remove_frame_act = menu.addAction("Remove Frame")
+        clear_frame_act  = menu.addAction("Clear Frame")
+        delete_group_act = menu.addAction("Delete Group")
+
+        chosen = menu.exec_(event.screenPos())
+        if chosen == rename_act:
+            self._begin_rename()
+        elif chosen == fit_act:
+            self.fit_to_nodes()
+        elif chosen == remove_frame_act:
+            self._remove_frame()
+        elif chosen == clear_frame_act:
+            self._clear_frame()
+        elif chosen == delete_group_act:
+            self._delete_group()
+        event.accept()
+
+    def _overlapping_nodes(self) -> list:
+        """Nodes the frame's body touches — used to refit around them."""
+        scene = self.scene()
+        if not scene:
+            return []
+        frame_rect = self.mapToScene(self.rect()).boundingRect()
+        return [item for item in scene.items()
+                if isinstance(item, MetaNode) and item is not self
+                and frame_rect.intersects(item.sceneBoundingRect())]
+
+    def _contained_nodes(self) -> list:
+        """Nodes whose center lies inside the frame — the group's real members."""
+        scene = self.scene()
+        if not scene:
+            return []
+        frame_rect = self.mapToScene(self.rect()).boundingRect()
+        return [item for item in scene.items()
+                if isinstance(item, MetaNode) and item is not self
+                and frame_rect.contains(item.sceneBoundingRect().center())]
+
+    def fit_to_nodes(self):
+        nodes = self._overlapping_nodes()
+        if not nodes:
+            return
+        # Fitting only repositions the frame; clear any drag capture so the
+        # programmatic setPos below cannot carry nodes along with it.
+        self._dragged_inner_nodes = []
+        rect = nodes[0].sceneBoundingRect()
+        for n in nodes[1:]:
+            rect = rect.united(n.sceneBoundingRect())
+        rect = rect.adjusted(-GROUP_FRAME_PAD_LEFT, -GROUP_FRAME_PAD_TOP,
+                             GROUP_FRAME_PAD_RIGHT, GROUP_FRAME_PAD_BOTTOM)
+        self.setPos(self._snap(rect.x()), self._snap(rect.y()))
+        self.setRect(0, 0, self._snap(rect.width()), self._snap(rect.height()))
+        self._center_title()
+        self.update()
+        win = self._editor_window()
+        if win:
+            win.push_undo_state()
+
+    def _remove_frame(self):
+        scene = self.scene()
+        win = self._editor_window()
+        if scene:
+            scene.removeItem(self)
+            if win:
+                win.push_undo_state()
+
+    def _delete_contained(self, also_remove_frame: bool):
+        scene = self.scene()
+        win = self._editor_window()
+        if not (scene and win):
+            return
+        targets = [n for n in self._contained_nodes() if not n.is_protected]
+        win._block_undo_push = True
+        try:
+            scene.clearSelection()
+            for node in targets:
+                node.setSelected(True)
+            if targets:
+                win._delete_selected_items()
+            if also_remove_frame:
+                scene.removeItem(self)
+        finally:
+            win._block_undo_push = False
+        win.push_undo_state()
+
+    def _clear_frame(self):
+        self._delete_contained(also_remove_frame=False)
+
+    def _delete_group(self):
+        self._delete_contained(also_remove_frame=True)
 
 
 
@@ -257,6 +560,8 @@ class MetaNode(QGraphicsObject):
     """
     Why: BoundingRect includes shadow area to prevent trail artifacts on move.
     """
+
+    is_protected = False  # the single source for "bulk delete must spare this node"
 
     def __init__(self, node_def: NodeDef):
         super().__init__()
@@ -372,6 +677,10 @@ class MetaNode(QGraphicsObject):
 
     def _on_renamed(self, name: str):
         """Override to react to a committed rename (e.g. update creation_data)."""
+
+    def title_edit_background(self) -> str:
+        """Backdrop the title paints behind itself while being edited."""
+        return self.node_def.header_color
 
     def boundingRect(self) -> QRectF:
         d = self.node_def
@@ -594,7 +903,7 @@ class _EditableTitleItem(QGraphicsTextItem):
         if self.textInteractionFlags() != Qt.NoTextInteraction:
             painter.fillRect(
                 self.boundingRect().adjusted(-2, -1, 2, 1),
-                QColor(self._node.node_def.header_color),
+                QColor(self._node.title_edit_background()),
             )
         super().paint(painter, option, widget)
 
