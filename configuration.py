@@ -25,10 +25,10 @@ TINT_TITLE_LUMINANCE_THRESHOLD = 140  # title goes dark on backgrounds brighter 
 TINT_BORDER_MIN_LUMINANCE = 70   # 0–255 — borders below this get lightened until visible
 TINT_BORDER_LIGHTEN_STEP  = 130  # per-iteration lighten factor when brightening borders
 
-DEFAULT_HEADER_COLOR = "#0b3c7b"
+DEFAULT_HEADER_COLOR = "#3a7cd1"
 # When True, parameter nodes use their socket colour as the header colour
 # (e.g. String → pink, Integer → blue). Exec/command nodes keep DEFAULT_HEADER_COLOR.
-PARAM_NODE_HEADER_FROM_SOCKET = True
+PARAM_NODE_HEADER_FROM_SOCKET = False
 NODE_SELECTED_COLOR = "#FFFFFF"
 CONNECTION_SELECTED_COLOR = "#FFFFFF"
 BUTTON_TEXT_COLOR = "#FFFFFF"
@@ -110,6 +110,13 @@ DWMWA_TEXT_COLOR              = 36
 # ── PathParamNode browse button ────────────────────────────────────────────────
 BROWSE_BTN_WIDTH = 22  # pixel width shared by the browse "…" button and drop-down area
 
+# ── Checkbox primitive ─────────────────────────────────────────────────────────
+# The InsetFillCheckBox draws its indicator manually so the checked fill sits
+# inset from the outer border instead of stretching across the whole 13×13 box.
+CHECKBOX_INDICATOR_SIZE = 13   # outer indicator side, px
+CHECKBOX_FILL_INSET     = 3    # gap between outer border and the inner filled square
+CHECKBOX_LABEL_SPACING  = 6    # px between indicator and label text
+
 # ── Scrollbar toggle button ────────────────────────────────────────────────────
 SCROLLBAR_BTN_MARGIN = 5   # gap from view edge
 SCROLLBAR_BTN_OFFSET = 18  # clearance past the Qt scrollbar track width
@@ -186,24 +193,28 @@ NODE_RENAME_FONT_SIZE = 9   # in-place title editor
 NODE_CORNER_RADIUS = 5.0
 
 
-# Colors for the custom color picker palette popup
+# Colors for the custom color picker palette popup — 32 perceptually distinct
+# hues laid out in 8 columns × 4 rows. Reds → oranges → yellows → greens →
+# cyans/blues → purples → pinks → aquas; each row deepens or shifts to keep
+# the swatches unambiguous side-by-side. All entries are unique.
 COLOR_PRESETS = [
-    "#E74C3C", "#8E44AD", "#3498DB", "#16A085",
-    "#F39C12", "#D35400", "#BDC3C7", "#2C3E50",
-    "#3A76B8", "#1ABC9C", "#27AE60", "#F1C40F"
+    "#E74C3C", "#E67E22", "#F1C40F", "#27AE60", "#3498DB", "#8E44AD", "#E91E63", "#00BCD4",
+    "#C0392B", "#D35400", "#F39C12", "#16A085", "#2980B9", "#9B59B6", "#AD1457", "#00838F",
+    "#FF6B6B", "#FFA94D", "#FFE066", "#51CF66", "#5DADE2", "#C39BD3", "#F48FB1", "#80DEEA",
+    "#7B0F1E", "#A04000", "#7F6000", "#196F3D", "#1B4F72", "#4A235A", "#880E4F", "#006064",
 ]
 
 # ── Color picker popup geometry ───────────────────────────────────────────────
 # All controls inside the popup obey a single grid so widths and heights stay
 # in lockstep; the colour square auto-fits the popup width minus padding.
-COLOR_PICKER_WIDTH         = 260
+COLOR_PICKER_WIDTH         = 290
 COLOR_PICKER_PADDING       = 8
 COLOR_PICKER_ROW_HEIGHT    = 22   # uniform height for HEX row controls
 COLOR_PICKER_SQUARE_HEIGHT = 150
 COLOR_PICKER_SLIDER_HEIGHT = 16
 COLOR_PICKER_PREVIEW_SIZE  = COLOR_PICKER_ROW_HEIGHT   # square swatch matches row
 COLOR_PICKER_PRESET_SIZE   = 22
-COLOR_PICKER_PRESET_COLS   = 6
+COLOR_PICKER_PRESET_COLS   = 8
 COLOR_PICKER_PRESET_GAP    = 4
 
 GRID_COLOR_SMALL = (255, 255, 255, 10)

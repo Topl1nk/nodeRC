@@ -484,12 +484,12 @@ class ColorPickerPopup(QWidget):
         hex_group.addWidget(self.hex_input)
         hex_row.addLayout(hex_group)
 
-        self.only_header_check = QCheckBox(t("color_only_header"))
-        self.only_header_check.setChecked(self._only_header)
-        self.only_header_check.setFixedHeight(COLOR_PICKER_ROW_HEIGHT)
         # Same checkbox primitive the [B] Boolean param node uses, so the
         # picker's flag reads as a first-class part of the editor's vocabulary.
-        self.only_header_check.setStyleSheet(CHECKBOX_QSS)
+        from widgets import InsetFillCheckBox
+        self.only_header_check = InsetFillCheckBox(t("color_only_header"))
+        self.only_header_check.setChecked(self._only_header)
+        self.only_header_check.setFixedHeight(COLOR_PICKER_ROW_HEIGHT)
         self.only_header_check.toggled.connect(self._on_only_header_toggled)
         hex_row.addWidget(self.only_header_check)
         hex_row.addStretch()

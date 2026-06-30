@@ -331,10 +331,12 @@ class GroupFrameItem(QGraphicsRectItem):
 
     def _center_title(self):
         if hasattr(self, 'title_item'):
-            # Vertically centre the title inside the header strip — same idiom
-            # MetaNode uses, so node and frame headers read as one design.
+            # Use the base QGraphicsTextItem.boundingRect() for the actual text
+            # height — _EditableTitleItem.boundingRect() returns QRectF() when
+            # not editing (for hit-test invisibility), which would misplace the title.
+            text_h = QGraphicsTextItem.boundingRect(self.title_item).height()
             r = self.rect()
-            y = r.top() + (GROUP_FRAME_HEADER_HEIGHT - self.title_item.boundingRect().height()) / 2.0
+            y = r.top() + (GROUP_FRAME_HEADER_HEIGHT - text_h) / 2.0
             self.title_item.setPos(r.left() + GROUP_FRAME_TITLE_MARGIN, y)
 
     def title_edit_background(self) -> Optional[str]:
@@ -447,12 +449,12 @@ class GroupFrameItem(QGraphicsRectItem):
             QPointF(header_rect.right(), header_rect.bottom()),
         )
 
-        outset = GROUP_FRAME_BORDER_INSET
-        outline = r.adjusted(-outset, -outset, outset, outset)
-        outline_color = QColor(NODE_SELECTED_COLOR) if self.isSelected() else accent
-        painter.setPen(QPen(outline_color, GROUP_FRAME_BORDER_WIDTH, Qt.DashLine))
-        painter.setBrush(Qt.NoBrush)
-        painter.drawRect(outline)
+        if self.isSelected():
+            outset = GROUP_FRAME_BORDER_INSET
+            outline = r.adjusted(-outset, -outset, outset, outset)
+            painter.setPen(QPen(QColor(NODE_SELECTED_COLOR), GROUP_FRAME_BORDER_WIDTH, Qt.DashLine))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(outline)
 
     @staticmethod
     def _snap(value: float) -> float:
@@ -539,8 +541,11 @@ class GroupFrameItem(QGraphicsRectItem):
             event.accept()
         else:
             super().mouseReleaseEvent(event)
-        # Always commit membership after the frame's mouse release
-        self.commit_members()
+        # After a move or resize, retain only members that are still inside the
+        # frame — do NOT auto-adopt nodes that the frame happened to slide over.
+        # Membership is gained only when a node is deliberately dragged into the
+        # frame (MetaNode.mouseReleaseEvent handles that direction).
+        self.commit_members(force_all=False)
 
     def commit_members(self, force_all: bool = False):
         """Update group membership.
@@ -818,9 +823,10 @@ class MetaNode(QGraphicsObject):
         return item
 
     def _center_title(self):
+        text_h = QGraphicsTextItem.boundingRect(self.title_item).height()
         self.title_item.setPos(
             NODE_HORIZONTAL_PAD,
-            (NODE_HEADER_HEIGHT - self.title_item.boundingRect().height()) / 2.0,
+            (NODE_HEADER_HEIGHT - text_h) / 2.0,
         )
 
     # ── In-place rename ───────────────────────────────────────────────────────
@@ -866,6 +872,15 @@ class MetaNode(QGraphicsObject):
     def _apply_title(self, text: str):
         self.title_item.setHtml(_html_title(text))
         self._center_title()
+        # Restore the tint-aware title colour _begin_rename forced to white. The
+        # picked colour family — or default text colour when there is no override
+        # — decides whether the title reads dark or light on the painted header.
+        if self._color_override:
+            painted = QColor(self._color_override)
+            title_dark = _relative_luminance(painted) > TINT_TITLE_LUMINANCE_THRESHOLD
+            self.title_item.setDefaultTextColor(QColor("#000000" if title_dark else "#FFFFFF"))
+        else:
+            self.title_item.setDefaultTextColor(QColor(TEXT_COLOR))
 
     def _on_renamed(self, name: str):
         """Override to react to a committed rename (e.g. update creation_data)."""
@@ -1350,9 +1365,9 @@ class NodeComboBox(QComboBox):
         self.node = node
 
     def showPopup(self):
-        # Lift the node above its siblings AND drop the selection wash, which is
-        # a child item at NODE_SELECTION_OVERLAY_Z and would otherwise paint over
-        # the dropped-down list (every embedded proxy sits below the overlay).
+        # Lift the node above its siblings and hide the selection wash so the
+        # embedded popup list (combobox-popup:0 makes it a scene proxy) renders
+        # above the translucent overlay instead of being occluded by it.
         try:
             self.node.setZValue(NODE_POPUP_Z)
             overlay = getattr(self.node, "_selection_overlay", None)
@@ -1402,6 +1417,12 @@ class _EditableTitleItem(QGraphicsTextItem):
         return super().shape()
 
     def boundingRect(self):
+        # Empty boundingRect when not editing keeps Qt's scene index from picking
+        # the title for hit-testing — clicks on the title text bubble up to the
+        # parent (frame/node). Paint still runs because QGraphicsScene calls it
+        # regardless of bounding rect (the text shows in the viewport anyway).
+        if not self._editing:
+            return QRectF()
         return super().boundingRect()
 
     def paint(self, painter: QPainter, option, widget=None):
@@ -1540,11 +1561,11 @@ class _BaseParamNode(MetaNode):
         return w
 
     def _make_checkbox(self, text: str = "true", checked: bool = False) -> QCheckBox:
-        w = QCheckBox(text)
+        from widgets import InsetFillCheckBox
+        w = InsetFillCheckBox(text)
         w.setChecked(checked)
         w.setFixedWidth(self._widget_width())
         w.setFixedHeight(NODE_WIDGET_HEIGHT)
-        w.setStyleSheet(CHECKBOX_QSS)
         return w
 
     def _make_toolbtn(self, text: str, callback=None) -> QToolButton:
