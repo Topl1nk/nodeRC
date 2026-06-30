@@ -3,6 +3,8 @@ import os
 import xml.etree.ElementTree as ET
 from typing import List, Dict, Optional, Any
 
+from localization import t
+
 from PyQt5.QtWidgets import (
     QPushButton, QWidget, QHBoxLayout, QGraphicsProxyWidget, QFileDialog,
 )
@@ -12,10 +14,10 @@ from PyQt5.QtCore import QPointF, Qt
 from configuration import (
     NODE_HEADER_HEIGHT, NODE_ROW_HEIGHT,
     NODE_HORIZONTAL_PAD, NODE_WIDGET_V_OFFSET,
-    INTEGER_PARAM_NAMES, PUSHBTN_QSS,
+    INTEGER_PARAM_NAMES,
     AUTOSPAWN_X_GAP, AUTOSPAWN_Y_OFFSET, AUTOSPAWN_V_GAP,
-    NODE_BORDER_COLOR,
 )
+from color_picker import PUSHBTN_QSS, NODE_BORDER_COLOR
 from nodes_base import (
     SocketDef, NodeDef, MetaNode, _BaseParamNode, _VectorParamNode,
     resolve_color_schema, param_spec_name, _html_title, _param_node_def,
@@ -171,11 +173,10 @@ class StartNode(MetaNode):
             y = NODE_HEADER_HEIGHT + (rows + row_offset) * NODE_ROW_HEIGHT + NODE_WIDGET_V_OFFSET
             proxy.setPos(NODE_HORIZONTAL_PAD, y)
 
-        # Launch sits alone at the top; file-management buttons are grouped below
-        # the separator so accidental clicks on Launch are physically impossible.
+        # Why: Separates Launch button from file-management options to prevent accidental execution clicks.
         _add_btn("> Launch", "",              self._request_chain_execution, 0.0)
 
-        # Horizontal separator — visually isolates Launch from file operations
+        # Why: Visual line separating Launch execution from project file utilities.
         sep = QWidget()
         sep.setFixedWidth(btn_w)
         sep.setFixedHeight(2)
@@ -192,26 +193,22 @@ class StartNode(MetaNode):
         _add_btn("Save As", "Ctrl+Shift+S", self._request_save_as, 4.0)
 
     def _request_chain_execution(self):
-        scene = self.scene()
-        win = getattr(scene, 'nodeEditorWindow', None) if scene else None
+        win = self._editor_window()
         if win:
             win.execute_chain()
 
     def _request_open(self):
-        scene = self.scene()
-        win = getattr(scene, 'nodeEditorWindow', None) if scene else None
+        win = self._editor_window()
         if win:
             win.load_project()
 
     def _request_save(self):
-        scene = self.scene()
-        win = getattr(scene, 'nodeEditorWindow', None) if scene else None
+        win = self._editor_window()
         if win:
             win.save_project()
 
     def _request_save_as(self):
-        scene = self.scene()
-        win = getattr(scene, 'nodeEditorWindow', None) if scene else None
+        win = self._editor_window()
         if win:
             win.save_project(save_as=True)
 
@@ -229,7 +226,7 @@ class CommandNode(MetaNode):
         self.expanded_vectors.symmetric_difference_update({base_name})
 
         scene = self.scene()
-        win = getattr(scene, 'nodeEditorWindow', None) if scene else None
+        win = self._editor_window()
         if not win or not scene:
             return
 
@@ -277,26 +274,28 @@ class CommandNode(MetaNode):
         if not self._editor_window():
             super().contextMenuEvent(event)
             return
-        has_required = bool(self.cmd_def.get("required", []))
+        has_params = bool(self.cmd_def.get("required", []) or self.cmd_def.get("optional", []))
         win = self._editor_window()
         self._run_context_menu(event, [
-            ("Rename",         self._begin_rename,                         True),
-            ("Auto-Create Required Parameters",
+            (t("ctx_rename"),         self._begin_rename,                         True),
+            (t("ctx_change_color"),   self._pick_color,                           True),
+            (t("ctx_auto_create_params"),
              self.auto_create_required_parameters,
-             has_required),
+             has_params),
             None,
-            ("Duplicate",      getattr(win, "duplicate_nodes",      None), True),
-            ("Copy",           getattr(win, "copy_nodes",           None), True),
-            ("Paste",          getattr(win, "paste_nodes",          None), True),
-            ("Group in Frame", getattr(win, "group_selected_nodes", None), True),
+            (t("ctx_duplicate"),      getattr(win, "duplicate_nodes",      None), True),
+            (t("ctx_copy"),           getattr(win, "copy_nodes",           None), True),
+            (t("ctx_paste"),          getattr(win, "paste_nodes",          None), True),
+            (t("ctx_group_frame"), getattr(win, "group_selected_nodes", None), True),
             None,
-            ("Delete Node",    self._delete_self,                          True),
+            (t("ctx_delete_node"),    self._delete_self,                          True),
         ])
 
     def _all_required_params(self):
-        """All required-parameter sockets on this command, connected or not."""
+        """All required and optional parameter sockets on this command, connected or not."""
         result = []
-        for param in group_xyz_params(self.cmd_def.get("required", []), self.expanded_vectors):
+        all_params = self.cmd_def.get("required", []) + self.cmd_def.get("optional", [])
+        for param in group_xyz_params(all_params, self.expanded_vectors):
             socket = self.get_socket(param_spec_name(param))
             if socket:
                 result.append((param, socket))
@@ -321,11 +320,9 @@ class CommandNode(MetaNode):
 
             for param, socket in all_required:
                 try:
-                    # Remove any existing incoming wire on this socket so the
-                    # auto-created node becomes the one true source.
-                    for c in [c for c in win.connections if c.dest is socket]:
-                        scene.removeItem(c)
-                        win.connections.remove(c)
+                    # If this input is already connected, do not overwrite it or create a new node
+                    if any(c.dest is socket for c in win.connections):
+                        continue
 
                     param_name   = param_spec_name(param)
                     param_type   = _resolve_param_type(param_name, param)
@@ -367,9 +364,11 @@ class CommandNode(MetaNode):
 class StringParamNode(_BaseParamNode):
     TYPE_ID = "string"
 
-    def __init__(self, param_name="[S] String", default=""):
+    def __init__(self, param_name=None, default=""):
+        if param_name is None:
+            param_name = t("param_string_title")
         super().__init__(_param_node_def(param_name, self.TYPE_ID))
-        self._editor = self._make_field(default, "text value...")
+        self._editor = self._make_field(default, t("param_string_placeholder"))
         self._editor.textChanged.connect(self._notify_connections_changed)
         self._editor.editingFinished.connect(self._on_widget_user_edit)
         self._attach_input_widget(self._editor)
@@ -387,7 +386,9 @@ class StringParamNode(_BaseParamNode):
 class BoolParamNode(_BaseParamNode):
     TYPE_ID = "bool"
 
-    def __init__(self, param_name="[B] Boolean", default=False):
+    def __init__(self, param_name=None, default=False):
+        if param_name is None:
+            param_name = t("param_bool_title")
         super().__init__(_param_node_def(param_name, self.TYPE_ID))
         self._checkbox = self._make_checkbox("true" if default else "false", default)
         self._checkbox.toggled.connect(
@@ -412,7 +413,9 @@ class BoolParamNode(_BaseParamNode):
 class IntParamNode(_BaseParamNode):
     TYPE_ID = "integer"
 
-    def __init__(self, param_name="[I] Integer", default=0):
+    def __init__(self, param_name=None, default=0):
+        if param_name is None:
+            param_name = t("param_int_title")
         super().__init__(_param_node_def(param_name, self.TYPE_ID))
         self._spinbox = self._make_spinbox(-999999, 999999, default)
         self._spinbox.valueChanged.connect(self._notify_connections_changed)
@@ -432,7 +435,9 @@ class IntParamNode(_BaseParamNode):
 class FloatParamNode(_BaseParamNode):
     TYPE_ID = "float"
 
-    def __init__(self, param_name="[#] Float", default=0.0):
+    def __init__(self, param_name=None, default=0.0):
+        if param_name is None:
+            param_name = t("param_float_title")
         super().__init__(_param_node_def(param_name, self.TYPE_ID))
         self._editor = self._make_field(str(default))
         self._editor.setValidator(QDoubleValidator())
@@ -453,7 +458,9 @@ class FloatParamNode(_BaseParamNode):
 class EnumParamNode(_BaseParamNode):
     TYPE_ID = "enum"
 
-    def __init__(self, param_name="[E] Enum", values=None):
+    def __init__(self, param_name=None, values=None):
+        if param_name is None:
+            param_name = t("param_enum_title")
         schema        = resolve_color_schema("enum")
         string_schema = resolve_color_schema("string")
         node_def = NodeDef(
@@ -471,7 +478,8 @@ class EnumParamNode(_BaseParamNode):
         )
         super().__init__(node_def)
 
-        self._new_item = self._make_field(placeholder="new item…", fixed_width=False)
+        self._new_item = self._make_field(placeholder=t("param_enum_new_placeholder"), fixed_width=False)
+
         self._add_btn = self._make_toolbtn("+", self._add_enum_item)
         self._remove_btn = self._make_toolbtn("−", self._remove_enum_item)
         editor_row = QWidget()
@@ -563,22 +571,23 @@ class EnumParamNode(_BaseParamNode):
 
     def get_value(self, socket_name: str = None) -> str:
         src_socket = self.get_socket("src")
-        if src_socket and self.scene():
-            win = getattr(self.scene(), 'nodeEditorWindow', None)
-            if win:
-                for conn in win.connections:
-                    if conn.dest.meta_node is self and conn.dest.sock_def.name == src_socket.sock_def.name:
-                        self._populate_from_source(
-                            conn.source.meta_node.get_value(conn.source.sock_def.name)
-                        )
-                        break
+        win = self._editor_window()
+        if src_socket and win:
+            for conn in win.connections:
+                if conn.dest.meta_node is self and conn.dest.sock_def.name == src_socket.sock_def.name:
+                    self._populate_from_source(
+                        conn.source.meta_node.get_value(conn.source.sock_def.name)
+                    )
+                    break
         return self._combobox.currentText()
 
 
 class PathParamNode(_BaseParamNode):
     TYPE_ID = "path"
 
-    def __init__(self, param_name="[F/F] Load"):
+    def __init__(self, param_name=None):
+        if param_name is None:
+            param_name = t("param_path_title")
         dir_schema    = resolve_color_schema("dirpath")
         file_schema   = resolve_color_schema("filepath")
         string_schema = resolve_color_schema("string")
@@ -604,40 +613,47 @@ class PathParamNode(_BaseParamNode):
         )
         super().__init__(node_def)
 
-        self._ext_filter = self._make_field("", "*.ext")
+        self._ext_filter = self._make_field("", t("param_path_ext_placeholder"))
         self._ext_filter.textChanged.connect(
             lambda: self._on_dir_changed(self._dir_editor.text())
         )
         self._ext_filter.textChanged.connect(self._notify_connections_changed)
         self._ext_filter.editingFinished.connect(self._on_widget_user_edit)
 
-        self._dir_editor = self._make_field(placeholder="dirpath…", fixed_width=False)
+        self._dir_editor = self._make_field(placeholder=t("param_path_dir_placeholder"), fixed_width=False)
         self._dir_editor.textChanged.connect(self._on_dir_changed)
         self._dir_editor.textChanged.connect(self._notify_connections_changed)
         self._dir_editor.editingFinished.connect(self._on_widget_user_edit)
 
-        dir_widget = QWidget()
-        dir_widget.setStyleSheet("background:transparent;")
-        dir_layout = QHBoxLayout(dir_widget)
-        dir_layout.setContentsMargins(0, 0, 0, 0)
-        dir_layout.setSpacing(3)
-        dir_layout.addWidget(self._dir_editor)
-        dir_layout.addWidget(self._make_toolbtn("…", self._browse_for_folder))
-        dir_widget.setFixedWidth(self._widget_width())
-
         self._file_combo = self._make_combobox()
-        self._file_combo.lineEdit().setPlaceholderText("filename…")
+        self._file_combo.lineEdit().setPlaceholderText(t("param_path_file_placeholder"))
         self._file_combo.currentTextChanged.connect(self._notify_connections_changed)
         self._file_combo.activated.connect(self._on_widget_user_edit)
         if self._file_combo.lineEdit():
             self._file_combo.lineEdit().editingFinished.connect(self._on_widget_user_edit)
 
-        self._attach_widget_at_row(dir_widget, 0)
-        self._attach_widget_at_row(self._file_combo, 1)
-        self._attach_widget_at_row(self._ext_filter, 2)
+        # Every row is a single wrapper QWidget primitive holding its leaves. Uniform
+        # structure means colour recoloring walks identical containers for each row;
+        # otherwise a bare leaf like the combobox can lose its proxy widget reference
+        # and silently skip the recolour pass.
+        self._attach_widget_at_row(self._row_container(
+            [self._dir_editor, self._make_toolbtn("…", self._browse_for_folder)]), 0)
+        self._attach_widget_at_row(self._row_container([self._file_combo]), 1)
+        self._attach_widget_at_row(self._row_container([self._ext_filter]), 2)
+
+    def _row_container(self, leaves):
+        wrapper = QWidget()
+        wrapper.setStyleSheet("background:transparent;")
+        layout = QHBoxLayout(wrapper)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(3)
+        for leaf in leaves:
+            layout.addWidget(leaf)
+        wrapper.setFixedWidth(self._widget_width())
+        return wrapper
 
     def _browse_for_folder(self):
-        path = QFileDialog.getExistingDirectory(None, "Select folder", self._dir_editor.text())
+        path = QFileDialog.getExistingDirectory(None, t("dialog_select_folder"), self._dir_editor.text())
         if path:
             self._dir_editor.setText(path)
             self._on_widget_user_edit()
@@ -657,9 +673,9 @@ class PathParamNode(_BaseParamNode):
                        or self._ext_filter.text()).strip()
                 ext = raw.lstrip("*").lstrip(".").lower()
                 files = sorted(
-                    f for f in os.listdir(text)
-                    if os.path.isfile(os.path.join(text, f))
-                    and (not ext or f.lower().endswith("." + ext))
+                     f for f in os.listdir(text)
+                     if os.path.isfile(os.path.join(text, f))
+                     and (not ext or f.lower().endswith("." + ext))
                 )
                 self._file_combo.addItem("")
                 self._file_combo.addItems(files)
@@ -715,9 +731,11 @@ class PathParamNode(_BaseParamNode):
 class KeyValueParamNode(_BaseParamNode):
     TYPE_ID = "keyvalue"
 
-    def __init__(self, param_name="[K] Key=Value"):
+    def __init__(self, param_name=None):
+        if param_name is None:
+            param_name = t("param_keyvalue_title")
         super().__init__(_param_node_def(param_name, self.TYPE_ID))
-        self._editor = self._make_field("key=value", "key=value")
+        self._editor = self._make_field("key=value", t("param_keyvalue_placeholder"))
         self._editor.textChanged.connect(self._notify_connections_changed)
         self._editor.editingFinished.connect(self._on_widget_user_edit)
         self._attach_input_widget(self._editor)
@@ -736,7 +754,9 @@ class Float2ParamNode(_VectorParamNode):
     TYPE_ID = "float2"
     AXES = ("X", "Y")
 
-    def __init__(self, param_name="[#2] Float2 (X,Y)"):
+    def __init__(self, param_name=None):
+        if param_name is None:
+            param_name = t("param_float2_title")
         super().__init__(param_name)
 
 
@@ -744,8 +764,11 @@ class Float3ParamNode(_VectorParamNode):
     TYPE_ID = "float3"
     AXES = ("X", "Y", "Z")
 
-    def __init__(self, param_name="[#3] Float3 (X,Y,Z)"):
+    def __init__(self, param_name=None):
+        if param_name is None:
+            param_name = t("param_float3_title")
         super().__init__(param_name)
+
 
 
 PARAM_NODE_TYPES: Dict[str, type] = {

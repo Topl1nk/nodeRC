@@ -6,23 +6,13 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QEvent
 
 from configuration import (
-    NODE_BORDER_COLOR, SEARCH_DIALOG_WIDTH,
-    SEARCH_DIALOG_HEIGHT, SEARCH_DIALOG_STYLESHEET, SEARCH_RESULTS_LIMIT
+    SEARCH_DIALOG_WIDTH,
+    SEARCH_DIALOG_HEIGHT, SEARCH_RESULTS_LIMIT,
+    SEARCH_DIALOG_X_OFFSET,
 )
+from color_picker import NODE_BORDER_COLOR, SEARCH_DIALOG_STYLESHEET
+from localization import t
 
-
-SEARCH_MENU_MANUAL_HTML = """<b>[ Keys & Shortcuts Manual ]</b><br/>
-• <b>Space</b> : Open Search Menu<br/>
-• <b>Delete</b> : Delete Selected Items<br/>
-• <b>Ctrl+A</b> : Select All / Toggle Selection<br/>
-• <b>Ctrl+G</b> : Group Selected in Frame<br/>
-• <b>Ctrl+D</b> : Duplicate Selection<br/>
-• <b>Ctrl+C</b> / <b>Ctrl+V</b> : Copy / Paste<br/>
-• <b>Ctrl+Z</b> / <b>Ctrl+Y</b> : Undo / Redo<br/>
-• <b>F</b> : Fit View / Frame Selection<br/>
-• <b>G</b> : Toggle Grid Overlay<br/>
-• <b>F2</b> : Rename Node / Frame Title<br/>
-• <b>F11</b> : Toggle Fullscreen Mode"""
 
 
 class SearchMenuDialog(QDialog):
@@ -71,7 +61,7 @@ class SearchMenuDialog(QDialog):
         desc_layout = QVBoxLayout(self.desc_frame)
         desc_layout.setContentsMargins(0, 0, 0, 0)
         
-        self.desc_label = QLabel(SEARCH_MENU_MANUAL_HTML)
+        self.desc_label = QLabel(t("manual_html"))
         self.desc_label.setObjectName("descriptionLabel")
         self.desc_label.setWordWrap(True)
         self.desc_label.setMinimumHeight(60)
@@ -91,7 +81,7 @@ class SearchMenuDialog(QDialog):
         search_layout.setSpacing(4)
 
         self.search_bar = QLineEdit()
-        self.search_bar.setPlaceholderText("Search nodes...")
+        self.search_bar.setPlaceholderText(t("search_placeholder"))
         self.search_bar.textChanged.connect(self._filter_tree)
         self.search_bar.returnPressed.connect(self._activate_selection)
         self.search_bar.installEventFilter(self)
@@ -123,8 +113,8 @@ class SearchMenuDialog(QDialog):
             self.main_layout.removeWidget(self.separator)
             self.main_layout.removeWidget(self.search_frame)
             
-            # If the menu is near the right edge, we swap: Search on right, Info on left
-            if pos.x() + 700 > screen_geom.right():
+            # Why: Swaps layout components if near the right screen edge to keep the pop-up fully visible.
+            if pos.x() + SEARCH_DIALOG_X_OFFSET > screen_geom.right():
                 self.main_layout.addWidget(self.info_widget)
                 self.main_layout.addWidget(self.separator)
                 self.main_layout.addWidget(self.search_frame)
@@ -189,14 +179,14 @@ class SearchMenuDialog(QDialog):
         self.tree.clear()
         self._all_items = []
 
-        param_cat = QTreeWidgetItem(self.tree, ["[Prm] Parameters"])
+        param_cat = QTreeWidgetItem(self.tree, [f"[Prm] {t('tree_header_params')}"])
         param_cat.setExpanded(True)
         for label, payload in self._param_specs:
             item = QTreeWidgetItem(param_cat, [f"  {label}"])
             item.setData(0, Qt.UserRole, payload)
             self._all_items.append(item)
 
-        cmd_cat = QTreeWidgetItem(self.tree, ["[Cmd] Commands"])
+        cmd_cat = QTreeWidgetItem(self.tree, [f"[Cmd] {t('lbl_commands')}"])
         cmd_cat.setExpanded(True)
         for sec_name, subsections in self.command_categories.items():
             sec_item = QTreeWidgetItem(cmd_cat, [sec_name])
@@ -228,7 +218,7 @@ class SearchMenuDialog(QDialog):
             self._select_first_match()
         else:
             self.tree.clearSelection()
-            self.desc_label.setText("No matching nodes.")
+            self.desc_label.setText(t("msg_no_matching_nodes"))
             self.preview_scene.clear()
 
     @staticmethod
@@ -330,17 +320,17 @@ class SearchMenuDialog(QDialog):
         if selected:
             self._update_preview_and_desc(selected[0])
         else:
-            self.desc_label.setText(SEARCH_MENU_MANUAL_HTML)
+            self.desc_label.setText(t("manual_html"))
             self.preview_scene.clear()
 
     def _update_preview_and_desc(self, item):
         item_payload = item.data(0, Qt.UserRole)
         if not item_payload:
-            self.desc_label.setText(SEARCH_MENU_MANUAL_HTML)
+            self.desc_label.setText(t("manual_html"))
             self.preview_scene.clear()
             return
             
-        desc = item_payload.get("description") or item_payload.get("desc") or "No description available."
+        desc = item_payload.get("description") or item_payload.get("desc") or t("msg_no_description")
         if "command" in item_payload:
             cmd_name = item_payload["command"]
             self.desc_label.setText(f"<b>{cmd_name}</b><br>{desc}")

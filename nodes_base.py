@@ -9,12 +9,21 @@ from PyQt5.QtWidgets import (
     QSpinBox, QComboBox, QGraphicsPathItem, QWidget,
     QHBoxLayout, QToolButton, QStyle, QLabel,
     QApplication, QAbstractSpinBox, QMenu, QGraphicsRectItem,
+    QGridLayout, QPushButton,
 )
 from PyQt5.QtGui import (
     QPen, QBrush, QColor, QPainterPath, QFont, QPainter, QPolygonF,
-    QDoubleValidator, QPalette, QTextCursor,
+    QDoubleValidator, QPalette, QTextCursor, QCursor,
 )
 from PyQt5.QtCore import QRectF, Qt, QPointF, QEvent, QTimer
+from localization import t
+
+from color_picker import (
+    ColorPickerPopup, adjust_hex_color, brightened_for_canvas_hex, relative_luminance_hex,
+    NODE_BORDER_COLOR, FIELD_QSS, COMBOBOX_QSS, SPINBOX_QSS, CHECKBOX_QSS,
+    TOOLBTN_QSS, PUSHBTN_QSS, VECTOR_TOGGLE_QSS, VECTOR_AXIS_LABEL_QSS,
+    CONTEXT_MENU_STYLESHEET, GROUP_FRAME_BORDER_COLOR
+)
 
 from configuration import (
     NODE_HEADER_HEIGHT, NODE_ROW_HEIGHT,
@@ -22,29 +31,80 @@ from configuration import (
     NODE_DEFAULT_WIDTH, NODE_HORIZONTAL_PAD,
     NODE_FOOTER_HEIGHT, NODE_BOTTOM_PAD, NODE_WIDGET_V_OFFSET, NODE_WIDGET_HEIGHT,
     NODE_SHADOW_OFFSET_X, NODE_SHADOW_OFFSET_Y, NODE_SHADOW_BLUR, NODE_BOUNDS_MARGIN,
+    COLOR_PRESETS, CANVAS_BACKGROUND_COLOR,
+
     SOCKET_COLOR_SCHEMA, SOCKET_HOVER_COLOR,
-    NODE_SELECTED_COLOR, NODE_BORDER_COLOR, CONNECTION_SELECTED_COLOR,
+    NODE_SELECTED_COLOR, CONNECTION_SELECTED_COLOR,
     TEXT_COLOR,
     BEZIER_CTRL_FACTOR, BEZIER_CTRL_MIN, BROWSE_BTN_WIDTH,
     GRID_SIZE_SMALL, NODE_POPUP_Z,
     VECTOR_COLLAPSE_GLYPH, VECTOR_EXPAND_GLYPH,
     NODE_SELECTION_OVERLAY_RGBA, NODE_SELECTION_OVERLAY_Z,
     NODE_SOCKET_Z, NODE_WIDGET_Z_BASE, NODE_LINKED_FIELD_Z,
-    FIELD_QSS, COMBOBOX_QSS, SPINBOX_QSS, CHECKBOX_QSS,
-    TOOLBTN_QSS, VECTOR_TOGGLE_QSS, VECTOR_AXIS_LABEL_QSS,
-    CONTEXT_MENU_STYLESHEET,
     KEY_COMMIT_EDIT, KEY_CANCEL_EDIT,
-    GROUP_FRAME_Z, GROUP_FRAME_FILL_RGBA, GROUP_FRAME_BORDER_COLOR,
+    GROUP_FRAME_Z, GROUP_FRAME_FILL_RGBA, GROUP_FRAME_FILL_ALPHA,
     GROUP_FRAME_BORDER_WIDTH, GROUP_FRAME_TITLE_COLOR,
     GROUP_FRAME_TITLE_FONT, GROUP_FRAME_TITLE_FONT_SIZE, GROUP_FRAME_TITLE_MARGIN,
-    GROUP_FRAME_HANDLE, GROUP_FRAME_MIN_SIZE,
+    GROUP_FRAME_HEADER_HEIGHT, GROUP_FRAME_HEADER_DARKEN,
+    GROUP_FRAME_HANDLE, GROUP_FRAME_MIN_SIZE, GROUP_FRAME_BORDER_INSET,
+    CONNECTION_Z, NODE_DRAG_Z,
+    UI_FONT_FAMILY, NODE_LABEL_FONT_SIZE, NODE_RENAME_FONT_SIZE,
+    TINT_BODY_DARKEN, TINT_FIELD_DARKEN, TINT_BUTTON_DARKEN,
+    TINT_HOVER_DARKEN, TINT_PRESSED_DARKEN, TINT_SELECTION_LIGHTEN,
+    TINT_TITLE_LUMINANCE_THRESHOLD,
+    TINT_BORDER_MIN_LUMINANCE, TINT_BORDER_LIGHTEN_STEP,
+    TEXT_MUTED_COLOR, BUTTON_TEXT_COLOR,
 )
 
 
 
 
+def _relative_luminance(color: QColor) -> float:
+    """Perceived brightness 0–255 using the standard Rec. 601 weights."""
+    return 0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue()
+
+
+def brightened_for_canvas(color: QColor) -> QColor:
+    """Lighten ``color`` until it crosses the visible-on-canvas luminance floor.
+
+    A user-picked near-black sits invisibly on top of CANVAS_BACKGROUND_COLOR; we
+    lift it just enough to stay readable as a node/frame outline. Bright picks
+    pass through untouched.
+    """
+    if _relative_luminance(color) >= TINT_BORDER_MIN_LUMINANCE:
+        return QColor(color)
+    # Qt's lighter() multiplies the HSV value channel, so it cannot brighten
+    # absolute black (V==0): seed a minimum value first, then iterate.
+    out = QColor(color)
+    if out.valueF() == 0.0:
+        out.setHsvF(out.hueF() if out.hueF() >= 0 else 0.0, out.saturationF(), 0.1)
+    # Bounded loop: each lighten() strictly increases V toward 1, so this
+    # terminates well before the (capped) iteration limit.
+    for _ in range(16):
+        if _relative_luminance(out) >= TINT_BORDER_MIN_LUMINANCE:
+            break
+        out = out.lighter(TINT_BORDER_LIGHTEN_STEP)
+    return out
+
+
+def editor_window_of(item):
+    """The editor window owning a scene item, or None when it is unparented.
+
+    Single source for "the window lives at scene.nodeEditorWindow", so every
+    item — whatever its base class — resolves it the same way.
+    """
+    scene = item.scene()
+    return getattr(scene, "nodeEditorWindow", None) if scene else None
+
+
 def resolve_color_schema(socket_type: str) -> dict:
-    return SOCKET_COLOR_SCHEMA.get(socket_type.lower(), SOCKET_COLOR_SCHEMA["any"])
+    from configuration import DEFAULT_HEADER_COLOR
+    schema = SOCKET_COLOR_SCHEMA.get(socket_type.lower(), SOCKET_COLOR_SCHEMA["any"])
+    return {
+        "hdr": DEFAULT_HEADER_COLOR,
+        "body": adjust_hex_color(DEFAULT_HEADER_COLOR, TINT_BODY_DARKEN),
+        "socket": schema["socket"]
+    }
 
 
 def param_spec_name(param) -> str:
@@ -183,7 +243,7 @@ class Connection(QGraphicsPathItem):
         else:
             self._pen     = QPen(QColor(source.sock_def.color), 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
             self._pen_selected = QPen(QColor(CONNECTION_SELECTED_COLOR), 2.2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-        self.setZValue(-1)
+        self.setZValue(CONNECTION_Z)
         self.setFlag(QGraphicsItem.ItemIsSelectable, True)
         self.refresh()
 
@@ -199,6 +259,8 @@ class Connection(QGraphicsPathItem):
                          QPointF(p2.x() - ctrl, p2.y()), p2)
             self.setPath(path)
         except RuntimeError:
+            # The C++ socket objects were deleted mid-refresh (node removed during a
+            # drag or undo); there is nothing left to redraw, so drop this frame.
             pass
 
     def boundingRect(self) -> QRectF:
@@ -221,7 +283,7 @@ class GroupFrameItem(QGraphicsRectItem):
 
     _RESIZE_NONE = (False, False, False, False)
 
-    def __init__(self, rect: QRectF, title: str = "Group"):
+    def __init__(self, rect: QRectF, title: Optional[str] = None):
         # One coordinate convention everywhere: the item's own rect is anchored at
         # (0, 0) and its scene placement lives entirely in pos(). Callers may hand
         # us a scene-positioned rect (e.g. the bounding box of grouped nodes); we
@@ -234,7 +296,8 @@ class GroupFrameItem(QGraphicsRectItem):
             max(GROUP_FRAME_MIN_SIZE, self._snap(rect.height())),
         ))
         self.setPos(self._snap(rect.x()), self._snap(rect.y()))
-        self.title = title
+        # Resolve the default lazily so the label honours the active UI language.
+        self.title = title if title is not None else t("default_group_title")
         self.setZValue(GROUP_FRAME_Z)
         self.setFlags(
             QGraphicsItem.ItemIsSelectable |
@@ -242,15 +305,21 @@ class GroupFrameItem(QGraphicsRectItem):
             QGraphicsItem.ItemSendsGeometryChanges
         )
         self.setAcceptHoverEvents(True)
-        self.setBrush(QBrush(QColor(*GROUP_FRAME_FILL_RGBA)))
-        self.setPen(QPen(QColor(GROUP_FRAME_BORDER_COLOR), GROUP_FRAME_BORDER_WIDTH, Qt.DashLine))
+        self._color = GROUP_FRAME_BORDER_COLOR
+        self._apply_color()
 
         self._resizing = False
         self._resize_edges = self._RESIZE_NONE
 
+        # Persistent group membership: nodes that follow this frame on subsequent
+        # drags, committed at every release. Press-time recapture stays as a fast
+        # path during the live drag itself.
+        self._dragged_inner_nodes: list = []
+        self._group_members: list = []
+
         self.title_item = _EditableTitleItem(self)
         self.title_item.setFont(QFont(GROUP_FRAME_TITLE_FONT, GROUP_FRAME_TITLE_FONT_SIZE))
-        self.title_item.setHtml(self._title_html(title))
+        self.title_item.setHtml(self._title_html(self.title))
         self._center_title()
 
     # ── Appearance ────────────────────────────────────────────────────────────
@@ -262,23 +331,128 @@ class GroupFrameItem(QGraphicsRectItem):
 
     def _center_title(self):
         if hasattr(self, 'title_item'):
+            # Vertically centre the title inside the header strip — same idiom
+            # MetaNode uses, so node and frame headers read as one design.
             r = self.rect()
-            self.title_item.setPos(r.left() + GROUP_FRAME_TITLE_MARGIN,
-                                   r.top() + GROUP_FRAME_TITLE_MARGIN)
+            y = r.top() + (GROUP_FRAME_HEADER_HEIGHT - self.title_item.boundingRect().height()) / 2.0
+            self.title_item.setPos(r.left() + GROUP_FRAME_TITLE_MARGIN, y)
 
-    def title_edit_background(self) -> str:
-        return GROUP_FRAME_BORDER_COLOR
+    def title_edit_background(self) -> Optional[str]:
+        # No filled box behind the frame title while editing — the faint frame
+        # wash already sets it off, and a solid swatch read as a stray blue block.
+        return None
+
+    # ── Frame color ───────────────────────────────────────────────────────────
+
+    def _apply_color(self):
+        c = QColor(self._color)
+        fill = QColor(c)
+
+        # The color picker outputs a 9-char hex (#AARRGGBB) if the alpha slider was used.
+        # If the user explicitly sets an alpha, we respect it for the fill.
+        # Otherwise (legacy 7-char #RRGGBB), we force the fill to be faintly transparent.
+        if len(self._color) < 9:
+            fill.setAlpha(GROUP_FRAME_FILL_ALPHA)
+
+        # paint() draws the dashed outline manually so it can sit inset from the
+        # fill edge — Qt's rect pen would otherwise hug the edge exactly.
+        self.setBrush(QBrush(fill))
+        self.setPen(QPen(Qt.NoPen))
+
+    def color(self) -> str:
+        return self._color
+
+    def set_color(self, color_hex: str, *, record_undo: bool = True):
+        self._color = color_hex
+        self._apply_color()
+        self.update()
+        win = self._editor_window()
+        if record_undo and win:
+            win.push_undo_state()
+
+    def _pick_color(self):
+        win = self._editor_window()
+        if not win:
+            return
+            
+        selected_frames = [item for item in self.scene().selectedItems() if isinstance(item, GroupFrameItem)]
+        if self not in selected_frames:
+            selected_frames.append(self)
+            
+        for node in selected_frames:
+            if hasattr(node, '_selection_overlay'):
+                node._selection_overlay.setVisible(False)
+            
+        def on_close():
+            for node in selected_frames:
+                if hasattr(node, '_selection_overlay'):
+                    node._selection_overlay.setVisible(node.isSelected())
+            win.push_undo_state()
+            
+        def apply_color_to_all(c, only_header):
+            # only-header is meaningless for a frame (no body widgets to recolor),
+            # so we just apply the picked colour uniformly.
+            for node in selected_frames:
+                node.set_color(c, record_undo=False)
+
+        from configuration import GROUP_FRAME_FILL_ALPHA
+        current = QColor(self._color)
+        if len(self._color) < 9:
+            current.setAlpha(GROUP_FRAME_FILL_ALPHA)
+
+        popup = ColorPickerPopup(
+            on_color_selected=apply_color_to_all,
+            initial_color=current.name(QColor.HexArgb),
+            on_close=on_close,
+            parent=win
+        )
+        popup.move(QCursor.pos())
+        popup.show()
 
     def _editor_window(self):
-        scene = self.scene()
-        return getattr(scene, 'nodeEditorWindow', None) if scene else None
+        return editor_window_of(self)
+
+    def boundingRect(self) -> QRectF:
+        # Include the outset dashed ring + its pen width so Qt repaints all of it
+        # cleanly when the frame moves or resizes.
+        margin = GROUP_FRAME_BORDER_INSET + GROUP_FRAME_BORDER_WIDTH
+        return super().boundingRect().adjusted(-margin, -margin, margin, margin)
 
     def paint(self, painter, option, widget):
+        # Order: body fill (super) → header strip → divider → single outset dashed
+        # ring. The ring is the sole selection indicator — it just swaps colour
+        # between accent (unselected) and white (selected). We strip the default
+        # State_Selected flag so QGraphicsRectItem doesn't also stamp its own
+        # dotted selection border on top of ours.
+        if option.state & QStyle.State_Selected:
+            option.state &= ~QStyle.State_Selected
+        painter.setRenderHint(QPainter.Antialiasing)
         super().paint(painter, option, widget)
-        if self.isSelected():
-            painter.setPen(QPen(QColor(NODE_SELECTED_COLOR), 1, Qt.DashLine))
-            painter.setBrush(Qt.NoBrush)
-            painter.drawRect(self.rect())
+
+        r = self.rect()
+        header_color = QColor(self._color).darker(GROUP_FRAME_HEADER_DARKEN)
+        header_color.setAlpha(255)
+        header_rect = QRectF(r.left(), r.top(), r.width(),
+                             min(GROUP_FRAME_HEADER_HEIGHT, r.height()))
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(header_color))
+        painter.drawRect(header_rect)
+
+        accent = brightened_for_canvas(QColor(self._color))
+        # Divider under the header uses the same accent colour as the dashed
+        # outline, keeping every frame ornament on one shade.
+        painter.setPen(QPen(accent, 1))
+        painter.drawLine(
+            QPointF(header_rect.left(), header_rect.bottom()),
+            QPointF(header_rect.right(), header_rect.bottom()),
+        )
+
+        outset = GROUP_FRAME_BORDER_INSET
+        outline = r.adjusted(-outset, -outset, outset, outset)
+        outline_color = QColor(NODE_SELECTED_COLOR) if self.isSelected() else accent
+        painter.setPen(QPen(outline_color, GROUP_FRAME_BORDER_WIDTH, Qt.DashLine))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(outline)
 
     @staticmethod
     def _snap(value: float) -> float:
@@ -365,6 +539,39 @@ class GroupFrameItem(QGraphicsRectItem):
             event.accept()
         else:
             super().mouseReleaseEvent(event)
+        # Always commit membership after the frame's mouse release
+        self.commit_members()
+
+    def commit_members(self, force_all: bool = False):
+        """Update group membership.
+        
+        If force_all is True (e.g. during project load or duplicate), we scan the scene
+        to find all nodes whose center lies inside this frame.
+        Otherwise, we only retain current members that are still inside the frame (excluding
+        newly overlapped nodes).
+        """
+        scene = self.scene()
+        if not scene:
+            self._group_members = []
+            return
+        frame_rect = self.mapToScene(self.rect()).boundingRect()
+        if force_all:
+            self._group_members = [
+                item for item in scene.items()
+                if isinstance(item, MetaNode) and item is not self
+                and frame_rect.contains(item.sceneBoundingRect().center())
+            ]
+            for node in self._group_members:
+                node._group_frame = self
+        else:
+            still_inside = []
+            for node in getattr(self, '_group_members', []):
+                if node.scene() is scene and frame_rect.contains(node.sceneBoundingRect().center()):
+                    still_inside.append(node)
+                else:
+                    if getattr(node, '_group_frame', None) is self:
+                        node._group_frame = None
+            self._group_members = still_inside
 
     def _apply_resize(self, scene_pos: QPointF):
         left, top, right, bottom = self._resize_edges
@@ -400,6 +607,7 @@ class GroupFrameItem(QGraphicsRectItem):
         item.setPlainText(self._rename_backup)
         item.setZValue(NODE_SOCKET_Z)
         item.setTextInteractionFlags(Qt.TextEditorInteraction)
+        item.begin_editing()
         item.setFocus(Qt.OtherFocusReason)
         cursor = item.textCursor()
         cursor.select(QTextCursor.Document)
@@ -410,6 +618,7 @@ class GroupFrameItem(QGraphicsRectItem):
         if item.textInteractionFlags() == Qt.NoTextInteraction:
             return False
         item.setTextInteractionFlags(Qt.NoTextInteraction)
+        item.end_editing()
         item.setZValue(0)
         return True
 
@@ -441,15 +650,18 @@ class GroupFrameItem(QGraphicsRectItem):
         menu = QMenu()
         menu.setStyleSheet(CONTEXT_MENU_STYLESHEET)
 
-        rename_act = menu.addAction("Rename Group")
+        rename_act = menu.addAction(t("ctx_rename_group"))
+        color_act  = menu.addAction(t("ctx_change_color"))
         menu.addSeparator()
-        remove_frame_act = menu.addAction("Remove Frame")
-        clear_frame_act  = menu.addAction("Clear Frame")
-        delete_group_act = menu.addAction("Delete Group")
+        remove_frame_act = menu.addAction(t("ctx_remove_frame"))
+        clear_frame_act  = menu.addAction(t("ctx_clear_frame"))
+        delete_group_act = menu.addAction(t("ctx_delete_group"))
 
         chosen = menu.exec_(event.screenPos())
         if chosen == rename_act:
             self._begin_rename()
+        elif chosen == color_act:
+            self._pick_color()
         elif chosen == remove_frame_act:
             self._remove_frame()
         elif chosen == clear_frame_act:
@@ -535,12 +747,22 @@ class MetaNode(QGraphicsObject):
         self.node_def = node_def
         self.sockets: Dict[str, SocketItem] = {}
         self._vector_buttons: Dict[str, tuple] = {}
+        self._color_override: Optional[str] = None  # user-picked header tint, if any
+        # When True the override only repaints the header + its border; the body
+        # and embedded widgets keep their default scheme. Lets the user mark a
+        # node visually without re-skinning every inner control.
+        self._color_only_header: bool = False
         self.setFlags(
             QGraphicsItem.ItemIsMovable |
             QGraphicsItem.ItemIsSelectable |
             QGraphicsItem.ItemSendsScenePositionChanges,
         )
         self._generate()
+        # When the config flag is set, parameter nodes are born with their
+        # socket colour painted on the header via the palette's only-header
+        # mechanism — body and widgets stay on the default scheme.
+        self._apply_initial_socket_color()
+        QTimer.singleShot(0, self._update_children_colors)
 
     def _generate(self):
         d = self.node_def
@@ -549,6 +771,7 @@ class MetaNode(QGraphicsObject):
         self._selection_overlay = _SelectionOverlay(self)
 
         self.title_item = self._build_title_item(d.title)
+        self.title_item.setDefaultTextColor(QColor("white"))
         self._center_title()
 
         for socket_def in d.sockets:
@@ -558,7 +781,7 @@ class MetaNode(QGraphicsObject):
             text_to_show = socket_def.name if socket_def.label is None else socket_def.label
             if text_to_show:
                 label = QGraphicsTextItem(text_to_show, self)
-                label.setFont(QFont("Consolas", 8))
+                label.setFont(QFont(UI_FONT_FAMILY, NODE_LABEL_FONT_SIZE))
                 label_height = label.boundingRect().height()
                 label_width  = label.boundingRect().width()
                 label_y      = d.socket_y(socket_def.row, socket_def.is_exec) - label_height / 2.0
@@ -606,10 +829,11 @@ class MetaNode(QGraphicsObject):
         item = self.title_item
         self._rename_backup = item.toPlainText()
         item.setDefaultTextColor(QColor(TEXT_COLOR))
-        item.setFont(QFont("Consolas", 9))
+        item.setFont(QFont(UI_FONT_FAMILY, NODE_RENAME_FONT_SIZE))
         item.setPlainText(self._rename_backup)
         item.setZValue(NODE_SOCKET_Z)
         item.setTextInteractionFlags(Qt.TextEditorInteraction)
+        item.begin_editing()
         item.setFocus(Qt.OtherFocusReason)
         cursor = item.textCursor()
         cursor.select(QTextCursor.Document)
@@ -620,6 +844,7 @@ class MetaNode(QGraphicsObject):
         if item.textInteractionFlags() == Qt.NoTextInteraction:
             return False
         item.setTextInteractionFlags(Qt.NoTextInteraction)
+        item.end_editing()
         item.setZValue(0)
         return True
 
@@ -647,7 +872,215 @@ class MetaNode(QGraphicsObject):
 
     def title_edit_background(self) -> str:
         """Backdrop the title paints behind itself while being edited."""
-        return self.node_def.header_color
+        return self._color_override or self.node_def.header_color
+
+    # ── Node color ─────────────────────────────────────────────────────────────
+
+    def _apply_initial_socket_color(self):
+        """Auto-apply socket colour as a header-only override for param nodes.
+
+        When PARAM_NODE_HEADER_FROM_SOCKET is True in the config, every
+        non-exec node is born with its output socket colour painted on the
+        header strip via the palette's only-header mechanism.  Body and
+        embedded widgets stay on the default scheme — the same behaviour as
+        if the user had opened the palette, picked the socket colour, and
+        ticked "only header".
+        """
+        from configuration import PARAM_NODE_HEADER_FROM_SOCKET
+        if not PARAM_NODE_HEADER_FROM_SOCKET:
+            return
+        # Only apply to output sockets on non-exec types.
+        for sd in self.node_def.sockets:
+            if sd.kind == "output" and not sd.is_exec:
+                self._color_override = sd.color
+                self._color_only_header = True
+                return
+
+    def color_override(self) -> Optional[str]:
+        return self._color_override
+
+    def color_only_header(self) -> bool:
+        return self._color_only_header
+
+    def set_color(self, color_hex: Optional[str], *, only_header: bool = False,
+                  record_undo: bool = True):
+        self._color_override = color_hex
+        self._color_only_header = bool(only_header) and color_hex is not None
+        self.update()
+        self._update_children_colors()
+        win = self._editor_window()
+        if record_undo and win:
+            win.push_undo_state()
+
+    def _update_children_colors(self):
+        """Push the node's current colour (default or override) into every embedded widget.
+
+        Builds one tinted palette (border/field/button/hover/pressed/selection)
+        from the picked colour using the named TINT_* factors in configuration,
+        then renders Qt stylesheets that mirror the static defaults shipped with
+        the app. Defaults and tinted paths share one builder so the two never drift.
+        """
+        # only-header scope keeps the body and embedded widgets on the default
+        # scheme; the override touches just the painted header and its border.
+        if not self._color_override or self._color_only_header:
+            qss = self._default_widget_qss()
+        else:
+            qss = self._tinted_widget_qss(QColor(self._color_override))
+
+        if self._color_override:
+            painted = QColor(self._color_override)
+            title_dark = _relative_luminance(painted) > TINT_TITLE_LUMINANCE_THRESHOLD
+            self.title_item.setDefaultTextColor(QColor("#000000" if title_dark else "#FFFFFF"))
+        else:
+            self.title_item.setDefaultTextColor(QColor(TEXT_COLOR))
+
+        for child in self.childItems():
+            if isinstance(child, QGraphicsProxyWidget) and child.widget():
+                self._apply_widget_qss(child.widget(), qss)
+
+    @staticmethod
+    def _default_widget_qss() -> Dict[str, str]:
+        return {
+            "combo": COMBOBOX_QSS, "field": FIELD_QSS, "spin": SPINBOX_QSS,
+            "check": CHECKBOX_QSS, "tool": TOOLBTN_QSS, "push": PUSHBTN_QSS,
+            "separator": NODE_BORDER_COLOR,
+        }
+
+    def _tinted_widget_qss(self, color: QColor) -> Dict[str, str]:
+        border     = brightened_for_canvas(color).name()
+        field_bg   = color.darker(TINT_FIELD_DARKEN).name()
+        btn_bg     = color.darker(TINT_BUTTON_DARKEN).name()
+        hover      = color.darker(TINT_HOVER_DARKEN).name()
+        pressed    = color.darker(TINT_PRESSED_DARKEN).name()
+        sel        = color.lighter(TINT_SELECTION_LIGHTEN).name()
+        return {
+            "combo": (
+                f"QComboBox{{border:1px solid {border};background:{field_bg};color:{TEXT_COLOR};"
+                f"border-radius:0px;padding:2px 4px;font:9pt {UI_FONT_FAMILY};combobox-popup:0;}}"
+                f"QComboBox::drop-down{{border-left:1px solid {border};width:{BROWSE_BTN_WIDTH}px;background:{btn_bg};}}"
+                f"QComboBox::drop-down:hover{{background:{hover};border-color:{sel};}}"
+                f"QComboBox QAbstractItemView{{border:1px solid {border};background:{field_bg};color:{TEXT_COLOR};"
+                f"selection-background-color:{sel};selection-color:{field_bg};outline:0px;}}"
+                f"QComboBox QAbstractItemView::item:hover{{background-color:{sel};color:{field_bg};}}"
+                f"QComboBox QAbstractItemView::item:selected{{background-color:{sel};color:{field_bg};}}"
+                f"QScrollBar:vertical{{border:none;background:{field_bg};width:8px;margin:0px;}}"
+                f"QScrollBar::handle:vertical{{background:{border};min-height:20px;border-radius:0px;}}"
+                f"QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{{height:0px;}}"
+                f"QComboBox[connected=\"true\"]{{color:{TEXT_MUTED_COLOR};}}"
+                f"QComboBox[connected=\"true\"] QLineEdit{{color:{TEXT_MUTED_COLOR};}}"
+                f"QComboBox[connected=\"true\"]::drop-down{{width:0px;border:none;}}"
+            ),
+            "field": (
+                f"QLineEdit{{border:1px solid {border};background:{field_bg};color:{TEXT_COLOR};"
+                f"border-radius:0px;padding:2px 4px;font:9pt {UI_FONT_FAMILY};}}"
+                f"QLineEdit:read-only{{color:{TEXT_MUTED_COLOR};}}"
+            ),
+            "spin": (
+                f"QSpinBox{{border:1px solid {border};background:{field_bg};color:{TEXT_COLOR};"
+                f"border-radius:0px;padding:2px;font:9pt {UI_FONT_FAMILY};}}"
+                f"QSpinBox::up-button{{background:{btn_bg};border-left:1px solid {border};"
+                f"border-bottom:1px solid {border};width:16px;}}"
+                f"QSpinBox::down-button{{background:{btn_bg};border-left:1px solid {border};width:16px;}}"
+                f"QSpinBox::up-button:hover,QSpinBox::down-button:hover{{"
+                f"background:{hover};border-color:{sel};}}"
+                f"QSpinBox:hover{{border-color:{sel};}}"
+            ),
+            "check": (
+                f"QCheckBox{{font:9pt {UI_FONT_FAMILY};color:{TEXT_COLOR};background:{btn_bg};spacing:6px;}}"
+                f"QCheckBox::indicator{{width:13px;height:13px;border:1px solid {border};background:{field_bg};}}"
+                f"QCheckBox::indicator:checked{{background:{sel};border-color:{sel};}}"
+                f"QCheckBox::indicator:hover{{border-color:{sel};}}"
+            ),
+            "tool": (
+                f"QToolButton{{background:{btn_bg};color:{BUTTON_TEXT_COLOR};"
+                f"border:1px solid {border};border-radius:0px;font:9pt {UI_FONT_FAMILY};}}"
+                f"QToolButton:hover{{background:{hover};border-color:{sel};}}"
+                f"QToolButton:pressed{{background:{pressed};}}"
+            ),
+            "push": (
+                f"QPushButton{{background:{btn_bg};color:{BUTTON_TEXT_COLOR};"
+                f"border:1px solid {border};border-radius:0px;padding:5px 8px;font:bold 9pt {UI_FONT_FAMILY};}}"
+                f"QPushButton:hover{{background:{hover};border-color:{sel};}}"
+                f"QPushButton:pressed{{background:{pressed};}}"
+            ),
+            # Same brightened shade as the painted border so separators inside dark
+            # picks stay visible against the canvas.
+            "separator": border,
+        }
+
+    # Buttons that toggle a vector axis are visually neutral chevrons living over
+    # a socket label, not editable controls — they keep their inline glyph style
+    # regardless of any tint. Discriminate them by the actual glyph rather than
+    # by "+" / "-" text, which would also catch the Enum add/remove buttons.
+    _VECTOR_TOGGLE_GLYPHS = frozenset((VECTOR_COLLAPSE_GLYPH, VECTOR_EXPAND_GLYPH))
+    # Inline separators are zero-purpose strips with maximumHeight <= this.
+    _SEPARATOR_MAX_HEIGHT = 2
+
+    @classmethod
+    def _apply_widget_qss(cls, widget, qss: Dict[str, str]):
+        """Walk the widget tree and apply the matching tinted/default stylesheet.
+
+        Qt cascades a QComboBox/QSpinBox stylesheet onto their internal editors,
+        so we deliberately do not recurse into them — re-styling their inner
+        QLineEdit would draw a second border inside the outer control.
+        """
+        if isinstance(widget, QComboBox):
+            widget.setStyleSheet(qss["combo"])
+            return
+        if isinstance(widget, QSpinBox):
+            widget.setStyleSheet(qss["spin"])
+            return
+        if isinstance(widget, QLineEdit):
+            widget.setStyleSheet(qss["field"])
+        elif isinstance(widget, QCheckBox):
+            widget.setStyleSheet(qss["check"])
+        elif isinstance(widget, QToolButton):
+            if widget.text() in cls._VECTOR_TOGGLE_GLYPHS:
+                widget.setStyleSheet(VECTOR_TOGGLE_QSS)
+            else:
+                widget.setStyleSheet(qss["tool"])
+        elif isinstance(widget, QPushButton):
+            widget.setStyleSheet(qss["push"])
+        elif (type(widget) is QWidget
+              and widget.maximumHeight() <= cls._SEPARATOR_MAX_HEIGHT):
+            widget.setStyleSheet(f"background-color:{qss['separator']};")
+        for child in widget.children():
+            if isinstance(child, QWidget):
+                cls._apply_widget_qss(child, qss)
+
+    def _pick_color(self):
+        win = self._editor_window()
+        if not win:
+            return
+            
+        selected_nodes = [item for item in self.scene().selectedItems() if isinstance(item, MetaNode)]
+        if self not in selected_nodes:
+            selected_nodes.append(self)
+            
+        for node in selected_nodes:
+            if hasattr(node, '_selection_overlay'):
+                node._selection_overlay.setVisible(False)
+            
+        def on_close():
+            for node in selected_nodes:
+                if hasattr(node, '_selection_overlay'):
+                    node._selection_overlay.setVisible(node.isSelected())
+            win.push_undo_state()
+            
+        def apply_color_to_all(c, only_header):
+            for node in selected_nodes:
+                node.set_color(c, only_header=only_header, record_undo=False)
+
+        initial = self._color_override or self.node_def.header_color
+        popup = ColorPickerPopup(
+            on_color_selected=apply_color_to_all,
+            initial_color=initial,
+            initial_only_header=self._color_only_header,
+            on_close=on_close,
+            parent=win
+        )
+        popup.move(QCursor.pos())
+        popup.show()
 
     def boundingRect(self) -> QRectF:
         d = self.node_def
@@ -668,22 +1101,51 @@ class MetaNode(QGraphicsObject):
         is_linked = win is not None and self in getattr(win, '_linked_group', [])
         visually_selected = self.isSelected() or is_linked
 
+        # A picked color tints the header; in full-scope mode the body and outer
+        # border take the same tint family, in only-header mode body and outer
+        # border stay on the default scheme and only the header (with the divider
+        # line beneath it) gets the pick.
+        only_header = bool(self._color_override) and self._color_only_header
+        if self._color_override:
+            header_color = QColor(self._color_override)
+            header_edge = brightened_for_canvas(header_color)
+            if only_header:
+                body_color = QColor(d.body_color)
+                body_border_color = QColor(NODE_BORDER_COLOR)
+            else:
+                body_color = header_color.darker(TINT_BODY_DARKEN)
+                body_border_color = header_edge
+        else:
+            header_color = QColor(d.header_color)
+            header_edge = QColor(NODE_BORDER_COLOR)
+            body_color = QColor(d.body_color)
+            body_border_color = QColor(NODE_BORDER_COLOR)
+
         painter.setPen(
             QPen(QColor(NODE_SELECTED_COLOR), 2.0) if visually_selected
-            else QPen(QColor(NODE_BORDER_COLOR), 1.0)
+            else QPen(body_border_color, 1.0)
         )
-        painter.setBrush(QBrush(QColor(d.body_color)))
+        painter.setBrush(QBrush(body_color))
         painter.drawRect(QRectF(0, 0, d.width, d.body_height))
 
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QBrush(QColor(d.header_color)))
+        painter.setBrush(QBrush(header_color))
         painter.drawRect(QRectF(0, 0, d.width, NODE_HEADER_HEIGHT))
 
-        painter.setPen(QPen(QColor(NODE_BORDER_COLOR), 1))
-        painter.drawLine(
-            QPointF(0, NODE_HEADER_HEIGHT),
-            QPointF(d.width, NODE_HEADER_HEIGHT),
-        )
+        # Header outline: in only-header mode the picked colour traces the entire
+        # header rectangle (top, sides, bottom) so the band reads as a self-
+        # contained region. In full-tint mode just the divider line at the bottom
+        # is enough, because the outer body border already carries the tint.
+        if only_header and not visually_selected:
+            painter.setPen(QPen(header_edge, 1))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(QRectF(0, 0, d.width, NODE_HEADER_HEIGHT))
+        else:
+            painter.setPen(QPen(header_edge, 1))
+            painter.drawLine(
+                QPointF(0, NODE_HEADER_HEIGHT),
+                QPointF(d.width, NODE_HEADER_HEIGHT),
+            )
 
     def itemChange(self, change, value):
         if change == QGraphicsItem.ItemPositionChange and self.scene():
@@ -708,6 +1170,37 @@ class MetaNode(QGraphicsObject):
         scene = self.scene()
         if scene:
             scene.recalculate_scene_rect()
+            
+            # Find the top-most containing frame for this node
+            best_frame = None
+            for item in scene.items():
+                if isinstance(item, GroupFrameItem):
+                    frame_rect = item.mapToScene(item.rect()).boundingRect()
+                    if frame_rect.contains(self.sceneBoundingRect().center()):
+                        if best_frame is None or item.zValue() > best_frame.zValue():
+                            best_frame = item
+            
+            old_frame = getattr(self, '_group_frame', None)
+            try:
+                if old_frame and old_frame.scene() is None:
+                    old_frame = None
+            except RuntimeError:
+                old_frame = None
+
+            if old_frame != best_frame:
+                if old_frame:
+                    try:
+                        members = getattr(old_frame, '_group_members', [])
+                        if self in members:
+                            members.remove(self)
+                    except RuntimeError:
+                        pass
+                self._group_frame = best_frame
+                if best_frame:
+                    if not hasattr(best_frame, '_group_members'):
+                        best_frame._group_members = []
+                    if self not in best_frame._group_members:
+                        best_frame._group_members.append(self)
         if not scene or not hasattr(scene, 'nodeEditorWindow'): return
         win = scene.nodeEditorWindow
         if not win: return
@@ -759,7 +1252,7 @@ class MetaNode(QGraphicsObject):
             return
         # Iterate the window's connection list (small) rather than scanning — and
         # sorting — every scene item; this runs on each frame of a node drag.
-        win = getattr(scene, "nodeEditorWindow", None)
+        win = editor_window_of(self)
         for conn in (win.connections if win else ()):
             if (conn.source and conn.source.meta_node is self) or \
                (conn.dest   and conn.dest.meta_node   is self):
@@ -767,8 +1260,7 @@ class MetaNode(QGraphicsObject):
         self.update_vector_buttons_visibility()
 
     def _is_vector_connected(self, base_name: str) -> bool:
-        scene = self.scene()
-        win = getattr(scene, 'nodeEditorWindow', None) if scene else None
+        win = editor_window_of(self)
         if not win:
             return False
         for c in win.connections:
@@ -783,14 +1275,17 @@ class MetaNode(QGraphicsObject):
             proxy.setVisible(not self._is_vector_connected(base_name))
 
     def toggle_vector_expansion(self, base_name: str):
-        pass
+        """
+        Placeholder method to handle expansion of multi-component parameters.
+        Why: Concrete node classes override this to dynamically spawn/collapse axis sockets.
+        """
+        return
 
     def get_socket(self, name: str) -> Optional[SocketItem]:
         return self.sockets.get(name)
 
     def _editor_window(self):
-        scene = self.scene()
-        return getattr(scene, "nodeEditorWindow", None) if scene else None
+        return editor_window_of(self)
 
     def _run_context_menu(self, event, actions):
         """Show a node context menu.
@@ -830,14 +1325,15 @@ class MetaNode(QGraphicsObject):
         is_param = isinstance(self, _BaseParamNode)
 
         self._run_context_menu(event, [
-            ("Rename",         getattr(self, "_begin_rename", None), is_param),
+            (t("ctx_rename"),         getattr(self, "_begin_rename", None), is_param),
+            (t("ctx_change_color"),   self._pick_color,                           True),
             None,
-            ("Duplicate",      getattr(win, "duplicate_nodes",      None), True),
-            ("Copy",           getattr(win, "copy_nodes",           None), True),
-            ("Paste",          getattr(win, "paste_nodes",          None), True),
-            ("Group in Frame", getattr(win, "group_selected_nodes", None), True),
+            (t("ctx_duplicate"),      getattr(win, "duplicate_nodes",      None), True),
+            (t("ctx_copy"),           getattr(win, "copy_nodes",           None), True),
+            (t("ctx_paste"),          getattr(win, "paste_nodes",          None), True),
+            (t("ctx_group_frame"), getattr(win, "group_selected_nodes", None), True),
             None,
-            ("Delete Node",    self._delete_self,                          True),
+            (t("ctx_delete_node"),    self._delete_self,                          True),
         ])
 
     def serialize_payload(self) -> dict:
@@ -854,12 +1350,27 @@ class NodeComboBox(QComboBox):
         self.node = node
 
     def showPopup(self):
-        self.node.setZValue(NODE_POPUP_Z)
+        # Lift the node above its siblings AND drop the selection wash, which is
+        # a child item at NODE_SELECTION_OVERLAY_Z and would otherwise paint over
+        # the dropped-down list (every embedded proxy sits below the overlay).
+        try:
+            self.node.setZValue(NODE_POPUP_Z)
+            overlay = getattr(self.node, "_selection_overlay", None)
+            if overlay is not None:
+                overlay.setVisible(False)
+        except RuntimeError:
+            pass
         super().showPopup()
 
     def hidePopup(self):
         super().hidePopup()
-        self.node.setZValue(0)
+        try:
+            self.node.setZValue(0)
+            overlay = getattr(self.node, "_selection_overlay", None)
+            if overlay is not None:
+                overlay.setVisible(self.node.isSelected())
+        except RuntimeError:
+            pass
 
 
 class _EditableTitleItem(QGraphicsTextItem):
@@ -868,13 +1379,39 @@ class _EditableTitleItem(QGraphicsTextItem):
     def __init__(self, node: MetaNode):
         super().__init__(node)
         self._node = node
+        # Out of rename mode the title is purely decorative: empty shape +
+        # NoButton makes it invisible to Qt's mouse routing, so a click on the
+        # title text drags the parent (frame/node) instead of grabbing the inert
+        # text item. begin/end_editing flips both at once.
+        self._editing = False
+        self.setAcceptedMouseButtons(Qt.NoButton)
+
+    def begin_editing(self):
+        self._editing = True
+        self.setAcceptedMouseButtons(Qt.AllButtons)
+        self.prepareGeometryChange()
+
+    def end_editing(self):
+        self._editing = False
+        self.setAcceptedMouseButtons(Qt.NoButton)
+        self.prepareGeometryChange()
+
+    def shape(self):
+        if not self._editing:
+            return QPainterPath()  # empty → invisible to hit-testing
+        return super().shape()
+
+    def boundingRect(self):
+        return super().boundingRect()
 
     def paint(self, painter: QPainter, option, widget=None):
         if self.textInteractionFlags() != Qt.NoTextInteraction:
-            painter.fillRect(
-                self.boundingRect().adjusted(-2, -1, 2, 1),
-                QColor(self._node.title_edit_background()),
-            )
+            backdrop = self._node.title_edit_background()
+            if backdrop:
+                painter.fillRect(
+                    self.boundingRect().adjusted(-2, -1, 2, 1),
+                    QColor(backdrop),
+                )
         super().paint(painter, option, widget)
 
     def keyPressEvent(self, event):
@@ -890,6 +1427,38 @@ class _EditableTitleItem(QGraphicsTextItem):
     def focusOutEvent(self, event):
         super().focusOutEvent(event)
         self._node._commit_rename()
+
+    def _is_editing(self) -> bool:
+        return self.textInteractionFlags() != Qt.NoTextInteraction
+
+    def mousePressEvent(self, event):
+        # Out of rename mode the title is just a label — let the click fall through
+        # to the parent (the node or frame) so it can be selected/dragged. Without
+        # this the title text would grab the press and the parent would never see it.
+        if not self._is_editing():
+            event.ignore()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if not self._is_editing():
+            event.ignore()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if not self._is_editing():
+            event.ignore()
+            return
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        # Allow the parent's mouseDoubleClickEvent to trigger rename when the
+        # user double-clicks the title text directly.
+        if not self._is_editing():
+            event.ignore()
+            return
+        super().mouseDoubleClickEvent(event)
 
 
 class _BaseParamNode(MetaNode):
@@ -990,10 +1559,8 @@ class _BaseParamNode(MetaNode):
 
     def _get_connected_input_value(self, socket_name: str) -> Optional[str]:
         sock = self.get_socket(socket_name)
-        if not sock or not self.scene():
-            return None
-        win = getattr(self.scene(), 'nodeEditorWindow', None)
-        if not win:
+        win = editor_window_of(self)
+        if not sock or not win:
             return None
         for conn in win.connections:
             if conn.dest is sock:
@@ -1193,8 +1760,7 @@ class _BaseParamNode(MetaNode):
         if self in visited:
             return
         visited.add(self)
-        scene = self.scene()
-        win = getattr(scene, 'nodeEditorWindow', None) if scene else None
+        win = editor_window_of(self)
         if not win:
             return
         for conn in win.connections:
@@ -1205,11 +1771,14 @@ class _BaseParamNode(MetaNode):
                     dest_node._propagate_connections_changed(visited)
 
     def _update_connected_values(self):
-        pass
+        """
+        Hook method called when connections are established or updated.
+        Why: Parameter classes override this to pull input data or lock widgets.
+        """
+        return
 
     def _on_widget_user_edit(self):
-        scene = self.scene()
-        win = getattr(scene, 'nodeEditorWindow', None) if scene else None
+        win = editor_window_of(self)
         if win:
             win.push_undo_state()
 
@@ -1224,6 +1793,8 @@ class _BaseParamNode(MetaNode):
             elif text.endswith("."):
                 line_edit.setText(text + "0")
         except ValueError:
+            # Non-numeric text is a valid in-progress edit, not an error — leave it
+            # untouched and let the field keep what the user is still typing.
             pass
 
     def _on_float_editing_finished(self):
@@ -1261,10 +1832,18 @@ class _BaseParamNode(MetaNode):
         self._watch_field_focus(widget)
 
     def get_value_state(self) -> Any:
+        """
+        Get the internal state of the parameter value for serialization.
+        Why: Backing files need a standard format to serialize all parameter nodes.
+        """
         return None
 
     def set_value_state(self, val: Any):
-        pass
+        """
+        Set the internal state of the parameter value from serialized data.
+        Why: Backing files need a standard format to restore parameter widgets.
+        """
+        return
 
     def get_value(self, socket_name: str = None) -> str:
         raise NotImplementedError
@@ -1334,6 +1913,8 @@ class _VectorParamNode(_BaseParamNode):
                     self._editors[idx].setText(source_node._editors[idx].text())
                 return
             except ValueError:
+                # The active key named an axis this vector lacks; fall through to a
+                # whole-value sync below instead of mirroring a single component.
                 pass
         self.set_value_state(source_node.get_value_state())
 
@@ -1347,7 +1928,7 @@ def _html_title(text: str, bold_first: bool = False) -> str:
     if bold_first and parts:
         first = f"<b>{first}</b>"
     rest = f" {html.escape(parts[1])}" if len(parts) > 1 else ""
-    return (f'<span style="font-family:Consolas;font-size:9pt;color:white;">'
+    return (f'<span style="font-family:{UI_FONT_FAMILY};font-size:{NODE_RENAME_FONT_SIZE}pt;">'
             f'{first}{rest}</span>')
 
 

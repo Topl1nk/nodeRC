@@ -7,7 +7,9 @@ from PyQt5.QtGui import QPen, QColor, QPainter
 
 from configuration import (
     CANVAS_BACKGROUND_COLOR, GRID_SIZE_SMALL, GRID_SIZE_LARGE,
-    GRID_COLOR_SMALL, GRID_COLOR_LARGE, SCENE_PADDING
+    GRID_COLOR_SMALL, GRID_COLOR_LARGE, SCENE_PADDING,
+    SCENE_INITIAL_X, SCENE_INITIAL_Y, SCENE_INITIAL_WIDTH, SCENE_INITIAL_HEIGHT,
+    DRAG_PREVIEW_LINE_WIDTH, NODE_DRAG_Z, GROUP_FRAME_HEADER_HEIGHT,
 )
 from search_menu import SearchMenuDialog
 from nodes_base import Connection, SocketItem, MetaNode, GroupFrameItem
@@ -27,7 +29,7 @@ class NodeScene(QGraphicsScene):
         self._drag_active = False
         self._drag_original_dest: Optional[SocketItem] = None
         self._rect_recalc_pending = False
-        self.setSceneRect(-500, -500, 1000, 1000)
+        self.setSceneRect(SCENE_INITIAL_X, SCENE_INITIAL_Y, SCENE_INITIAL_WIDTH, SCENE_INITIAL_HEIGHT)
         self.setBackgroundBrush(QColor(CANVAS_BACKGROUND_COLOR))
         self.grid_visible = True
 
@@ -76,8 +78,7 @@ class NodeScene(QGraphicsScene):
             self._schedule_rect_recalc()
 
     def _schedule_rect_recalc(self):
-        # Coalesce a burst of additions (load, paste, undo) into a single O(N) pass
-        # instead of recomputing the scene rect once per node — that was O(N²).
+        # Why: Coalesces a burst of additions into a single O(N) pass to avoid O(N²) layout updates.
         if self._rect_recalc_pending:
             return
         self._rect_recalc_pending = True
@@ -106,7 +107,7 @@ class NodeScene(QGraphicsScene):
 
         origin = source.scene_center()
         self._drag_preview_line = QGraphicsLineItem()
-        self._drag_preview_line.setPen(QPen(QColor(source.sock_def.color), 2, Qt.DashLine))
+        self._drag_preview_line.setPen(QPen(QColor(source.sock_def.color), DRAG_PREVIEW_LINE_WIDTH, Qt.DashLine))
         self._drag_preview_line.setZValue(-0.5)
         self._drag_preview_line.setLine(origin.x(), origin.y(), origin.x(), origin.y())
         super().addItem(self._drag_preview_line)
@@ -114,17 +115,34 @@ class NodeScene(QGraphicsScene):
     def mousePressEvent(self, event):
         selected_before = self.selectedItems()
         self._pre_click_selection = selected_before
-        
-        # Capture start-of-drag nodes inside each group frame
+
+        # Group frame needs to track relative node movement during drag. We seed
+        # the live drag list from the committed _group_members snapshot (refreshed
+        # on every release). We no longer augment this list with newly-overlapping
+        # nodes at press time, since dragging a frame over a node shouldn't add it.
         for item in self.items():
             if isinstance(item, GroupFrameItem):
-                item._dragged_inner_nodes = []
-                frame_scene_rect = item.mapToScene(item.rect()).boundingRect()
-                for other in self.items():
-                    if isinstance(other, MetaNode) and other != item:
-                        node_center = other.sceneBoundingRect().center()
-                        if frame_scene_rect.contains(node_center):
-                            item._dragged_inner_nodes.append(other)
+                committed = list(getattr(item, '_group_members', []) or [])
+                item._dragged_inner_nodes = [n for n in committed if n.scene() is self]
+
+        # Frame header is a drag handle the user expects to always reach — like a
+        # node's header. The frame paints below nodes (Z=GROUP_FRAME_Z), so once
+        # nodes overlap, clicks on the header land on the node instead. Lift the
+        # frame's Z just for this press so the default item picker routes to it;
+        # restore right after super() runs.
+        self._frame_z_boost = None
+        scene_pos = event.scenePos()
+        for frame in self.items():
+            if not isinstance(frame, GroupFrameItem):
+                continue
+            local = frame.mapFromScene(scene_pos)
+            rect = frame.rect()
+            in_header = (rect.left() <= local.x() <= rect.right()
+                         and rect.top() <= local.y() <= rect.top() + GROUP_FRAME_HEADER_HEIGHT)
+            if in_header and frame._edge_at(local) is None:
+                self._frame_z_boost = (frame, frame.zValue())
+                frame.setZValue(NODE_DRAG_Z + 1)
+                break
 
         from PyQt5.QtGui import QTransform
         from PyQt5.QtWidgets import QGraphicsProxyWidget
@@ -142,6 +160,10 @@ class NodeScene(QGraphicsScene):
             super().mousePressEvent(event)
         finally:
             self._pre_click_selection = None
+            if self._frame_z_boost is not None:
+                frame, original_z = self._frame_z_boost
+                frame.setZValue(original_z)
+                self._frame_z_boost = None
 
         if is_proxy_click and selected_before:
             for item in selected_before:
@@ -150,7 +172,7 @@ class NodeScene(QGraphicsScene):
 
         self._drag_start_positions = {item: item.pos() for item in self.selectedItems() if isinstance(item, MetaNode)}
         
-        # Raise Z-value of all dragged nodes to 10000 to keep them on top during movement
+        # Why: Raised Z-value prevents dragged nodes from clipping under siblings.
         self._dragged_nodes = []
         selected_meta = [item for item in self.selectedItems() if isinstance(item, MetaNode)]
         self._dragged_nodes.extend(selected_meta)
@@ -163,11 +185,10 @@ class NodeScene(QGraphicsScene):
         for node in self._dragged_nodes:
             if not hasattr(node, '_original_z'):
                 node._original_z = node.zValue()
-            node.setZValue(10000)
+            node.setZValue(NODE_DRAG_Z)
 
     def _restore_dragged_z(self):
-        # Undo the press-time Z lift that kept dragged nodes on top, and drop the
-        # per-frame inner-node capture so the next drag recomputes membership.
+        # Why: Reverts Z lift post-drag and clears local group memberships.
         for node in getattr(self, '_dragged_nodes', []):
             if hasattr(node, '_original_z'):
                 node.setZValue(node._original_z)

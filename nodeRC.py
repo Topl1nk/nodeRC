@@ -8,7 +8,7 @@ import sys
 import logging
 from typing import List
 
-from configuration import COMMAND_DB_JSON, RC_HELP_HTML
+from configuration import COMMAND_DB_JSON, RC_HELP_HTML, WINDOW_STYLE
 from diagnostics import install_global_exception_hook
 from rc_documentation_extractor import command_display_name, command_action_word
 
@@ -47,7 +47,7 @@ if __name__ == "__main__":
 
     from PyQt5.QtWidgets import QApplication
     app = QApplication(sys.argv)
-    app.setStyle("Fusion")
+    app.setStyle(WINDOW_STYLE)
 
     try:
         from rc_documentation_extractor import rebuild_command_database_from_html

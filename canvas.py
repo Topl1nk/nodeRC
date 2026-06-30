@@ -9,10 +9,12 @@ import json
 import os
 from typing import List, Optional, Dict, Any
 
+from localization import t
+
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QMessageBox, QFileDialog, QApplication, QVBoxLayout
 )
-from PyQt5.QtGui import QCursor, QColor
+from PyQt5.QtGui import QCursor, QColor, QIcon, QPixmap, QPainter, QPen
 from PyQt5.QtCore import Qt, QPointF, QRectF
 
 from configuration import (
@@ -24,9 +26,14 @@ from configuration import (
     KEY_COPY, KEY_PASTE, KEY_UNDO, KEY_REDO,
     KEY_TOGGLE_GRID, KEY_FIT_VIEW, KEY_FULLSCREEN,
     KEY_RENAME_NODE, KEY_SELECT_ALL, KEY_GROUP, KEY_DUPLICATE,
+    KEY_PREV_LANG, KEY_NEXT_LANG,
     MOD_NONE, MOD_CTRL, MOD_CTRL_SHIFT,
     GROUP_FRAME_PAD_LEFT, GROUP_FRAME_PAD_TOP,
     GROUP_FRAME_PAD_RIGHT, GROUP_FRAME_PAD_BOTTOM,
+    WINDOW_INITIAL_X, WINDOW_INITIAL_Y, WINDOW_INITIAL_WIDTH, WINDOW_INITIAL_HEIGHT,
+    START_NODE_INITIAL_X, START_NODE_INITIAL_Y,
+    GROUP_FRAME_DEFAULT_WIDTH, GROUP_FRAME_DEFAULT_HEIGHT,
+    DUPLICATE_OFFSET_X, DUPLICATE_OFFSET_Y,
 )
 from diagnostics import log_and_explain
 from nodeRC import builtin_command_defaults
@@ -46,7 +53,7 @@ class NodeEditorWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setGeometry(100, 100, 1280, 800)
+        self.setGeometry(WINDOW_INITIAL_X, WINDOW_INITIAL_Y, WINDOW_INITIAL_WIDTH, WINDOW_INITIAL_HEIGHT)
         self.setStyleSheet(f"QMainWindow{{background:{WINDOW_BACKGROUND_COLOR};}}")
 
         self.command_categories: Dict[str, Any] = {}
@@ -115,7 +122,7 @@ class NodeEditorWindow(QMainWindow):
     def _add_start_node(self):
         if not any(isinstance(i, StartNode) for i in self.scene.items()):
             node = StartNode()
-            node.setPos(60, 80)
+            node.setPos(START_NODE_INITIAL_X, START_NODE_INITIAL_Y)
             self.scene.addItem(node)
 
     def add_command_node(self, pos: QPointF, cmd_def: dict):
@@ -138,8 +145,20 @@ class NodeEditorWindow(QMainWindow):
     # whether selection is part of the snapshot, and the destination of the bytes.
 
     def _build_param_node(self, creation_data: dict) -> _BaseParamNode:
-        node_class = PARAM_NODE_TYPES.get(creation_data.get("param_type", "string"), StringParamNode)
+        ptype = creation_data.get("param_type", "string")
+        node_class = PARAM_NODE_TYPES.get(ptype, StringParamNode)
         name   = creation_data.get("display") or creation_data.get("name")
+        
+        # Translate default titles dynamically when language switches
+        if name:
+            from localization import get_all_translations, t
+            title_key = "param_path_title" if ptype in ("filepath", "dirpath", "path") else f"param_{ptype}_title"
+            if name in get_all_translations(title_key):
+                name = t(title_key)
+                creation_data["display"] = name
+                if "name" in creation_data:
+                    creation_data["name"] = name
+                    
         values = creation_data.get("values", [])
         if node_class is EnumParamNode and values:
             node = node_class(name, values) if name else node_class(values=values)
@@ -149,7 +168,12 @@ class NodeEditorWindow(QMainWindow):
         return node
 
     def _serialize_node(self, node: MetaNode) -> dict:
-        return {"type": type(node).__name__, **node.serialize_payload()}
+        record = {"type": type(node).__name__, **node.serialize_payload()}
+        if node.color_override():
+            record["color"] = node.color_override()
+            if node.color_only_header():
+                record["color_only_header"] = True
+        return record
 
     def _deserialize_node(self, record: dict, pos: QPointF) -> Optional[MetaNode]:
         node_type = record["type"]
@@ -164,6 +188,10 @@ class NodeEditorWindow(QMainWindow):
             return None
         node.setPos(pos)
         self.scene.addItem(node)
+        if record.get("color"):
+            node.set_color(record["color"],
+                           only_header=bool(record.get("color_only_header")),
+                           record_undo=False)
         if isinstance(node, _BaseParamNode) and record.get("current_value") is not None:
             node.set_value_state(record["current_value"])
         return node
@@ -229,6 +257,7 @@ class NodeEditorWindow(QMainWindow):
                     "y": pos.y(),
                     "width": rect.width(),
                     "height": rect.height(),
+                    "color": item.color(),
                 }
                 if include_selection:
                     record["selected"] = item.isSelected()
@@ -261,9 +290,11 @@ class NodeEditorWindow(QMainWindow):
 
         for record in payload.get("groups", []):
             try:
-                rect = QRectF(0, 0, record.get("width", 100), record.get("height", 100))
-                frame = GroupFrameItem(rect, title=record.get("title", "Group"))
+                rect = QRectF(0, 0, record.get("width", GROUP_FRAME_DEFAULT_WIDTH), record.get("height", GROUP_FRAME_DEFAULT_HEIGHT))
+                frame = GroupFrameItem(rect, title=record.get("title", t("default_group_title")))
                 frame.setPos(record["x"], record["y"])
+                if record.get("color"):
+                    frame.set_color(record["color"], record_undo=False)
                 self.scene.addItem(frame)
                 if restore_selection and record.get("selected", False):
                     frame.setSelected(True)
@@ -274,6 +305,9 @@ class NodeEditorWindow(QMainWindow):
         for node in id_to_node.values():
             node._refresh_connections()
         self.scene.recalculate_scene_rect()
+        for item in self.scene.items():
+            if isinstance(item, GroupFrameItem):
+                item.commit_members(force_all=True)
 
     def select_all(self):
         selectable = [
@@ -361,6 +395,12 @@ class NodeEditorWindow(QMainWindow):
                 self.showNormal()
             else:
                 self.showFullScreen()
+            event.accept()
+        elif (key == KEY_PREV_LANG or nvk == 0xDB or event.text() in ('[', '{', 'х', 'Х', 'ї', 'Ї')) and mods == MOD_NONE:
+            self.cycle_language(-1)
+            event.accept()
+        elif (key == KEY_NEXT_LANG or nvk == 0xDD or event.text() in (']', '}', 'ъ', 'Ъ', 'і', 'І')) and mods == MOD_NONE:
+            self.cycle_language(1)
             event.accept()
         else:
             super().keyPressEvent(event)
@@ -453,6 +493,7 @@ class NodeEditorWindow(QMainWindow):
                 "rel_y": pos.y() - center_y,
                 "width": rect.width(),
                 "height": rect.height(),
+                "color": g.color(),
             })
 
         clipboard_payload = {
@@ -488,17 +529,23 @@ class NodeEditorWindow(QMainWindow):
                 id_to_node[record["id"]] = node
                 node.setSelected(True)
             
+            pasted_frames = []
             for record in clipboard_payload.get("groups", []):
-                rect = QRectF(0, 0, record.get("width", 100), record.get("height", 100))
-                frame = GroupFrameItem(rect, title=record.get("title", "Group"))
+                rect = QRectF(0, 0, record.get("width", GROUP_FRAME_DEFAULT_WIDTH), record.get("height", GROUP_FRAME_DEFAULT_HEIGHT))
+                frame = GroupFrameItem(rect, title=record.get("title", t("default_group_title")))
                 pos = QPointF(cursor.x() + record["rel_x"], cursor.y() + record["rel_y"])
                 frame.setPos(pos)
+                if record.get("color"):
+                    frame.set_color(record["color"], record_undo=False)
                 self.scene.addItem(frame)
                 frame.setSelected(True)
+                pasted_frames.append(frame)
 
             self._rebuild_connections(clipboard_payload.get("connections", []), id_to_node)
             for node in id_to_node.values():
                 node._refresh_connections()
+            for frame in pasted_frames:
+                frame.commit_members(force_all=True)
         finally:
             self._block_undo_push = False
         self.push_undo_state()
@@ -520,24 +567,30 @@ class NodeEditorWindow(QMainWindow):
             cursor = self.view.mapToScene(self.view.viewport().rect().center())
             id_to_node: Dict[int, MetaNode] = {}
             for record in clipboard_payload.get("nodes", []):
-                pos = QPointF(cursor.x() + record["rel_x"] + 50, cursor.y() + record["rel_y"] + 50)
+                pos = QPointF(cursor.x() + record["rel_x"] + DUPLICATE_OFFSET_X, cursor.y() + record["rel_y"] + DUPLICATE_OFFSET_Y)
                 node = self._deserialize_node(record, pos)
                 if node is None:
                     continue
                 id_to_node[record["id"]] = node
                 node.setSelected(True)
                 
+            duplicated_frames = []
             for record in clipboard_payload.get("groups", []):
-                rect = QRectF(0, 0, record.get("width", 100), record.get("height", 100))
-                frame = GroupFrameItem(rect, title=record.get("title", "Group"))
-                pos = QPointF(cursor.x() + record["rel_x"] + 50, cursor.y() + record["rel_y"] + 50)
+                rect = QRectF(0, 0, record.get("width", GROUP_FRAME_DEFAULT_WIDTH), record.get("height", GROUP_FRAME_DEFAULT_HEIGHT))
+                frame = GroupFrameItem(rect, title=record.get("title", t("default_group_title")))
+                pos = QPointF(cursor.x() + record["rel_x"] + DUPLICATE_OFFSET_X, cursor.y() + record["rel_y"] + DUPLICATE_OFFSET_Y)
                 frame.setPos(pos)
+                if record.get("color"):
+                    frame.set_color(record["color"], record_undo=False)
                 self.scene.addItem(frame)
                 frame.setSelected(True)
+                duplicated_frames.append(frame)
 
             self._rebuild_connections(clipboard_payload.get("connections", []), id_to_node)
             for node in id_to_node.values():
                 node._refresh_connections()
+            for frame in duplicated_frames:
+                frame.commit_members(force_all=True)
         finally:
             self._block_undo_push = False
         self.push_undo_state()
@@ -551,28 +604,30 @@ class NodeEditorWindow(QMainWindow):
             rect = rect.united(node.sceneBoundingRect())
         rect = rect.adjusted(-GROUP_FRAME_PAD_LEFT, -GROUP_FRAME_PAD_TOP,
                              GROUP_FRAME_PAD_RIGHT, GROUP_FRAME_PAD_BOTTOM)
-        frame = GroupFrameItem(rect, title="Logical Group")
+        frame = GroupFrameItem(rect, title=t("logical_group_title"))
         self.scene.addItem(frame)
+        frame.commit_members(force_all=True)
+
         self.push_undo_state()
 
     def save_project(self, save_as: bool = False):
         path = self._project_path
         if save_as or not path:
             path, _ = QFileDialog.getSaveFileName(
-                self, "Save Project", path or "", "NodeRC Project (*.json)")
+                self, t("dialog_save_project"), path or "", t("dialog_project_filter"))
             if not path:
                 return
         try:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(self._capture(include_selection=False), f, indent=2)
         except Exception as exc:
-            QMessageBox.critical(self, "Save Error", log_and_explain("Failed to save project", exc))
+            QMessageBox.critical(self, t("dialog_save_error_title"), log_and_explain(t("msg_save_failed"), exc))
             return
         self._project_path = path
         self._set_dirty(False)
 
     def load_project(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Load Project", "", "NodeRC Project (*.json)")
+        path, _ = QFileDialog.getOpenFileName(self, t("dialog_open_project"), "", t("dialog_project_filter"))
         if not path:
             return
         try:
@@ -580,7 +635,7 @@ class NodeEditorWindow(QMainWindow):
                 payload = json.load(f)
             self._restore(payload, restore_selection=False)
         except Exception as exc:
-            QMessageBox.critical(self, "Load Error", log_and_explain("Failed to load project", exc))
+            QMessageBox.critical(self, t("dialog_load_error_title"), log_and_explain(t("msg_load_failed"), exc))
             self._add_start_node()
             return
         # A loaded project is the new baseline: undo must not cross back into the old graph.
@@ -620,8 +675,83 @@ class NodeEditorWindow(QMainWindow):
         self._update_title()
 
     def _update_title(self):
-        name = os.path.basename(self._project_path) if self._project_path else "Untitled"
-        self.setWindowTitle(f"NodeRC Editor — {name}{'*' if self._dirty else ''}")
+        name = os.path.basename(self._project_path) if self._project_path else t("untitled")
+        self.setWindowTitle(f"{t('window_title_prefix')}{name}{'*' if self._dirty else ''}")
+        from localization import get_language
+        self._update_window_icon(get_language())
+
+    def _update_window_icon(self, lang: str):
+        """Draw a custom flag icon programmatically for the window icon based on the active language.
+        
+        Why: Replaces the default program icon with the flag icon of the selected locale in memory.
+        """
+        w, h = 32, 24
+        pixmap = QPixmap(w, h)
+        pixmap.fill(Qt.transparent)
+        
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        if lang == "uk":
+            # Ukrainian flag: blue top half, yellow bottom half
+            stripe_h = h // 2
+            painter.fillRect(0, 0, w, stripe_h, QColor("#0057B7"))
+            painter.fillRect(0, stripe_h, w, h - stripe_h, QColor("#FFD700"))
+        else:
+            # Dual USA/UK Flag (default/English): USA flag on the left, UK flag on the right
+            # USA Flag on the left (clipped to 0, 0, 16, 24)
+            painter.save()
+            painter.setClipRect(0, 0, 16, 24)
+            # Background white
+            painter.fillRect(0, 0, 16, 24, QColor("#FFFFFF"))
+            # 7 red stripes (alternating)
+            stripe_h = 24.0 / 7.0
+            for i in range(0, 7, 2):
+                painter.fillRect(0, int(i * stripe_h), 16, int(stripe_h), QColor("#B22234"))
+            # Canton (blue rect)
+            painter.fillRect(0, 0, 9, 12, QColor("#3C3B6E"))
+            # Some white dots for stars
+            painter.setPen(QColor("#FFFFFF"))
+            painter.drawPoint(2, 3)
+            painter.drawPoint(6, 3)
+            painter.drawPoint(4, 6)
+            painter.drawPoint(2, 9)
+            painter.drawPoint(6, 9)
+            painter.restore()
+
+            # UK Flag on the right (clipped to 16, 0, 16, 24)
+            painter.save()
+            painter.setClipRect(16, 0, 16, 24)
+            painter.fillRect(16, 0, 16, 24, QColor("#012169"))
+            
+            # White diagonals
+            pen_white_diag = QPen(QColor("#FFFFFF"), 3)
+            painter.setPen(pen_white_diag)
+            painter.drawLine(16, 0, 32, 24)
+            painter.drawLine(16, 24, 32, 0)
+            
+            # Red diagonals
+            pen_red_diag = QPen(QColor("#C8102E"), 1)
+            painter.setPen(pen_red_diag)
+            painter.drawLine(16, 0, 32, 24)
+            painter.drawLine(16, 24, 32, 0)
+            
+            # White cross
+            painter.fillRect(24 - 3, 0, 6, 24, QColor("#FFFFFF"))
+            painter.fillRect(16, 12 - 3, 16, 6, QColor("#FFFFFF"))
+            
+            # Red cross
+            painter.fillRect(24 - 1, 0, 2, 24, QColor("#C8102E"))
+            painter.fillRect(16, 12 - 1, 16, 2, QColor("#C8102E"))
+            painter.restore()
+            
+        # Draw a thin gray border outline
+        painter.setPen(QPen(QColor("#555555"), 1))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(0, 0, w - 1, h - 1)
+        
+        painter.end()
+        self.setWindowIcon(QIcon(pixmap))
 
     def undo(self):
         if self.history_index > 0:
@@ -632,6 +762,29 @@ class NodeEditorWindow(QMainWindow):
         if self.history_index < len(self.history) - 1:
             self.history_index += 1
             self.set_project_state(self.history[self.history_index])
+
+    def cycle_language(self, direction: int):
+        """
+        Cycle the UI language through the available languages in gettext.
+        Why: Allows translators and testers to check different locales on keypress.
+        """
+        from localization import available_languages, set_language, get_language
+        langs = available_languages()
+        if not langs:
+            return
+        curr = get_language()
+        try:
+            idx = langs.index(curr)
+        except ValueError:
+            idx = 0
+        new_idx = (idx + direction) % len(langs)
+        new_lang = langs[new_idx]
+        set_language(new_lang)
+
+        # Refresh the UI in the new language
+        self._update_title()
+        state = self.get_project_state()
+        self.set_project_state(state)
 
     def _build_exec_chain(self) -> Optional[List[MetaNode]]:
         all_nodes = {i for i in self.scene.items() if isinstance(i, MetaNode)}
@@ -673,8 +826,8 @@ class NodeEditorWindow(QMainWindow):
     def execute_chain(self):
         chain = self._build_exec_chain()
         if not chain or len(chain) < 2:
-            QMessageBox.warning(self, "Incomplete chain",
-                                "Connect at least one Command Node to Start.")
+            QMessageBox.warning(self, t("dialog_incomplete_chain_title"),
+                                t("msg_incomplete_chain_desc"))
             return
 
         tokens = [RC_EXECUTABLE]
@@ -699,6 +852,6 @@ class NodeEditorWindow(QMainWindow):
             subprocess.Popen(tokens)
         except Exception as exc:
             QMessageBox.critical(
-                self, "Launch Error",
-                log_and_explain("Failed to start RealityCapture", exc),
+                self, t("dialog_launch_error_title"),
+                log_and_explain(t("msg_launch_failed"), exc),
             )

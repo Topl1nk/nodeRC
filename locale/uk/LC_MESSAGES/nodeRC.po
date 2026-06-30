@@ -1,0 +1,397 @@
+# NodeRC UI translation catalog.
+# Each msgid is a stable symbolic key; the English source is shown as a
+# '#.' comment for translator context. Generated from localization data.
+# Language: uk
+
+msgid ""
+msgstr ""
+"Project-Id-Version: nodeRC 1.0.2\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-06-29 19:51+0000\n"
+"PO-Revision-Date: 2026-06-29 23:10+0000\n"
+"Last-Translator: \n"
+"Language-Team: uk\n"
+"Language: uk\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
+
+#. RealityCapture Node-Based CLI Script Generator
+msgid "window_title"
+msgstr "RealityCapture Нодовий генератор скриптів CLI"
+
+#. &File
+msgid "menu_file"
+msgstr "&Файл"
+
+#. Export Script...
+msgid "menu_export"
+msgstr "Експорт скрипту..."
+
+#. Quit
+msgid "menu_quit"
+msgstr "Вихід"
+
+#. &Edit
+msgid "menu_edit"
+msgstr "&Правка"
+
+#. Undo
+msgid "menu_undo"
+msgstr "Скасувати"
+
+#. Redo
+msgid "menu_redo"
+msgstr "Повторити"
+
+#. Duplicate
+msgid "menu_duplicate"
+msgstr "Дублювати"
+
+#. Group Nodes
+msgid "menu_group_nodes"
+msgstr "Групувати ноди"
+
+#. Select All
+msgid "menu_select_all"
+msgstr "Виділити все"
+
+#. Toggle Grid
+msgid "menu_toggle_grid"
+msgstr "Сітка"
+
+#. Fit View
+msgid "menu_fit_view"
+msgstr "Показати все"
+
+#. Toggle Fullscreen
+msgid "menu_toggle_fullscreen"
+msgstr "Повноекранний режим"
+
+#. Add Parameter Node
+msgid "menu_add_param_node"
+msgstr "Додати ноду параметра"
+
+#. Delete Selected
+msgid "menu_delete_selected"
+msgstr "Видалити виділене"
+
+#. &Run
+msgid "menu_run"
+msgstr "&Запуск"
+
+#. Launch Command Chain
+msgid "menu_launch_chain"
+msgstr "Запустити ланцюжок команд"
+
+#. &Help
+msgid "menu_help"
+msgstr "&Довідка"
+
+#. Controls & Shortcuts...
+msgid "menu_controls_shortcuts"
+msgstr "Керування та гарячі клавіші..."
+
+#. Controls & Shortcuts
+msgid "dialog_controls_title"
+msgstr "Керування та гарячі клавіші"
+
+#. Export RealityCapture Script
+msgid "dialog_export_title"
+msgstr "Експорт RealityCapture скрипту"
+
+#. RealityCapture Script (*.bat)
+msgid "dialog_export_filter"
+msgstr "RealityCapture Скрипт (*.bat)"
+
+#. Saved script to: […]
+msgid "msg_saved_script"
+msgstr ""
+"Скрипт збережено в:\n"
+"{}"
+
+#. Export Failed
+msgid "msg_export_failed"
+msgstr "Помилка експорту"
+
+#. Exported script to clipboard.
+msgid "msg_exported_clipboard"
+msgstr "Скрипт скопійовано в буфер обміну."
+
+#. Exported Script
+msgid "msg_exported_script"
+msgstr "Скрипт експортовано"
+
+#. Open Project
+msgid "dialog_open_project"
+msgstr "Відкрити проєкт"
+
+#. Save Project
+msgid "dialog_save_project"
+msgstr "Зберегти проєкт"
+
+#. NodeRC Project Files (*.json)
+msgid "dialog_project_filter"
+msgstr "Файли проєктів NodeRC (*.json)"
+
+#. Open Failed
+msgid "msg_open_failed"
+msgstr "Не вдалося відкрити проєкт"
+
+#. Save Failed
+msgid "msg_save_failed"
+msgstr "Не вдалося зберегти проєкт"
+
+#. Failed to load project
+msgid "msg_load_failed"
+msgstr "Не вдалося завантажити проєкт"
+
+#. Unsaved Changes
+msgid "dialog_unsaved_changes"
+msgstr "Незбережені зміни"
+
+#. The project has unsaved changes. Do you want to save them?
+msgid "msg_unsaved_prompt"
+msgstr "У проєкті є незбережені зміни. Бажаєте зберегти їх?"
+
+#. Untitled
+msgid "untitled"
+msgstr "Без назви"
+
+#. NodeRC Editor — 
+msgid "window_title_prefix"
+msgstr "Редактор NodeRC — "
+
+#. Save Error
+msgid "dialog_save_error_title"
+msgstr "Помилка збереження"
+
+#. Load Error
+msgid "dialog_load_error_title"
+msgstr "Помилка завантаження"
+
+#. Incomplete chain
+msgid "dialog_incomplete_chain_title"
+msgstr "Неповний ланцюжок"
+
+#. Launch Error
+msgid "dialog_launch_error_title"
+msgstr "Помилка запуску"
+
+#. Failed to start RealityCapture
+msgid "msg_launch_failed"
+msgstr "Не вдалося запустити RealityCapture"
+
+#. Connect at least one Command Node to Start.
+msgid "msg_incomplete_chain_desc"
+msgstr "Підключіть хоча б одну ноду команди до кнопки Запуск."
+
+#. No matching nodes.
+msgid "msg_no_matching_nodes"
+msgstr "Немає відповідних нод."
+
+#. No description available.
+msgid "msg_no_description"
+msgstr "Опис відсутній."
+
+#. Group
+msgid "default_group_title"
+msgstr "Група"
+
+#. Logical Group
+msgid "logical_group_title"
+msgstr "Логічна група"
+
+#. Rename Group
+msgid "ctx_rename_group"
+msgstr "Перейменувати групу"
+
+#. Remove Frame
+msgid "ctx_remove_frame"
+msgstr "Видалити рамку"
+
+#. Clear Frame
+msgid "ctx_clear_frame"
+msgstr "Очистити рамку"
+
+#. Delete Group
+msgid "ctx_delete_group"
+msgstr "Видалити групу з вмістом"
+
+#. Rename
+msgid "ctx_rename"
+msgstr "Перейменувати"
+
+#. Duplicate
+msgid "ctx_duplicate"
+msgstr "Дублювати"
+
+#. Copy
+msgid "ctx_copy"
+msgstr "Копіювати"
+
+#. Paste
+msgid "ctx_paste"
+msgstr "Вставити"
+
+#. Group in Frame
+msgid "ctx_group_frame"
+msgstr "Групувати в рамку"
+
+#. Delete Node
+msgid "ctx_delete_node"
+msgstr "Видалити ноду"
+
+#. Auto-Create Parameters
+msgid "ctx_auto_create_params"
+msgstr "Автостворення параметрів"
+
+#. [S] String
+msgid "param_string_title"
+msgstr "[S] Рядок"
+
+#. text value...
+msgid "param_string_placeholder"
+msgstr "текстове значення..."
+
+#. [B] Boolean
+msgid "param_bool_title"
+msgstr "[B] Логічне"
+
+#. [I] Integer
+msgid "param_int_title"
+msgstr "[I] Ціле"
+
+#. [#] Float
+msgid "param_float_title"
+msgstr "[#] Дійсне"
+
+#. [E] Enum
+msgid "param_enum_title"
+msgstr "[E] Перелік"
+
+#. new item...
+msgid "param_enum_new_placeholder"
+msgstr "новий пункт..."
+
+#. [F/F] Load
+msgid "param_path_title"
+msgstr "[F/F] Завантаження"
+
+#. dirpath...
+msgid "param_path_dir_placeholder"
+msgstr "шлях до папки..."
+
+#. filename...
+msgid "param_path_file_placeholder"
+msgstr "ім'я файлу..."
+
+#. *.ext
+msgid "param_path_ext_placeholder"
+msgstr "*.ext"
+
+#. [K] Key=Value
+msgid "param_keyvalue_title"
+msgstr "[K] Ключ=Значення"
+
+#. key=value
+msgid "param_keyvalue_placeholder"
+msgstr "ключ=значення"
+
+#. [#2] Float2 (X,Y)
+msgid "param_float2_title"
+msgstr "[#2] Вектор2 (X,Y)"
+
+#. [#3] Float3 (X,Y,Z)
+msgid "param_float3_title"
+msgstr "[#3] Вектор3 (X,Y,Z)"
+
+#. Select folder
+msgid "dialog_select_folder"
+msgstr "Виберіть папку"
+
+#. Search Commands...
+msgid "search_placeholder"
+msgstr "Пошук команд..."
+
+#. Search categories and action words...
+msgid "search_description"
+msgstr "Пошук категорій та ключових дій..."
+
+#. Parameters (Inputs)
+msgid "tree_header_params"
+msgstr "Параметри (Входи)"
+
+#. Outputs
+msgid "tree_header_outputs"
+msgstr "Виходи"
+
+#. Description
+msgid "tree_header_description"
+msgstr "Опис"
+
+#. Built-in Category: 
+msgid "lbl_builtin_category"
+msgstr "Вбудована категорія: "
+
+#. Shortcut: 
+msgid "lbl_shortcut"
+msgstr "Гаряча клавіша: "
+
+#. (Click row to navigate, Double-click to spawn)
+msgid "lbl_navigation_hint"
+msgstr "(Клік — перейти до ноди, Подвійний клік — створити)"
+
+#. Commands
+msgid "lbl_commands"
+msgstr "Команди"
+
+#. <b>[ Keys & Shortcuts Manual ]</b><br/> […]
+msgid "manual_html"
+msgstr ""
+"<b>[ Керівництво з керування ]</b><br/>\n"
+"• <b>Пробіл</b> : Відкрити меню пошуку<br/>\n"
+"• <b>Delete</b> : Видалити виділені елементи<br/>\n"
+"• <b>Ctrl+A</b> : Виділити всі ноди<br/>\n"
+"• <b>Ctrl+G</b> : Згрупувати ноди в рамку<br/>\n"
+"• <b>Ctrl+D</b> : Дублювати виділення<br/>\n"
+"• <b>Ctrl+C</b> / <b>Ctrl+V</b> : Копіювати / Вставити<br/>\n"
+"• <b>Ctrl+Z</b> / <b>Ctrl+Y</b> : Скасувати / Повторити дію<br/>\n"
+"• <b>F</b> : Центрувати камеру на виділенні<br/>\n"
+"• <b>G</b> : Приховати/показати сітку фону<br/>\n"
+"• <b>F2</b> : Перейменувати ноду / рамку<br/>\n"
+"• <b>F11</b> : Розгорнути на весь екран<br/>\n"
+"• <b>[</b> / <b>]</b> : Зміна мови інтерфейсу (працює на будь-якій розкладці)"
+
+#. <h3>RealityCapture NodeRC Editor</h3> […]
+msgid "controls_manual_html"
+msgstr ""
+"<h3>Редактор RealityCapture NodeRC</h3>\n"
+"<p><b>Керування:</b></p>\n"
+"<ul>\n"
+"  <li><b>Перетягування середньою/правою кнопкою:</b> Панорамування полотна.</li>\n"
+"  <li><b>Коліщатко миші:</b> Масштабування (зум).</li>\n"
+"  <li><b>Лівий клік:</b> Виділення та переміщення нод і рамок.</li>\n"
+"  <li><b>Пробіл / Правий клік на порожньому місці:</b> Меню швидкого пошуку команд.</li>\n"
+"  <li><b>Подвійний клік на заголовку параметра:</b> Перейменування на місці.</li>\n"
+"</ul>\n"
+"<p><b>Гарячі клавіші:</b></p>\n"
+"<ul>\n"
+"  <li><b>Ctrl+G:</b> Об'єднати вибрані ноди в рамку-групу.</li>\n"
+"  <li><b>Ctrl+D:</b> Дублювати вибрані ноди.</li>\n"
+"  <li><b>Ctrl+Z / Ctrl+Y:</b> Скасування та повтор дій.</li>\n"
+"  <li><b>Delete:</b> Видалити вибрані ноди та зв'язки.</li>\n"
+"  <li><b>F:</b> Сфокусувати камеру на виділених об'єктах.</li>\n"
+"  <li><b>G:</b> Приховати/показати фонову координатну сітку.</li>\n"
+"  <li><b>F11:</b> Повноекранний режим.</li>\n"
+"  <li><b>[ / ]:</b> Зміна мови інтерфейсу (працює на будь-якій розкладці).</li>\n"
+"</ul>"
+
+#. Change Color
+msgid "ctx_change_color"
+msgstr "Змінити колір"
+
+#. Only header
+msgid "color_only_header"
+msgstr "Лише шапка"

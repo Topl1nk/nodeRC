@@ -10,6 +10,8 @@ from configuration import (
     VIGNETTE_COLOR, VIGNETTE_RADIUS, SCROLLBAR_BTN_MARGIN, SCROLLBAR_BTN_OFFSET,
     SCROLLBAR_BTN_SIZE, VIEW_ZOOM_STEP, VIEW_ZOOM_MIN, VIEW_ZOOM_MAX,
     VIEW_FRAME_MARGIN,
+    SCROLLBAR_TOGGLE_SHOW_GLYPH, SCROLLBAR_TOGGLE_HIDE_GLYPH,
+    SCROLLBAR_TOGGLE_TOOLTIP,
 )
 
 
@@ -24,9 +26,8 @@ class GraphicsView(QGraphicsView):
             QPainter.SmoothPixmapTransform |
             QPainter.TextAntialiasing,
         )
-        # Partial repaints: only changed item rects redraw on a node drag, not the
-        # whole viewport. The vignette is painted in drawBackground (under the nodes);
-        # scrollContentsBy forces a full repaint on pan so it never smears.
+        # Why: Partial repaints limit redraws to changed item rects during node drag.
+        # scrollContentsBy forces full repaint on pan to avoid smearing the screen-fixed vignette.
         self.setViewportUpdateMode(QGraphicsView.SmartViewportUpdate)
         self._vignette_brush: Optional[QBrush] = None
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -40,9 +41,9 @@ class GraphicsView(QGraphicsView):
         self._pan_origin: Optional[QPoint] = None
         self._suppress_redelivered_click = False
 
-        self._scrollbar_toggle_btn = QPushButton("⊞", self)
+        self._scrollbar_toggle_btn = QPushButton(SCROLLBAR_TOGGLE_SHOW_GLYPH, self)
         self._scrollbar_toggle_btn.setFixedSize(SCROLLBAR_BTN_SIZE, SCROLLBAR_BTN_SIZE)
-        self._scrollbar_toggle_btn.setToolTip("Toggle scrollbars")
+        self._scrollbar_toggle_btn.setToolTip(SCROLLBAR_TOGGLE_TOOLTIP)
         self._scrollbar_toggle_btn.setStyleSheet(f"""
             QPushButton {{
                 background:{SCROLLBAR_TOGGLE_BG};color:white;
@@ -54,6 +55,20 @@ class GraphicsView(QGraphicsView):
         self._scrollbars_visible = False
 
     def wheelEvent(self, event):
+        # Wheel over an embedded widget (combo dropdown, spinbox, scrollable text)
+        # must scroll the widget, not zoom the canvas. Forward to the scene first
+        # and only zoom when no widget claimed it.
+        from PyQt5.QtWidgets import QGraphicsProxyWidget
+        item = self.itemAt(event.pos())
+        cursor = item
+        while cursor is not None:
+            if isinstance(cursor, QGraphicsProxyWidget):
+                super().wheelEvent(event)
+                if event.isAccepted():
+                    return
+                break
+            cursor = cursor.parentItem()
+
         factor = self._ZOOM_STEP_IN if event.angleDelta().y() > 0 else self._ZOOM_STEP_OUT
         # Clamp so the graph can neither vanish nor magnify past readability.
         next_scale = self.transform().m11() * factor
@@ -73,7 +88,7 @@ class GraphicsView(QGraphicsView):
             return
         self.fitInView(rect.adjusted(-VIEW_FRAME_MARGIN, -VIEW_FRAME_MARGIN,
                                      VIEW_FRAME_MARGIN, VIEW_FRAME_MARGIN), Qt.KeepAspectRatio)
-        # fitInView ignores zoom bounds; pull an over-zoomed single node back in.
+        # Why: fitInView ignores zoom bounds, which can over-zoom single nodes.
         scale = self.transform().m11()
         if scale > VIEW_ZOOM_MAX:
             self.scale(VIEW_ZOOM_MAX / scale, VIEW_ZOOM_MAX / scale)
@@ -87,15 +102,14 @@ class GraphicsView(QGraphicsView):
         self._vignette_brush = QBrush(gradient)
 
     def drawBackground(self, painter: QPainter, rect: QRectF):
-        # Grid first, then the vignette — both under the items, so nodes and wires
-        # paint on top and stay un-dimmed; only the canvas/grid is darkened.
+        # Why: Painting grid and vignette under nodes keeps visual elements un-dimmed.
         if self.scene():
             self.scene().drawBackground(painter, rect)
 
         if self._vignette_brush is None:
             self._build_vignette_brush()
         painter.save()
-        painter.resetTransform()  # viewport space — vignette is fixed to the screen
+        painter.resetTransform()  # Why: fixed to screen coordinates
         painter.setPen(Qt.NoPen)
         painter.setBrush(self._vignette_brush)
         painter.drawRect(0, 0, self.viewport().width(), self.viewport().height())
@@ -138,8 +152,7 @@ class GraphicsView(QGraphicsView):
 
     def scrollContentsBy(self, dx: int, dy: int):
         super().scrollContentsBy(dx, dy)
-        # A pan scroll-blits the viewport, which would smear the screen-fixed
-        # vignette; force a full repaint so the background is redrawn cleanly.
+        # Why: A pan scroll-blits the viewport, smearing the screen-fixed vignette.
         self.viewport().update()
 
     def resizeEvent(self, event):

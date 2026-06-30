@@ -4,6 +4,38 @@ All external dependencies, visual constants and layout dimensions live here and 
 """
 from __future__ import annotations
 
+# ── Custom-tint colour ramp (single source for "user picked a color X") ────────
+# A picked colour C drives every painted shade on the node/frame via these named
+# factors, so tweaking the palette here propagates to every recoloured surface.
+# Factors are Qt's darker()/lighter() arguments (100 = identity, >100 darkens or
+# lightens). Luminance is the standard 0.299/0.587/0.114 weighted average over
+# 0–255 channels; the title flips to dark text once C reads bright enough.
+TINT_BODY_DARKEN        = 220   # node body = darker shade of the picked header colour
+TINT_FIELD_DARKEN       = 400   # text/combo backgrounds, deepest shade
+# Buttons (combo drop-down panel, spin up/down, checkbox surround) share the body
+# shade so embedded controls blend seamlessly with the painted body — the default
+# palette has BUTTON_BG_COLOR == body_color and the tinted path mirrors that.
+TINT_BUTTON_DARKEN      = TINT_BODY_DARKEN
+TINT_HOVER_DARKEN       = 150   # button hover state
+TINT_PRESSED_DARKEN     = 500   # button pressed state
+TINT_SELECTION_LIGHTEN  = 130   # checkbox check / list selection accent
+TINT_TITLE_LUMINANCE_THRESHOLD = 140  # title goes dark on backgrounds brighter than this
+# Borders read against CANVAS_BACKGROUND_COLOR; a near-black pick would vanish, so
+# brighten the border until its luminance crosses the floor below.
+TINT_BORDER_MIN_LUMINANCE = 70   # 0–255 — borders below this get lightened until visible
+TINT_BORDER_LIGHTEN_STEP  = 130  # per-iteration lighten factor when brightening borders
+
+DEFAULT_HEADER_COLOR = "#0b3c7b"
+# When True, parameter nodes use their socket colour as the header colour
+# (e.g. String → pink, Integer → blue). Exec/command nodes keep DEFAULT_HEADER_COLOR.
+PARAM_NODE_HEADER_FROM_SOCKET = True
+NODE_SELECTED_COLOR = "#FFFFFF"
+CONNECTION_SELECTED_COLOR = "#FFFFFF"
+BUTTON_TEXT_COLOR = "#FFFFFF"
+TEXT_COLOR = "#FFFFFF"
+TEXT_MUTED_COLOR = "#A0C0E0"
+
+
 # ── External paths ─────────────────────────────────────────────────────────────
 RC_HELP_HTML    = r"C:\ProgramData\Epic\RealityScan\LanguagePack\help\en-US\appbasics\allcommands.htm"
 RC_EXECUTABLE   = r"C:\Program Files\Capturing Reality\RealityCapture\RealityCapture.exe"
@@ -97,20 +129,20 @@ AUTOSPAWN_V_GAP    = 14   # vertical gap between stacked created param nodes (no
 # ── Socket/node color schema per type ─────────────────────────────────────────
 # Blueprint scheme: dark blue backgrounds, distinct pastel outlines/sockets
 SOCKET_COLOR_SCHEMA: dict[str, dict[str, str]] = {
-    "exec":     {"hdr": "#062242", "body": "#0A315C", "socket": "#3A76B8"},
-    "string":   {"hdr": "#062242", "body": "#0A315C", "socket": "#F48FB1"},
-    "bool":     {"hdr": "#062242", "body": "#0A315C", "socket": "#A3E4D7"},
-    "integer":  {"hdr": "#062242", "body": "#0A315C", "socket": "#3498DB"},
-    "float":    {"hdr": "#062242", "body": "#0A315C", "socket": "#EC7063"},
-    "float2":   {"hdr": "#062242", "body": "#0A315C", "socket": "#F7DC6F"},
-    "float3":   {"hdr": "#062242", "body": "#0A315C", "socket": "#C39BD3"},
-    "vector":   {"hdr": "#062242", "body": "#0A315C", "socket": "#C39BD3"},
-    "enum":     {"hdr": "#062242", "body": "#0A315C", "socket": "#F39C12"},
-    "enum_int": {"hdr": "#062242", "body": "#0A315C", "socket": "#F39C12"},
-    "filepath": {"hdr": "#062242", "body": "#0A315C", "socket": "#F5B7B1"},
-    "dirpath":  {"hdr": "#062242", "body": "#0A315C", "socket": "#F9E79F"},
-    "keyvalue": {"hdr": "#062242", "body": "#0A315C", "socket": "#D5F5E3"},
-    "any":      {"hdr": "#062242", "body": "#0A315C", "socket": "#3498DB"},
+    "exec":     {"socket": "#3A76B8"},
+    "string":   {"socket": "#F48FB1"},
+    "bool":     {"socket": "#A3E4D7"},
+    "integer":  {"socket": "#3498DB"},
+    "float":    {"socket": "#EC7063"},
+    "float2":   {"socket": "#F7DC6F"},
+    "float3":   {"socket": "#C39BD3"},
+    "vector":   {"socket": "#C39BD3"},
+    "enum":     {"socket": "#F39C12"},
+    "enum_int": {"socket": "#F39C12"},
+    "filepath": {"socket": "#F5B7B1"},
+    "dirpath":  {"socket": "#F9E79F"},
+    "keyvalue": {"socket": "#D5F5E3"},
+    "any":      {"socket": "#3498DB"},
 }
 SOCKET_HOVER_COLOR = "#FFFFFF"
 
@@ -136,26 +168,43 @@ KEY_RENAME_NODE  = Qt.Key_F2
 KEY_SELECT_ALL   = Qt.Key_A
 KEY_GROUP        = Qt.Key_G  # with Ctrl — frames the selection (bare G toggles the grid)
 KEY_DUPLICATE    = Qt.Key_D  # with Ctrl — clones the selection in place
+KEY_PREV_LANG    = Qt.Key_BracketLeft
+KEY_NEXT_LANG    = Qt.Key_BracketRight
 
 # ── Keyboard Modifiers ────────────────────────────────────────────────────────
 MOD_NONE       = Qt.NoModifier
 MOD_CTRL       = Qt.ControlModifier
 MOD_CTRL_SHIFT = Qt.ControlModifier | Qt.ShiftModifier
 
+# ── Typography ─────────────────────────────────────────────────────────────────
+# Single source for the monospace UI face; every QFont and stylesheet draws from it.
+UI_FONT_FAMILY        = "Consolas"
+NODE_LABEL_FONT_SIZE  = 8   # socket-row labels
+NODE_RENAME_FONT_SIZE = 9   # in-place title editor
+
 # General Node Defaults
 NODE_CORNER_RADIUS = 5.0
 
-NODE_BORDER_COLOR = "#3A76B8"
-NODE_SELECTED_COLOR = "#FFFFFF"
-CONNECTION_SELECTED_COLOR = "#FFFFFF"
 
-BUTTON_BG_COLOR = "#0A315C"
-BUTTON_HOVER_COLOR = "#164273"
-BUTTON_PRESSED_COLOR = "#062242"
-BUTTON_TEXT_COLOR = "#FFFFFF"
+# Colors for the custom color picker palette popup
+COLOR_PRESETS = [
+    "#E74C3C", "#8E44AD", "#3498DB", "#16A085",
+    "#F39C12", "#D35400", "#BDC3C7", "#2C3E50",
+    "#3A76B8", "#1ABC9C", "#27AE60", "#F1C40F"
+]
 
-TEXT_COLOR = "#FFFFFF"
-TEXT_MUTED_COLOR = "#A0C0E0"
+# ── Color picker popup geometry ───────────────────────────────────────────────
+# All controls inside the popup obey a single grid so widths and heights stay
+# in lockstep; the colour square auto-fits the popup width minus padding.
+COLOR_PICKER_WIDTH         = 260
+COLOR_PICKER_PADDING       = 8
+COLOR_PICKER_ROW_HEIGHT    = 22   # uniform height for HEX row controls
+COLOR_PICKER_SQUARE_HEIGHT = 150
+COLOR_PICKER_SLIDER_HEIGHT = 16
+COLOR_PICKER_PREVIEW_SIZE  = COLOR_PICKER_ROW_HEIGHT   # square swatch matches row
+COLOR_PICKER_PRESET_SIZE   = 22
+COLOR_PICKER_PRESET_COLS   = 6
+COLOR_PICKER_PRESET_GAP    = 4
 
 GRID_COLOR_SMALL = (255, 255, 255, 10)
 GRID_COLOR_LARGE = (255, 255, 255, 30)
@@ -168,15 +217,25 @@ SCROLLBAR_TOGGLE_HOVER = "rgba(38,50,56,240)"
 # body never intercepts clicks meant for the nodes it contains; only the border
 # strip — the resize zone — stays reachable.
 GROUP_FRAME_Z                = -100
-GROUP_FRAME_FILL_RGBA        = (58, 118, 184, 28)   # faint wash of NODE_BORDER_COLOR
-GROUP_FRAME_BORDER_COLOR     = NODE_BORDER_COLOR
-GROUP_FRAME_BORDER_WIDTH     = 2
+GROUP_FRAME_FILL_RGBA        = (58, 118, 184, 28)   # faint wash of default border color
+GROUP_FRAME_FILL_ALPHA       = 28   # opacity of the body wash when a custom border color is picked
+GROUP_FRAME_BORDER_WIDTH     = 3
 GROUP_FRAME_TITLE_COLOR      = TEXT_COLOR
-GROUP_FRAME_TITLE_FONT       = "Consolas"
+GROUP_FRAME_TITLE_FONT       = UI_FONT_FAMILY
 GROUP_FRAME_TITLE_FONT_SIZE  = 12
-GROUP_FRAME_TITLE_MARGIN     = 10   # title inset from the frame's top-left corner
+GROUP_FRAME_TITLE_MARGIN     = 10   # left inset of the title text inside the header
+# Header strip across the top of the frame, painted in a darker shade of the
+# chosen colour and hosting the title — mirrors the node-header look so groups
+# read as containers of nodes, not free-floating washes. Same height as a node
+# header keeps everything aligned to one vertical rhythm.
+GROUP_FRAME_HEADER_HEIGHT    = NODE_HEADER_HEIGHT
+GROUP_FRAME_HEADER_DARKEN    = 160   # darken factor applied to the frame colour
 GROUP_FRAME_HANDLE           = 12   # edge/corner pixels that grab a resize
 GROUP_FRAME_MIN_SIZE         = 80   # smallest width/height a resize may produce
+# Visual gap between the frame's body edge and the dashed outline — keeps the
+# dashes from sitting flush against the body fill so the outline reads as a
+# decorative ring rather than a raw rect stroke.
+GROUP_FRAME_BORDER_INSET     = 10
 # Slack added around the bounding box of grouped nodes when a frame is created or
 # refitted; the extra top band leaves room for the title above the first node.
 GROUP_FRAME_PAD_LEFT         = 20
@@ -194,161 +253,40 @@ VIGNETTE_COLOR  = (4, 21, 43, 255)   # RGBA color of the vignette edges
 VIGNETTE_RADIUS = 0.5               # Gradient radius multiplier (relative to max(width, height))
 
 
-# ── Context menu stylesheet ────────────────────────────────────────────────────
-CONTEXT_MENU_STYLESHEET = f"""
-QMenu {{
-    background:{BUTTON_BG_COLOR}; color:{TEXT_COLOR};
-    border:1px solid {NODE_BORDER_COLOR}; border-radius:0px;
-    padding:4px 2px; font:9pt Consolas;
-}}
-QMenu::item {{ padding:4px 20px 4px 10px; border-radius:0px; }}
-QMenu::item:selected {{ background:{BUTTON_HOVER_COLOR}; border:1px solid {NODE_SELECTED_COLOR}; }}
-QMenu::item:disabled {{ color:{NODE_BORDER_COLOR}; }}
-QMenu::separator {{ height:1px; background:{NODE_BORDER_COLOR}; margin:3px 8px; }}
-QMenu::icon {{ padding-left:6px; }}
-"""
+# ── Codex Compliance Layout, Z-Order, Window, and String Constants ───────────
+SCENE_INITIAL_X = -500
+SCENE_INITIAL_Y = -500
+SCENE_INITIAL_WIDTH = 1000
+SCENE_INITIAL_HEIGHT = 1000
 
-# ── Search dialog dimensions and stylesheet ───────────────────────────────────
+DRAG_PREVIEW_LINE_WIDTH = 2.0
+NODE_DRAG_Z = 10000.0
+CONNECTION_Z = -1.0
+
+WINDOW_INITIAL_X = 100
+WINDOW_INITIAL_Y = 100
+WINDOW_INITIAL_WIDTH = 1280
+WINDOW_INITIAL_HEIGHT = 800
+WINDOW_STYLE = "Fusion"
+
+START_NODE_INITIAL_X = 60
+START_NODE_INITIAL_Y = 80
+
+GROUP_FRAME_DEFAULT_WIDTH = 100
+GROUP_FRAME_DEFAULT_HEIGHT = 100
+# Group titles are user-facing text and live in the translation catalog
+# (default_group_title / logical_group_title), not here — see localization.py.
+
+DUPLICATE_OFFSET_X = 50
+DUPLICATE_OFFSET_Y = 50
+
 SEARCH_DIALOG_WIDTH = 700
 SEARCH_DIALOG_HEIGHT = 450
-SEARCH_RESULTS_LIMIT = 50  # most-relevant matches kept in the ranked result list
-SEARCH_DIALOG_STYLESHEET = f"""
-QDialog {{
-    background-color: {CANVAS_BACKGROUND_COLOR};
-    border: 1px solid {NODE_BORDER_COLOR};
-}}
-QLineEdit {{
-    background-color: {BUTTON_BG_COLOR};
-    color: {TEXT_COLOR};
-    border: 1px solid {NODE_BORDER_COLOR};
-    padding: 4px;
-    font-family: Consolas, monospace;
-}}
-QLineEdit:focus {{
-    border: 1px solid {NODE_SELECTED_COLOR};
-}}
-QTreeWidget {{
-    background-color: transparent;
-    color: {TEXT_COLOR};
-    border: none;
-    font-family: Consolas, monospace;
-    outline: none;
-}}
-QTreeWidget::item:hover {{
-    background-color: {BUTTON_BG_COLOR};
-}}
-QTreeWidget::item:selected {{
-    background-color: {NODE_BORDER_COLOR};
-    color: {TEXT_COLOR};
-}}
-QGraphicsView#previewView {{
-    background: transparent;
-    border: none;
-}}
-QLabel#descriptionLabel {{
-    color: {TEXT_MUTED_COLOR};
-    font-family: Consolas, monospace;
-    padding: 6px;
-    background: transparent;
-    border: none;
-}}
-QScrollBar:vertical {{
-    background: transparent;
-    width: 14px;
-    margin: 0px 0px 0px 0px;
-}}
-QScrollBar::handle:vertical {{
-    background: {NODE_BORDER_COLOR};
-    min-height: 20px;
-    border-radius: 7px;
-}}
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-    height: 0px;
-}}
-QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
-    background: none;
-}}
-QFrame#descFrame {{
-    border-top: 1px solid {NODE_BORDER_COLOR};
-    border-bottom: 1px solid {NODE_BORDER_COLOR};
-    background: transparent;
-}}
-"""
+SEARCH_RESULTS_LIMIT = 50
+SEARCH_DIALOG_X_OFFSET = 700
 
-# ── Widgets QSS templates ──────────────────────────────────────────────────────
-FIELD_QSS = (
-    f"QLineEdit{{"
-    f"border:1px solid {NODE_BORDER_COLOR};"
-    f"background:{CANVAS_BACKGROUND_COLOR};"
-    f"color:{TEXT_COLOR};"
-    f"border-radius:0px;"
-    f"padding:2px 4px;"
-    f"font:9pt Consolas;"
-    f"}}"
-    f"QLineEdit:read-only{{"
-    f"color:{TEXT_MUTED_COLOR};"
-    f"}}"
-)
+SCROLLBAR_TOGGLE_SHOW_GLYPH = "⊞"
+SCROLLBAR_TOGGLE_HIDE_GLYPH = "⊟"
+SCROLLBAR_TOGGLE_TOOLTIP = "Toggle scrollbars"
 
-COMBOBOX_QSS = (
-    f"QComboBox{{border:1px solid {NODE_BORDER_COLOR};background:{CANVAS_BACKGROUND_COLOR};"
-    f"color:{TEXT_COLOR};border-radius:0px;padding:2px 4px;font:9pt Consolas;combobox-popup:0;}}"
-    f"QComboBox::drop-down{{border-left:1px solid {NODE_BORDER_COLOR};"
-    f"width:{BROWSE_BTN_WIDTH}px;background:{BUTTON_BG_COLOR};}}"
-    f"QComboBox::drop-down:hover{{background:{BUTTON_HOVER_COLOR};border-color:{NODE_SELECTED_COLOR};}}"
-    f"QComboBox QAbstractItemView{{border:1px solid {NODE_BORDER_COLOR};"
-    f"background:{CANVAS_BACKGROUND_COLOR};color:{TEXT_COLOR};"
-    f"selection-background-color:{NODE_SELECTED_COLOR};selection-color:{CANVAS_BACKGROUND_COLOR};outline:0px;}}"
-    f"QComboBox QAbstractItemView::item:hover{{background-color:{NODE_SELECTED_COLOR};color:{CANVAS_BACKGROUND_COLOR};}}"
-    f"QComboBox QAbstractItemView::item:selected{{background-color:{NODE_SELECTED_COLOR};color:{CANVAS_BACKGROUND_COLOR};}}"
-    f"QScrollBar:vertical{{border:none;background:{CANVAS_BACKGROUND_COLOR};width:8px;margin:0px;}}"
-    f"QScrollBar::handle:vertical{{background:{NODE_BORDER_COLOR};min-height:20px;border-radius:0px;}}"
-    f"QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{{height:0px;}}"
-    f"QComboBox[connected=\"true\"]{{color:{TEXT_MUTED_COLOR};}}"
-    f"QComboBox[connected=\"true\"] QLineEdit{{color:{TEXT_MUTED_COLOR};}}"
-    f"QComboBox[connected=\"true\"]::drop-down{{width:0px;border:none;}}"
-)
-
-SPINBOX_QSS = (
-    f"QSpinBox{{border:1px solid {NODE_BORDER_COLOR};background:{CANVAS_BACKGROUND_COLOR};"
-    f"color:{TEXT_COLOR};border-radius:0px;padding:2px;font:9pt Consolas;}}"
-    f"QSpinBox::up-button{{background:{BUTTON_BG_COLOR};"
-    f"border-left:1px solid {NODE_BORDER_COLOR};"
-    f"border-bottom:1px solid {NODE_BORDER_COLOR};width:16px;}}"
-    f"QSpinBox::down-button{{background:{BUTTON_BG_COLOR};"
-    f"border-left:1px solid {NODE_BORDER_COLOR};width:16px;}}"
-    f"QSpinBox::up-button:hover,QSpinBox::down-button:hover{{"
-    f"background:{BUTTON_HOVER_COLOR};border-color:{NODE_SELECTED_COLOR};}}"
-    f"QSpinBox:hover{{border-color:{NODE_SELECTED_COLOR};}}"
-)
-
-CHECKBOX_QSS = (
-    f"QCheckBox{{font:9pt Consolas;color:{TEXT_COLOR};background:{BUTTON_BG_COLOR};spacing:6px;}}"
-    f"QCheckBox::indicator{{width:13px;height:13px;"
-    f"border:1px solid {NODE_BORDER_COLOR};background:{CANVAS_BACKGROUND_COLOR};}}"
-    f"QCheckBox::indicator:checked{{background:{NODE_SELECTED_COLOR};border-color:{NODE_SELECTED_COLOR};}}"
-    f"QCheckBox::indicator:hover{{border-color:{NODE_SELECTED_COLOR};}}"
-)
-
-TOOLBTN_QSS = (
-    f"QToolButton{{background:{BUTTON_BG_COLOR};color:{BUTTON_TEXT_COLOR};"
-    f"border:1px solid {NODE_BORDER_COLOR};border-radius:0px;font:9pt Consolas;}}"
-    f"QToolButton:hover{{background:{BUTTON_HOVER_COLOR};border-color:{NODE_SELECTED_COLOR};}}"
-    f"QToolButton:pressed{{background:{BUTTON_PRESSED_COLOR};}}"
-)
-
-PUSHBTN_QSS = (
-    f"QPushButton{{background:{BUTTON_BG_COLOR};color:{BUTTON_TEXT_COLOR};"
-    f"border:1px solid {NODE_BORDER_COLOR};border-radius:0px;"
-    f"padding:5px 8px;font:bold 9pt Consolas;}}"
-    f"QPushButton:hover{{background:{BUTTON_HOVER_COLOR};border-color:{NODE_SELECTED_COLOR};}}"
-    f"QPushButton:pressed{{background:{BUTTON_PRESSED_COLOR};}}"
-)
-
-VECTOR_TOGGLE_QSS = (
-    f"QToolButton{{color:{TEXT_MUTED_COLOR};font:bold 8pt;padding:0px 2px;border:none;background:transparent;}}"
-    f"QToolButton:hover{{color:{NODE_SELECTED_COLOR};}}"
-)
-
-VECTOR_AXIS_LABEL_QSS = f"color:{VECTOR_AXIS_LABEL_COLOR};font:9pt Consolas;"
 

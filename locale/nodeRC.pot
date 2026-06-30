@@ -1,0 +1,364 @@
+# NodeRC UI translation catalog.
+# Each msgid is a stable symbolic key; the English source is shown as a
+# '#.' comment for translator context. Generated from localization data —
+# edit translations here (or via Crowdin/Weblate/Transifex), then recompile.
+# Language: template
+
+msgid ""
+msgstr ""
+"Project-Id-Version: nodeRC 1.0.2\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-06-29 19:51+0000\n"
+"PO-Revision-Date: 2026-06-29 19:51+0000\n"
+"Last-Translator: \n"
+"Language-Team: \n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#. RealityCapture Node-Based CLI Script Generator
+msgid "window_title"
+msgstr ""
+
+#. &File
+msgid "menu_file"
+msgstr ""
+
+#. Export Script...
+msgid "menu_export"
+msgstr ""
+
+#. Quit
+msgid "menu_quit"
+msgstr ""
+
+#. &Edit
+msgid "menu_edit"
+msgstr ""
+
+#. Undo
+msgid "menu_undo"
+msgstr ""
+
+#. Redo
+msgid "menu_redo"
+msgstr ""
+
+#. Duplicate
+msgid "menu_duplicate"
+msgstr ""
+
+#. Group Nodes
+msgid "menu_group_nodes"
+msgstr ""
+
+#. Select All
+msgid "menu_select_all"
+msgstr ""
+
+#. Toggle Grid
+msgid "menu_toggle_grid"
+msgstr ""
+
+#. Fit View
+msgid "menu_fit_view"
+msgstr ""
+
+#. Toggle Fullscreen
+msgid "menu_toggle_fullscreen"
+msgstr ""
+
+#. Add Parameter Node
+msgid "menu_add_param_node"
+msgstr ""
+
+#. Delete Selected
+msgid "menu_delete_selected"
+msgstr ""
+
+#. &Run
+msgid "menu_run"
+msgstr ""
+
+#. Launch Command Chain
+msgid "menu_launch_chain"
+msgstr ""
+
+#. &Help
+msgid "menu_help"
+msgstr ""
+
+#. Controls & Shortcuts...
+msgid "menu_controls_shortcuts"
+msgstr ""
+
+#. Controls & Shortcuts
+msgid "dialog_controls_title"
+msgstr ""
+
+#. Export RealityCapture Script
+msgid "dialog_export_title"
+msgstr ""
+
+#. RealityCapture Script (*.bat)
+msgid "dialog_export_filter"
+msgstr ""
+
+#. Saved script to: […]
+msgid "msg_saved_script"
+msgstr ""
+
+#. Export Failed
+msgid "msg_export_failed"
+msgstr ""
+
+#. Exported script to clipboard.
+msgid "msg_exported_clipboard"
+msgstr ""
+
+#. Exported Script
+msgid "msg_exported_script"
+msgstr ""
+
+#. Open Project
+msgid "dialog_open_project"
+msgstr ""
+
+#. Save Project
+msgid "dialog_save_project"
+msgstr ""
+
+#. NodeRC Project Files (*.json)
+msgid "dialog_project_filter"
+msgstr ""
+
+#. Open Failed
+msgid "msg_open_failed"
+msgstr ""
+
+#. Save Failed
+msgid "msg_save_failed"
+msgstr ""
+
+#. Failed to load project
+msgid "msg_load_failed"
+msgstr ""
+
+#. Unsaved Changes
+msgid "dialog_unsaved_changes"
+msgstr ""
+
+#. The project has unsaved changes. Do you want to save them?
+msgid "msg_unsaved_prompt"
+msgstr ""
+
+#. Untitled
+msgid "untitled"
+msgstr ""
+
+#. NodeRC Editor — 
+msgid "window_title_prefix"
+msgstr ""
+
+#. Save Error
+msgid "dialog_save_error_title"
+msgstr ""
+
+#. Load Error
+msgid "dialog_load_error_title"
+msgstr ""
+
+#. Incomplete chain
+msgid "dialog_incomplete_chain_title"
+msgstr ""
+
+#. Launch Error
+msgid "dialog_launch_error_title"
+msgstr ""
+
+#. Failed to start RealityCapture
+msgid "msg_launch_failed"
+msgstr ""
+
+#. Connect at least one Command Node to Start.
+msgid "msg_incomplete_chain_desc"
+msgstr ""
+
+#. No matching nodes.
+msgid "msg_no_matching_nodes"
+msgstr ""
+
+#. No description available.
+msgid "msg_no_description"
+msgstr ""
+
+#. Group
+msgid "default_group_title"
+msgstr ""
+
+#. Logical Group
+msgid "logical_group_title"
+msgstr ""
+
+#. Rename Group
+msgid "ctx_rename_group"
+msgstr ""
+
+#. Remove Frame
+msgid "ctx_remove_frame"
+msgstr ""
+
+#. Clear Frame
+msgid "ctx_clear_frame"
+msgstr ""
+
+#. Delete Group
+msgid "ctx_delete_group"
+msgstr ""
+
+#. Rename
+msgid "ctx_rename"
+msgstr ""
+
+#. Duplicate
+msgid "ctx_duplicate"
+msgstr ""
+
+#. Copy
+msgid "ctx_copy"
+msgstr ""
+
+#. Paste
+msgid "ctx_paste"
+msgstr ""
+
+#. Group in Frame
+msgid "ctx_group_frame"
+msgstr ""
+
+#. Delete Node
+msgid "ctx_delete_node"
+msgstr ""
+
+#. Auto-Create Parameters
+msgid "ctx_auto_create_params"
+msgstr ""
+
+#. [S] String
+msgid "param_string_title"
+msgstr ""
+
+#. text value...
+msgid "param_string_placeholder"
+msgstr ""
+
+#. [B] Boolean
+msgid "param_bool_title"
+msgstr ""
+
+#. [I] Integer
+msgid "param_int_title"
+msgstr ""
+
+#. [#] Float
+msgid "param_float_title"
+msgstr ""
+
+#. [E] Enum
+msgid "param_enum_title"
+msgstr ""
+
+#. new item...
+msgid "param_enum_new_placeholder"
+msgstr ""
+
+#. [F/F] Load
+msgid "param_path_title"
+msgstr ""
+
+#. dirpath...
+msgid "param_path_dir_placeholder"
+msgstr ""
+
+#. filename...
+msgid "param_path_file_placeholder"
+msgstr ""
+
+#. *.ext
+msgid "param_path_ext_placeholder"
+msgstr ""
+
+#. [K] Key=Value
+msgid "param_keyvalue_title"
+msgstr ""
+
+#. key=value
+msgid "param_keyvalue_placeholder"
+msgstr ""
+
+#. [#2] Float2 (X,Y)
+msgid "param_float2_title"
+msgstr ""
+
+#. [#3] Float3 (X,Y,Z)
+msgid "param_float3_title"
+msgstr ""
+
+#. Select folder
+msgid "dialog_select_folder"
+msgstr ""
+
+#. Search Commands...
+msgid "search_placeholder"
+msgstr ""
+
+#. Search categories and action words...
+msgid "search_description"
+msgstr ""
+
+#. Parameters (Inputs)
+msgid "tree_header_params"
+msgstr ""
+
+#. Outputs
+msgid "tree_header_outputs"
+msgstr ""
+
+#. Description
+msgid "tree_header_description"
+msgstr ""
+
+#. Built-in Category: 
+msgid "lbl_builtin_category"
+msgstr ""
+
+#. Shortcut: 
+msgid "lbl_shortcut"
+msgstr ""
+
+#. (Click row to navigate, Double-click to spawn)
+msgid "lbl_navigation_hint"
+msgstr ""
+
+#. Commands
+msgid "lbl_commands"
+msgstr ""
+
+#. <b>[ Keys & Shortcuts Manual ]</b><br/> … [ / ] Cycle UI Language
+msgid "manual_html"
+msgstr ""
+
+#. <h3>RealityCapture NodeRC Editor</h3> … [ / ] Cycle active UI language
+msgid "controls_manual_html"
+msgstr ""
+
+
+#. Change Color
+msgid "ctx_change_color"
+msgstr ""
+
+#. Only header
+msgid "color_only_header"
+msgstr ""

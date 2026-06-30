@@ -39,6 +39,10 @@ htmlcov/
 venv/
 ENV/
 
+# Localization — .po/.pot are the source of truth (committed); .mo are compiled
+# build artifacts (the app builds them in memory at runtime, see localization.py).
+*.mo
+
 # Build and Release
 build_release.ps1
 release.bat
