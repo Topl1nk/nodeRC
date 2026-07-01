@@ -388,15 +388,18 @@ class ColorSquare(QWidget):
 
 class ColorPickerPopup(QWidget):
     def __init__(self, on_color_selected, initial_color=None, on_close=None,
-                 initial_only_header=False, parent=None):
+                 initial_only_header=False, on_only_header_changed=None, parent=None):
         """Custom in-app palette popup.
 
         ``on_color_selected`` is invoked as ``(hex_color, only_header)`` on every
-        live edit; ``only_header`` reflects the checkbox state so callers can apply
-        a header-only tint without re-opening the picker.
+        live color edit. ``on_only_header_changed``, when provided, is called as
+        ``(only_header)`` when the checkbox is toggled WITHOUT emitting a color
+        change — callers use this to update scope across multi-node selections
+        without forcing every node to adopt the picker's current color.
         """
         super().__init__(parent, Qt.Popup | Qt.FramelessWindowHint)
         self.on_color_selected = on_color_selected
+        self.on_only_header_changed = on_only_header_changed
         self.on_close = on_close
         self.setAttribute(Qt.WA_DeleteOnClose)
         # Object name scopes the popup-level border to the popup root — without
@@ -532,9 +535,14 @@ class ColorPickerPopup(QWidget):
 
     def _on_only_header_toggled(self, checked: bool):
         self._only_header = bool(checked)
-        # Re-emit the current colour with the new scope so the caller updates
-        # immediately, no second pick required.
-        self._emit_color()
+        if self.on_only_header_changed is not None:
+            # Scope-only change: let the caller decide per-node color; do not
+            # broadcast the picker's current color to nodes that may have a
+            # different color of their own.
+            self.on_only_header_changed(checked)
+        else:
+            # Single-node path: re-emit so the node repaints with the new scope.
+            self._emit_color()
 
     def set_from_hex(self, hex_str):
         c = QColor(hex_str)

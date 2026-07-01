@@ -22,18 +22,29 @@ from color_picker import BUTTON_BG_COLOR, NODE_BORDER_COLOR
 class InsetFillCheckBox(QCheckBox):
     """QCheckBox whose checked state shows a smaller inner filled square.
 
-    The outer indicator border stays the same in either state; the white fill on
-    ``:checked`` is inset by CHECKBOX_FILL_INSET on every side, so the indicator
-    reads as a tickbox rather than a fully painted swatch.
+    The outer indicator border stays the same in either state; the fill on
+    ``:checked`` is inset by CHECKBOX_FILL_INSET on every side.
+
+    Indicator colors are stored as instance attributes so the node tinting
+    system can update them via ``update_indicator_colors()`` without relying
+    on QSS ``::indicator`` rules (which are ignored by the custom paintEvent).
     """
 
     def __init__(self, text: str = "", parent=None):
         super().__init__(text, parent)
-        # Only the label uses the QSS — the indicator is drawn manually below.
+        self._ind_border_color: str = NODE_BORDER_COLOR
+        self._ind_bg_color: str = CANVAS_BACKGROUND_COLOR
+        # Only the label text/background use QSS; indicator is drawn manually.
         self.setStyleSheet(
             f"QCheckBox{{font:9pt {UI_FONT_FAMILY};color:{TEXT_COLOR};"
             f"background:{BUTTON_BG_COLOR};spacing:{CHECKBOX_LABEL_SPACING}px;}}"
         )
+
+    def update_indicator_colors(self, border: str, bg: str) -> None:
+        """Update the indicator's border and background to tinted values."""
+        self._ind_border_color = border
+        self._ind_bg_color = bg
+        self.update()
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -47,10 +58,10 @@ class InsetFillCheckBox(QCheckBox):
         ind_rect = QRect(0, ind_y, size - 1, size - 1)
 
         border_color = QColor(
-            NODE_SELECTED_COLOR if self.underMouse() else NODE_BORDER_COLOR
+            NODE_SELECTED_COLOR if self.underMouse() else self._ind_border_color
         )
         painter.setPen(QPen(border_color, 1))
-        painter.setBrush(QBrush(QColor(CANVAS_BACKGROUND_COLOR)))
+        painter.setBrush(QBrush(QColor(self._ind_bg_color)))
         painter.drawRect(ind_rect)
 
         if self.isChecked():

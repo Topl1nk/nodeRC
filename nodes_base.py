@@ -959,6 +959,8 @@ class MetaNode(QGraphicsObject):
             "combo": COMBOBOX_QSS, "field": FIELD_QSS, "spin": SPINBOX_QSS,
             "check": CHECKBOX_QSS, "tool": TOOLBTN_QSS, "push": PUSHBTN_QSS,
             "separator": NODE_BORDER_COLOR,
+            "check_border": NODE_BORDER_COLOR,
+            "check_bg": CANVAS_BACKGROUND_COLOR,
         }
 
     def _tinted_widget_qss(self, color: QColor) -> Dict[str, str]:
@@ -1021,6 +1023,10 @@ class MetaNode(QGraphicsObject):
             # Same brightened shade as the painted border so separators inside dark
             # picks stay visible against the canvas.
             "separator": border,
+            # Raw color strings for InsetFillCheckBox, which paints its indicator
+            # manually and cannot pick these up via QSS ::indicator rules.
+            "check_border": border,
+            "check_bg": field_bg,
         }
 
     # Buttons that toggle a vector axis are visually neutral chevrons living over
@@ -1049,6 +1055,9 @@ class MetaNode(QGraphicsObject):
             widget.setStyleSheet(qss["field"])
         elif isinstance(widget, QCheckBox):
             widget.setStyleSheet(qss["check"])
+            from widgets import InsetFillCheckBox
+            if isinstance(widget, InsetFillCheckBox):
+                widget.update_indicator_colors(qss["check_border"], qss["check_bg"])
         elif isinstance(widget, QToolButton):
             if widget.text() in cls._VECTOR_TOGGLE_GLYPHS:
                 widget.setStyleSheet(VECTOR_TOGGLE_QSS)
@@ -1086,9 +1095,17 @@ class MetaNode(QGraphicsObject):
             for node in selected_nodes:
                 node.set_color(c, only_header=only_header, record_undo=False)
 
+        def apply_scope_to_all(only_header):
+            # Only-header toggle during multi-node editing: preserve each node's
+            # own color, change only the scope flag so no node is re-colored.
+            for node in selected_nodes:
+                node.set_color(node._color_override, only_header=only_header,
+                               record_undo=False)
+
         initial = self._color_override or self.node_def.header_color
         popup = ColorPickerPopup(
             on_color_selected=apply_color_to_all,
+            on_only_header_changed=apply_scope_to_all if len(selected_nodes) > 1 else None,
             initial_color=initial,
             initial_only_header=self._color_only_header,
             on_close=on_close,
