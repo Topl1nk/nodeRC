@@ -1,257 +1,29 @@
+"""color_picker.py — In-App HSVA Palette Popup
+
+Live-editing colour popup with an SV square, HSVA gradient sliders, hex entry,
+preset swatches and the only-header scope flag. Emits every edit immediately so
+callers repaint nodes as the user drags.
+"""
+from __future__ import annotations
+
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QPushButton, QLabel, QLineEdit, QCheckBox
+    QPushButton, QLabel, QLineEdit,
 )
-from PyQt5.QtGui import (
-    QPainter, QColor, QLinearGradient, QBrush, QPen, QPixmap
-)
+from PyQt5.QtGui import QPainter, QColor, QLinearGradient, QBrush, QPen, QPixmap
 from PyQt5.QtCore import Qt, pyqtSignal
 
-import colorsys
 from localization import t
 from configuration import (
-    COLOR_PRESETS, CANVAS_BACKGROUND_COLOR, TEXT_COLOR,
-    NODE_SELECTED_COLOR, UI_FONT_FAMILY,
+    COLOR_PRESETS, TEXT_COLOR, NODE_SELECTED_COLOR, UI_FONT_FAMILY,
     COLOR_PICKER_WIDTH, COLOR_PICKER_PADDING, COLOR_PICKER_ROW_HEIGHT,
     COLOR_PICKER_SQUARE_HEIGHT, COLOR_PICKER_SLIDER_HEIGHT,
     COLOR_PICKER_PREVIEW_SIZE, COLOR_PICKER_PRESET_SIZE,
     COLOR_PICKER_PRESET_COLS, COLOR_PICKER_PRESET_GAP,
-    DEFAULT_HEADER_COLOR, TINT_BODY_DARKEN, TINT_FIELD_DARKEN, TINT_BUTTON_DARKEN,
-    TINT_HOVER_DARKEN, TINT_PRESSED_DARKEN, TINT_SELECTION_LIGHTEN,
-    TINT_BORDER_MIN_LUMINANCE, TINT_BORDER_LIGHTEN_STEP,
-    TEXT_MUTED_COLOR, BUTTON_TEXT_COLOR, BROWSE_BTN_WIDTH, VECTOR_AXIS_LABEL_COLOR
+    DEFAULT_HEADER_COLOR,
 )
-
-def relative_luminance_hex(hex_str: str) -> float:
-    """Perceived brightness 0–255 using the standard Rec. 601 weights."""
-    hex_str = hex_str.lstrip('#')
-    if len(hex_str) == 8:
-        hex_str = hex_str[2:]
-    if len(hex_str) != 6:
-        return 0.0
-    r = int(hex_str[0:2], 16)
-    g = int(hex_str[2:4], 16)
-    b = int(hex_str[4:6], 16)
-    return 0.299 * r + 0.587 * g + 0.114 * b
-
-def adjust_hex_color(hex_str: str, factor: float, method: str = "darker") -> str:
-    """Adjust color brightness (factor > 100 darkens or lightens)."""
-    hex_str = hex_str.lstrip('#')
-    alpha = ""
-    if len(hex_str) == 8:
-        alpha = hex_str[:2]
-        hex_str = hex_str[2:]
-    if len(hex_str) != 6:
-        return "#" + hex_str
-        
-    r = int(hex_str[0:2], 16) / 255.0
-    g = int(hex_str[2:4], 16) / 255.0
-    b = int(hex_str[4:6], 16) / 255.0
-    
-    h, s, v = colorsys.rgb_to_hsv(r, g, b)
-    if method == "darker":
-        v = v / (factor / 100.0)
-    else: # lighter
-        v = min(1.0, v * (factor / 100.0))
-        
-    r_new, g_new, b_new = colorsys.hsv_to_rgb(h, s, v)
-    r_hex = f"{int(r_new * 255.0):02X}"
-    g_hex = f"{int(g_new * 255.0):02X}"
-    b_hex = f"{int(b_new * 255.0):02X}"
-    return f"#{alpha}{r_hex}{g_hex}{b_hex}"
-
-def brightened_for_canvas_hex(hex_str: str) -> str:
-    """Lighten hex_str until it crosses the visible-on-canvas luminance floor."""
-    if relative_luminance_hex(hex_str) >= TINT_BORDER_MIN_LUMINANCE:
-        return hex_str
-        
-    hex_str_clean = hex_str.lstrip('#')
-    alpha = ""
-    if len(hex_str_clean) == 8:
-        alpha = hex_str_clean[:2]
-        hex_str_clean = hex_str_clean[2:]
-    if len(hex_str_clean) != 6:
-        return hex_str
-        
-    r = int(hex_str_clean[0:2], 16) / 255.0
-    g = int(hex_str_clean[2:4], 16) / 255.0
-    b = int(hex_str_clean[4:6], 16) / 255.0
-    
-    h, s, v = colorsys.rgb_to_hsv(r, g, b)
-    if v == 0.0:
-        v = 0.1
-        if h < 0:
-            h = 0.0
-            
-    for _ in range(16):
-        r_temp, g_temp, b_temp = colorsys.hsv_to_rgb(h, s, v)
-        temp_hex = f"#{alpha}{int(r_temp*255.0):02X}{int(g_temp*255.0):02X}{int(b_temp*255.0):02X}"
-        if relative_luminance_hex(temp_hex) >= TINT_BORDER_MIN_LUMINANCE:
-            return temp_hex
-        v = min(1.0, v * (TINT_BORDER_LIGHTEN_STEP / 100.0))
-        
-    r_temp, g_temp, b_temp = colorsys.hsv_to_rgb(h, s, v)
-    return f"#{alpha}{int(r_temp*255.0):02X}{int(g_temp*255.0):02X}{int(b_temp*255.0):02X}"
-
-NODE_BORDER_COLOR = brightened_for_canvas_hex(DEFAULT_HEADER_COLOR)
-GROUP_FRAME_BORDER_COLOR = NODE_BORDER_COLOR
-BUTTON_BG_COLOR = adjust_hex_color(DEFAULT_HEADER_COLOR, TINT_BUTTON_DARKEN)
-BUTTON_HOVER_COLOR = adjust_hex_color(DEFAULT_HEADER_COLOR, TINT_HOVER_DARKEN)
-BUTTON_PRESSED_COLOR = adjust_hex_color(DEFAULT_HEADER_COLOR, TINT_PRESSED_DARKEN)
-
-DEFAULT_FIELD_BG = adjust_hex_color(DEFAULT_HEADER_COLOR, TINT_FIELD_DARKEN)
-DEFAULT_SELECTION_ACCENT = adjust_hex_color(DEFAULT_HEADER_COLOR, TINT_SELECTION_LIGHTEN, "lighter")
-
-FIELD_QSS = (
-    f"QLineEdit{{"
-    f"border:1px solid {NODE_BORDER_COLOR};"
-    f"background:{DEFAULT_FIELD_BG};"
-    f"color:{TEXT_COLOR};"
-    f"border-radius:0px;"
-    f"padding:2px 4px;"
-    f"font:9pt {UI_FONT_FAMILY};"
-    f"}}"
-    f"QLineEdit:read-only{{"
-    f"color:{TEXT_MUTED_COLOR};"
-    f"}}"
-)
-
-COMBOBOX_QSS = (
-    f"QComboBox{{border:1px solid {NODE_BORDER_COLOR};background:{DEFAULT_FIELD_BG};"
-    f"color:{TEXT_COLOR};border-radius:0px;padding:2px 4px;font:9pt {UI_FONT_FAMILY};combobox-popup:0;}}"
-    f"QComboBox::drop-down{{border-left:1px solid {NODE_BORDER_COLOR};"
-    f"width:{BROWSE_BTN_WIDTH}px;background:{BUTTON_BG_COLOR};}}"
-    f"QComboBox::drop-down:hover{{background:{BUTTON_HOVER_COLOR};border-color:{NODE_SELECTED_COLOR};}}"
-    f"QComboBox QAbstractItemView{{border:1px solid {NODE_BORDER_COLOR};"
-    f"background:{DEFAULT_FIELD_BG};color:{TEXT_COLOR};"
-    f"selection-background-color:{DEFAULT_SELECTION_ACCENT};selection-color:{DEFAULT_FIELD_BG};outline:0px;}}"
-    f"QComboBox QAbstractItemView::item:hover{{background-color:{DEFAULT_SELECTION_ACCENT};color:{DEFAULT_FIELD_BG};}}"
-    f"QComboBox QAbstractItemView::item:selected{{background-color:{DEFAULT_SELECTION_ACCENT};color:{DEFAULT_FIELD_BG};}}"
-    f"QScrollBar:vertical{{border:none;background:{DEFAULT_FIELD_BG};width:8px;margin:0px;}}"
-    f"QScrollBar::handle:vertical{{background:{NODE_BORDER_COLOR};min-height:20px;border-radius:0px;}}"
-    f"QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{{height:0px;}}"
-    f"QComboBox[connected=\"true\"]{{color:{TEXT_MUTED_COLOR};}}"
-    f"QComboBox[connected=\"true\"] QLineEdit{{color:{TEXT_MUTED_COLOR};}}"
-    f"QComboBox[connected=\"true\"]::drop-down{{width:0px;border:none;}}"
-)
-
-SPINBOX_QSS = (
-    f"QSpinBox{{border:1px solid {NODE_BORDER_COLOR};background:{DEFAULT_FIELD_BG};"
-    f"color:{TEXT_COLOR};border-radius:0px;padding:2px;font:9pt {UI_FONT_FAMILY};}}"
-    f"QSpinBox::up-button{{background:{BUTTON_BG_COLOR};"
-    f"border-left:1px solid {NODE_BORDER_COLOR};"
-    f"border-bottom:1px solid {NODE_BORDER_COLOR};width:16px;}}"
-    f"QSpinBox::down-button{{background:{BUTTON_BG_COLOR};"
-    f"border-left:1px solid {NODE_BORDER_COLOR};width:16px;}}"
-    f"QSpinBox::up-button:hover,QSpinBox::down-button:hover{{"
-    f"background:{BUTTON_HOVER_COLOR};border-color:{NODE_SELECTED_COLOR};}}"
-    f"QSpinBox:hover{{border-color:{NODE_SELECTED_COLOR};}}"
-)
-
-CHECKBOX_QSS = (
-    f"QCheckBox{{font:9pt {UI_FONT_FAMILY};color:{TEXT_COLOR};background:{BUTTON_BG_COLOR};spacing:6px;}}"
-    f"QCheckBox::indicator{{width:13px;height:13px;"
-    f"border:1px solid {NODE_BORDER_COLOR};background:{DEFAULT_FIELD_BG};}}"
-    f"QCheckBox::indicator:checked{{background:{NODE_SELECTED_COLOR};border-color:{NODE_SELECTED_COLOR};}}"
-    f"QCheckBox::indicator:hover{{border-color:{NODE_SELECTED_COLOR};}}"
-)
-
-TOOLBTN_QSS = (
-    f"QToolButton{{background:{BUTTON_BG_COLOR};color:{BUTTON_TEXT_COLOR};"
-    f"border:1px solid {NODE_BORDER_COLOR};border-radius:0px;font:9pt {UI_FONT_FAMILY};}}"
-    f"QToolButton:hover{{background:{BUTTON_HOVER_COLOR};border-color:{NODE_SELECTED_COLOR};}}"
-    f"QToolButton:pressed{{background:{BUTTON_PRESSED_COLOR};}}"
-)
-
-PUSHBTN_QSS = (
-    f"QPushButton{{background:{BUTTON_BG_COLOR};color:{BUTTON_TEXT_COLOR};"
-    f"border:1px solid {NODE_BORDER_COLOR};border-radius:0px;"
-    f"padding:5px 8px;font:bold 9pt {UI_FONT_FAMILY};}}"
-    f"QPushButton:hover{{background:{BUTTON_HOVER_COLOR};border-color:{NODE_SELECTED_COLOR};}}"
-    f"QPushButton:pressed{{background:{BUTTON_PRESSED_COLOR};}}"
-)
-
-VECTOR_TOGGLE_QSS = (
-    f"QToolButton{{color:{TEXT_MUTED_COLOR};font:bold 8pt;padding:0px 2px;border:none;background:transparent;}}"
-    f"QToolButton:hover{{color:{NODE_SELECTED_COLOR};}}"
-)
-
-VECTOR_AXIS_LABEL_QSS = f"color:{VECTOR_AXIS_LABEL_COLOR};font:9pt {UI_FONT_FAMILY};"
-
-CONTEXT_MENU_STYLESHEET = f"""
-QMenu {{
-    background:{BUTTON_BG_COLOR}; color:{TEXT_COLOR};
-    border:1px solid {NODE_BORDER_COLOR}; border-radius:0px;
-    padding:4px 2px; font:9pt {UI_FONT_FAMILY};
-}}
-QMenu::item {{ padding:4px 20px 4px 10px; border-radius:0px; }}
-QMenu::item:selected {{ background:{BUTTON_HOVER_COLOR}; border:1px solid {NODE_SELECTED_COLOR}; }}
-QMenu::item:disabled {{ color:{NODE_BORDER_COLOR}; }}
-QMenu::separator {{ height:1px; background:{NODE_BORDER_COLOR}; margin:3px 8px; }}
-QMenu::icon {{ padding-left:6px; }}
-"""
-
-SEARCH_DIALOG_STYLESHEET = f"""
-QDialog {{
-    background-color: {CANVAS_BACKGROUND_COLOR};
-    border: 1px solid {NODE_BORDER_COLOR};
-}}
-QLineEdit {{
-    background-color: {BUTTON_BG_COLOR};
-    color: {TEXT_COLOR};
-    border: 1px solid {NODE_BORDER_COLOR};
-    padding: 4px;
-    font-family: {UI_FONT_FAMILY}, monospace;
-}}
-QLineEdit:focus {{
-    border: 1px solid {NODE_SELECTED_COLOR};
-}}
-QTreeWidget {{
-    background-color: transparent;
-    color: {TEXT_COLOR};
-    border: none;
-    font-family: {UI_FONT_FAMILY}, monospace;
-    outline: none;
-    selection-background-color: {NODE_SELECTED_COLOR};
-    selection-color: {CANVAS_BACKGROUND_COLOR};
-}}
-QTreeWidget::item:hover, QTreeWidget::item:selected {{
-    background-color: {NODE_SELECTED_COLOR};
-    color: {CANVAS_BACKGROUND_COLOR};
-}}
-QGraphicsView#previewView {{
-    background: transparent;
-    border: none;
-}}
-QLabel#descriptionLabel {{
-    color: {TEXT_MUTED_COLOR};
-    font-family: {UI_FONT_FAMILY}, monospace;
-    padding: 6px;
-    background: transparent;
-    border: none;
-}}
-QScrollBar:vertical {{
-    background: transparent;
-    width: 14px;
-    margin: 0px 0px 0px 0px;
-}}
-QScrollBar::handle:vertical {{
-    background: {NODE_BORDER_COLOR};
-    min-height: 20px;
-    border-radius: 7px;
-}}
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-    height: 0px;
-}}
-QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
-    background: none;
-}}
-QFrame#descFrame {{
-    border-top: 1px solid {NODE_BORDER_COLOR};
-    border-bottom: 1px solid {NODE_BORDER_COLOR};
-    background: transparent;
-}}
-"""
+from theme import BUTTON_BG_COLOR, NODE_BORDER_COLOR
+from inset_fill_checkbox import InsetFillCheckBox
 
 
 class GradientSlider(QWidget):
@@ -276,12 +48,12 @@ class GradientSlider(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        
+
         rect = self.rect()
         gradient = QLinearGradient(rect.left(), rect.top(), rect.right(), rect.top())
-        
+
         h, s, v, a = self.hsv
-        
+
         if self.color_type == 'hue':
             for i in range(7):
                 gradient.setColorAt(i / 6.0, QColor.fromHsvF(i / 6.0, 1.0, 1.0, 1.0))
@@ -350,22 +122,22 @@ class ColorSquare(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         rect = self.rect()
-        
+
         painter.fillRect(rect, QColor.fromHsvF(self.hue, 1.0, 1.0))
-        
+
         sat_grad = QLinearGradient(rect.left(), rect.top(), rect.right(), rect.top())
         sat_grad.setColorAt(0.0, QColor(255, 255, 255, 255))
         sat_grad.setColorAt(1.0, QColor(255, 255, 255, 0))
         painter.fillRect(rect, sat_grad)
-        
+
         val_grad = QLinearGradient(rect.left(), rect.top(), rect.left(), rect.bottom())
         val_grad.setColorAt(0.0, QColor(0, 0, 0, 0))
         val_grad.setColorAt(1.0, QColor(0, 0, 0, 255))
         painter.fillRect(rect, val_grad)
-        
+
         cx = int(self.sat * rect.width())
         cy = int((1.0 - self.val) * rect.height())
-        
+
         painter.setPen(QPen(QColor(0, 0, 0), 2))
         painter.drawEllipse(cx - 5, cy - 5, 10, 10)
         painter.setPen(QPen(QColor(255, 255, 255), 1))
@@ -406,9 +178,9 @@ class ColorPickerPopup(QWidget):
         # the #ColorPickerPopup selector, every child QWidget would inherit a
         # 1-px border and stamp ugly rectangles around every label and swatch.
         self.setObjectName("ColorPickerPopup")
-        # Popup background uses the editor's button-family colour (BUTTON_BG_COLOR
-        # = #0A315C) so the picker reads as part of the same chrome as buttons and
-        # node bodies, not as a deeper canvas layer.
+        # Popup background uses the editor's button-family colour so the picker
+        # reads as part of the same chrome as buttons and node bodies, not as a
+        # deeper canvas layer.
         self.setStyleSheet(
             f"#ColorPickerPopup {{"
             f"  background-color: {BUTTON_BG_COLOR};"
@@ -422,7 +194,7 @@ class ColorPickerPopup(QWidget):
             f"}}"
         )
 
-        self.current_color = QColor(initial_color or "#3A76B8")
+        self.current_color = QColor(initial_color or DEFAULT_HEADER_COLOR)
         self._only_header = bool(initial_only_header)
 
         self.setFixedWidth(COLOR_PICKER_WIDTH)
@@ -489,7 +261,6 @@ class ColorPickerPopup(QWidget):
 
         # Same checkbox primitive the [B] Boolean param node uses, so the
         # picker's flag reads as a first-class part of the editor's vocabulary.
-        from widgets import InsetFillCheckBox
         self.only_header_check = InsetFillCheckBox(t("color_only_header"))
         self.only_header_check.setChecked(self._only_header)
         self.only_header_check.setFixedHeight(COLOR_PICKER_ROW_HEIGHT)
@@ -522,7 +293,7 @@ class ColorPickerPopup(QWidget):
                                      i % COLOR_PICKER_PRESET_COLS)
 
         main_layout.addLayout(presets_layout)
-        
+
         self.square.colorChanged.connect(self._on_square_changed)
         self.hue_slider.valueChanged.connect(lambda v: self._on_slider_changed('h', v))
         self.sat_slider.valueChanged.connect(lambda v: self._on_slider_changed('s', v))
@@ -578,13 +349,13 @@ class ColorPickerPopup(QWidget):
         self.current_color = QColor.fromHsvF(h, s, v, a)
         self._sync_to_current_color()
         self._emit_color()
-        
+
     def _on_slider_changed(self, comp, val):
         h = self.hue_slider.value if comp != 'h' else val
         s = self.sat_slider.value if comp != 's' else val
         v = self.val_slider.value if comp != 'v' else val
         a = self.alpha_slider.value if comp != 'a' else val
-        
+
         self.current_color = QColor.fromHsvF(h, s, v, a)
         self._sync_to_current_color()
         self._emit_color()
@@ -620,7 +391,7 @@ class ColorPickerPopup(QWidget):
         p = QPainter(pix)
         for x in range(0, 24, 4):
             for y in range(0, 24, 4):
-                if (x//4 + y//4) % 2 == 0:
+                if (x // 4 + y // 4) % 2 == 0:
                     p.fillRect(x, y, 4, 4, QColor(150, 150, 150))
         p.fillRect(0, 0, 24, 24, self.current_color)
         p.end()
