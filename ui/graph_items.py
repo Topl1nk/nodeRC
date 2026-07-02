@@ -19,7 +19,7 @@ from PyQt5.QtGui import (
     QPen, QBrush, QColor, QPainterPath, QFont, QPainter, QPolygonF,
     QTextCursor, QCursor,
 )
-from PyQt5.QtCore import QRectF, Qt, QPointF, QTimer
+from PyQt5.QtCore import QRect, QRectF, Qt, QPointF, QTimer
 
 from localization import t
 from configuration import (
@@ -42,16 +42,17 @@ from configuration import (
     UI_FONT_FAMILY, NODE_LABEL_FONT_SIZE, NODE_RENAME_FONT_SIZE,
     TINT_BODY_DARKEN, TINT_TITLE_LUMINANCE_THRESHOLD,
     PARAM_NODE_HEADER_FROM_SOCKET,
+    CHECKBOX_FILL_INSET, CHECKBOX_INDICATOR_SIZE, CHECKBOX_LABEL_SPACING,
 )
 from ui.theme import (
     NODE_BORDER_COLOR, GROUP_FRAME_BORDER_COLOR,
     relative_luminance, brightened_for_canvas,
     DEFAULT_WIDGET_QSS, widget_stylesheets, tinted_widget_palette,
     VECTOR_TOGGLE_QSS, CONTEXT_MENU_STYLESHEET,
+    DEFAULT_WIDGET_PALETTE, WIDGET_FONT,
 )
 from core.node_blueprint import NodeDef, SocketDef, html_title
 from ui.color_picker import ColorPickerPopup
-from ui.inset_fill_checkbox import InsetFillCheckBox
 
 
 def editor_window_of(item):
@@ -450,11 +451,40 @@ class GroupFrameItem(RenamableTitleMixin, QGraphicsRectItem):
         def on_close():
             win.push_undo_state()
 
-        def apply_color_to_all(c, only_header):
+        def apply_color_to_all(c, only_header, changed_component=None):
             # only-header is meaningless for a frame (no body widgets to recolor),
             # so we just apply the picked colour uniformly.
             for frame in selected_frames:
-                frame.set_color(c, record_undo=False)
+                if changed_component == 'a':
+                    new_color = QColor(frame._color)
+                    new_color.setAlpha(QColor(c).alpha())
+                    frame.set_color(new_color.name(QColor.HexArgb), record_undo=False)
+                elif changed_component == 'h':
+                    new_color = QColor(frame._color)
+                    h, s, v, a = new_color.getHsvF()
+                    new_h = QColor(c).hsvHueF()
+                    new_color.setHsvF(max(0.0, new_h), s, v, a)
+                    frame.set_color(new_color.name(QColor.HexArgb), record_undo=False)
+                elif changed_component == 's':
+                    new_color = QColor(frame._color)
+                    h, s, v, a = new_color.getHsvF()
+                    new_s = QColor(c).hsvSaturationF()
+                    new_color.setHsvF(max(0.0, h), new_s, v, a)
+                    frame.set_color(new_color.name(QColor.HexArgb), record_undo=False)
+                elif changed_component == 'v':
+                    new_color = QColor(frame._color)
+                    h, s, v, a = new_color.getHsvF()
+                    new_v = QColor(c).valueF()
+                    new_color.setHsvF(max(0.0, h), s, new_v, a)
+                    frame.set_color(new_color.name(QColor.HexArgb), record_undo=False)
+                elif changed_component == 'sv':
+                    new_color = QColor(frame._color)
+                    h, s, v, a = new_color.getHsvF()
+                    picked_c = QColor(c)
+                    new_color.setHsvF(max(0.0, h), picked_c.hsvSaturationF(), picked_c.valueF(), a)
+                    frame.set_color(new_color.name(QColor.HexArgb), record_undo=False)
+                else:
+                    frame.set_color(c, record_undo=False)
 
         current = QColor(self._color)
         if len(self._color) < 9:
@@ -1005,9 +1035,38 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
                 node._selection_overlay.setVisible(node.isSelected())
             win.push_undo_state()
 
-        def apply_color_to_all(c, only_header):
+        def apply_color_to_all(c, only_header, changed_component=None):
             for node in selected_nodes:
-                node.set_color(c, only_header=only_header, record_undo=False)
+                if changed_component == 'a':
+                    new_color = QColor(node._color_override or node.node_def.header_color)
+                    new_color.setAlpha(QColor(c).alpha())
+                    node.set_color(new_color.name(QColor.HexArgb), only_header=only_header, record_undo=False)
+                elif changed_component == 'h':
+                    new_color = QColor(node._color_override or node.node_def.header_color)
+                    h, s, v, a = new_color.getHsvF()
+                    new_h = QColor(c).hsvHueF()
+                    new_color.setHsvF(max(0.0, new_h), s, v, a)
+                    node.set_color(new_color.name(QColor.HexArgb), only_header=only_header, record_undo=False)
+                elif changed_component == 's':
+                    new_color = QColor(node._color_override or node.node_def.header_color)
+                    h, s, v, a = new_color.getHsvF()
+                    new_s = QColor(c).hsvSaturationF()
+                    new_color.setHsvF(max(0.0, h), new_s, v, a)
+                    node.set_color(new_color.name(QColor.HexArgb), only_header=only_header, record_undo=False)
+                elif changed_component == 'v':
+                    new_color = QColor(node._color_override or node.node_def.header_color)
+                    h, s, v, a = new_color.getHsvF()
+                    new_v = QColor(c).valueF()
+                    new_color.setHsvF(max(0.0, h), s, new_v, a)
+                    node.set_color(new_color.name(QColor.HexArgb), only_header=only_header, record_undo=False)
+                elif changed_component == 'sv':
+                    new_color = QColor(node._color_override or node.node_def.header_color)
+                    h, s, v, a = new_color.getHsvF()
+                    picked_c = QColor(c)
+                    new_color.setHsvF(max(0.0, h), picked_c.hsvSaturationF(), picked_c.valueF(), a)
+                    node.set_color(new_color.name(QColor.HexArgb), only_header=only_header, record_undo=False)
+                else:
+                    node.set_color(c, only_header=only_header, record_undo=False)
 
         def apply_scope_to_all(only_header):
             # Only-header toggle during multi-node editing: preserve each node's
@@ -1057,7 +1116,10 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
             header_edge = brightened_for_canvas(header_color)
             if only_header:
                 body_color = QColor(d.body_color)
+                body_color.setAlpha(header_color.alpha())
                 body_border_color = QColor(NODE_BORDER_COLOR)
+                body_border_color.setAlpha(header_color.alpha())
+                header_edge.setAlpha(header_color.alpha())
             else:
                 body_color = header_color.darker(TINT_BODY_DARKEN)
                 body_border_color = header_edge
@@ -1321,3 +1383,63 @@ class NodeComboBox(QComboBox):
                 overlay.setVisible(self.node.isSelected())
         except RuntimeError:
             pass
+
+
+class InsetFillCheckBox(QCheckBox):
+    """QCheckBox whose checked state shows a smaller inner filled square.
+
+    The outer indicator border stays the same in either state; the fill on
+    ``:checked`` is inset by CHECKBOX_FILL_INSET on every side.
+
+    Indicator colors are stored as instance attributes so the node tinting
+    system can update them via ``update_indicator_colors()`` without relying
+    on QSS ``::indicator`` rules (which are ignored by the custom paintEvent).
+    """
+
+    def __init__(self, text: str = "", parent=None):
+        super().__init__(text, parent)
+        self._ind_border_color: str = DEFAULT_WIDGET_PALETTE.border
+        self._ind_bg_color: str = DEFAULT_WIDGET_PALETTE.indicator_bg
+        # Only the label text/background use QSS; indicator is drawn manually.
+        self.setStyleSheet(
+            f"QCheckBox{{font:{WIDGET_FONT};color:{TEXT_COLOR};"
+            f"background:{DEFAULT_WIDGET_PALETTE.button_bg};"
+            f"spacing:{CHECKBOX_LABEL_SPACING}px;}}"
+        )
+
+    def update_indicator_colors(self, border: str, bg: str) -> None:
+        """Update the indicator's border and background to tinted values."""
+        self._ind_border_color = border
+        self._ind_bg_color = bg
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+
+        size = CHECKBOX_INDICATOR_SIZE
+        ind_y = (self.height() - size) // 2
+        # Qt's rect-pen draws on the centreline; subtracting 1 from the right /
+        # bottom edges keeps the visible square exactly `size`×`size` instead of
+        # spilling one pixel past it.
+        ind_rect = QRect(0, ind_y, size - 1, size - 1)
+
+        border_color = QColor(
+            NODE_SELECTED_COLOR if self.underMouse() else self._ind_border_color
+        )
+        painter.setPen(QPen(border_color, 1))
+        painter.setBrush(QBrush(QColor(self._ind_bg_color)))
+        painter.drawRect(ind_rect)
+
+        if self.isChecked():
+            inset = CHECKBOX_FILL_INSET
+            inner = ind_rect.adjusted(inset, inset, -inset, -inset)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(QColor(NODE_SELECTED_COLOR)))
+            painter.drawRect(inner)
+
+        text_x = size + CHECKBOX_LABEL_SPACING
+        text_rect = QRect(text_x, 0, self.width() - text_x, self.height())
+        painter.setFont(self.font())
+        painter.setPen(QPen(QColor(TEXT_COLOR)))
+        painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, self.text())

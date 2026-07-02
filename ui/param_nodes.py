@@ -31,8 +31,7 @@ from ui.theme import (
 from core.node_blueprint import (
     NodeDef, SocketDef, html_title, param_node_def, resolve_color_schema,
 )
-from ui.graph_items import MetaNode, NodeComboBox, editor_window_of
-from ui.inset_fill_checkbox import InsetFillCheckBox
+from ui.graph_items import MetaNode, NodeComboBox, editor_window_of, InsetFillCheckBox
 from diagnostics import log_and_explain
 
 

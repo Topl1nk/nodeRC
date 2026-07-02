@@ -50,13 +50,8 @@ def resolve_param_type(name: str, param) -> str:
 
 
 def html_title(text: str, bold_first: bool = False) -> str:
-    parts = text.split(" ", 1)
-    first = html.escape(parts[0]) if parts else ""
-    if bold_first and parts:
-        first = f"<b>{first}</b>"
-    rest = f" {html.escape(parts[1])}" if len(parts) > 1 else ""
     return (f'<span style="font-family:{UI_FONT_FAMILY};font-size:{NODE_RENAME_FONT_SIZE}pt;">'
-            f'{first}{rest}</span>')
+            f'<b>{html.escape(text)}</b></span>')
 
 
 @dataclass

@@ -194,16 +194,12 @@ WIDGET_FONT_PT        = 9   # embedded editors, buttons, menus (stylesheet font 
 NODE_CORNER_RADIUS = 5.0
 
 
-# Colors for the custom color picker palette popup — 32 perceptually distinct
-# hues laid out in 8 columns × 4 rows. Reds → oranges → yellows → greens →
-# cyans/blues → purples → pinks → aquas; each row deepens or shifts to keep
-# the swatches unambiguous side-by-side. All entries are unique.
+# Colors for the custom color picker palette popup. All 3 rows in the color picker
+# have the same palette of colors, with only alpha channel differing (1.0, 0.66, 0.33).
 COLOR_PRESETS = [
     "#E74C3C", "#E67E22", "#F1C40F", "#27AE60", "#3498DB", "#8E44AD", "#E91E63", "#00BCD4",
-    "#C0392B", "#D35400", "#F39C12", "#16A085", "#2980B9", "#9B59B6", "#AD1457", "#00838F",
-    "#FF6B6B", "#FFA94D", "#FFE066", "#51CF66", "#5DADE2", "#C39BD3", "#F48FB1", "#80DEEA",
-    "#7B0F1E", "#A04000", "#7F6000", "#196F3D", "#1B4F72", "#4A235A", "#880E4F", "#006064",
 ]
+
 
 # ── Color picker popup geometry ───────────────────────────────────────────────
 # All controls inside the popup obey a single grid so widths and heights stay

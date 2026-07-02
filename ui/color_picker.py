@@ -23,7 +23,6 @@ from configuration import (
     DEFAULT_HEADER_COLOR,
 )
 from ui.theme import BUTTON_BG_COLOR, NODE_BORDER_COLOR
-from ui.inset_fill_checkbox import InsetFillCheckBox
 
 
 class GradientSlider(QWidget):
@@ -158,6 +157,50 @@ class ColorSquare(QWidget):
         self._update_from_mouse(event.pos())
 
 
+class PresetButton(QPushButton):
+    """Custom QPushButton for preset swatches with checkerboard support for transparent colors."""
+    def __init__(self, color: QColor, parent=None):
+        super().__init__(parent)
+        self.color = color
+        self.hovered = False
+        self.setFixedSize(COLOR_PICKER_PRESET_SIZE, COLOR_PICKER_PRESET_SIZE)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def enterEvent(self, event):
+        self.hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.hovered = False
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        rect = self.rect()
+
+        # Draw checkerboard pattern if the color has any transparency
+        if self.color.alpha() < 255:
+            ch_size = 4
+            for x in range(0, rect.width(), ch_size):
+                for y in range(0, rect.height(), ch_size):
+                    bg_col = QColor(255, 255, 255) if (x // ch_size + y // ch_size) % 2 == 0 else QColor(180, 180, 180)
+                    painter.fillRect(x, y, ch_size, ch_size, bg_col)
+
+        # Draw the solid/translucent color on top
+        painter.fillRect(rect, self.color)
+
+        # Draw border
+        pen_color = QColor(NODE_SELECTED_COLOR) if self.hovered else QColor(0, 0, 0)
+        painter.setPen(QPen(pen_color, 1))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(rect.adjusted(0, 0, -1, -1))
+        if self.hovered:
+            painter.drawRect(rect.adjusted(1, 1, -2, -2))
+
+
 class ColorPickerPopup(QWidget):
     def __init__(self, on_color_selected, initial_color=None, on_close=None,
                  initial_only_header=False, on_only_header_changed=None, parent=None):
@@ -261,6 +304,7 @@ class ColorPickerPopup(QWidget):
 
         # Same checkbox primitive the [B] Boolean param node uses, so the
         # picker's flag reads as a first-class part of the editor's vocabulary.
+        from ui.graph_items import InsetFillCheckBox
         self.only_header_check = InsetFillCheckBox(t("color_only_header"))
         self.only_header_check.setChecked(self._only_header)
         self.only_header_check.setFixedHeight(COLOR_PICKER_ROW_HEIGHT)
@@ -274,23 +318,19 @@ class ColorPickerPopup(QWidget):
 
         presets_layout = QGridLayout()
         presets_layout.setSpacing(COLOR_PICKER_PRESET_GAP)
-        for i, color_hex in enumerate(COLOR_PRESETS):
-            btn = QPushButton()
-            btn.setFixedSize(COLOR_PICKER_PRESET_SIZE, COLOR_PICKER_PRESET_SIZE)
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.setStyleSheet(
-                f"QPushButton {{"
-                f"  background-color: {color_hex};"
-                f"  border: 1px solid #000;"
-                f"  border-radius: 2px;"
-                f"}}"
-                f"QPushButton:hover {{"
-                f"  border: 1px solid {NODE_SELECTED_COLOR};"
-                f"}}"
-            )
-            btn.clicked.connect(make_preset_callback(color_hex))
-            presets_layout.addWidget(btn, i // COLOR_PICKER_PRESET_COLS,
-                                     i % COLOR_PICKER_PRESET_COLS)
+
+        alphas = [1.0, 0.66, 0.33]
+        base_palette = COLOR_PRESETS[:COLOR_PICKER_PRESET_COLS]
+
+        for row_idx, alpha in enumerate(alphas):
+            for col_idx, base_hex in enumerate(base_palette):
+                c = QColor(base_hex)
+                c.setAlpha(int(alpha * 255))
+                color_hex = c.name(QColor.HexArgb)
+
+                btn = PresetButton(c)
+                btn.clicked.connect(make_preset_callback(color_hex))
+                presets_layout.addWidget(btn, row_idx, col_idx)
 
         main_layout.addLayout(presets_layout)
 
@@ -313,14 +353,14 @@ class ColorPickerPopup(QWidget):
             self.on_only_header_changed(checked)
         else:
             # Single-node path: re-emit so the node repaints with the new scope.
-            self._emit_color()
+            self._emit_color('only_header')
 
     def set_from_hex(self, hex_str):
         c = QColor(hex_str)
         if c.isValid():
             self.current_color = c
             self._sync_to_current_color()
-            self._emit_color()
+            self._emit_color('preset')
 
     def _sync_to_current_color(self, write_hex: bool = True):
         h = max(0.0, self.current_color.hsvHueF())
@@ -348,7 +388,7 @@ class ColorPickerPopup(QWidget):
         a = self.alpha_slider.value
         self.current_color = QColor.fromHsvF(h, s, v, a)
         self._sync_to_current_color()
-        self._emit_color()
+        self._emit_color('sv')
 
     def _on_slider_changed(self, comp, val):
         h = self.hue_slider.value if comp != 'h' else val
@@ -358,7 +398,7 @@ class ColorPickerPopup(QWidget):
 
         self.current_color = QColor.fromHsvF(h, s, v, a)
         self._sync_to_current_color()
-        self._emit_color()
+        self._emit_color(comp)
 
     def _on_hex_text_changed(self, text: str):
         # Accept "abcdef", "#abcdef", "AARRGGBB", or "#AARRGGBB" — auto-prefix '#'
@@ -372,7 +412,7 @@ class ColorPickerPopup(QWidget):
             return
         self.current_color = c
         self._sync_to_current_color(write_hex=False)
-        self._emit_color()
+        self._emit_color('hex')
 
     def _update_preview(self, write_hex: bool = True):
         if write_hex:
@@ -398,11 +438,11 @@ class ColorPickerPopup(QWidget):
 
         self.preview.setPixmap(pix)
 
-    def _emit_color(self):
+    def _emit_color(self, changed_component=None):
         # Always emit HexArgb (9 chars) so we can distinguish it from legacy #RRGGBB (7 chars).
         # Pair with the only-header flag so callers can apply scope without polling.
         color_str = self.current_color.name(QColor.HexArgb)
-        self.on_color_selected(color_str, self._only_header)
+        self.on_color_selected(color_str, self._only_header, changed_component)
 
     def hideEvent(self, event):
         super().hideEvent(event)
