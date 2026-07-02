@@ -188,6 +188,7 @@ MOD_CTRL_SHIFT = Qt.ControlModifier | Qt.ShiftModifier
 UI_FONT_FAMILY        = "Consolas"
 NODE_LABEL_FONT_SIZE  = 8   # socket-row labels
 NODE_RENAME_FONT_SIZE = 9   # in-place title editor
+WIDGET_FONT_PT        = 9   # embedded editors, buttons, menus (stylesheet font size)
 
 # General Node Defaults
 NODE_CORNER_RADIUS = 5.0
@@ -228,8 +229,7 @@ SCROLLBAR_TOGGLE_HOVER = "rgba(38,50,56,240)"
 # body never intercepts clicks meant for the nodes it contains; only the border
 # strip — the resize zone — stays reachable.
 GROUP_FRAME_Z                = -100
-GROUP_FRAME_FILL_RGBA        = (58, 118, 184, 28)   # faint wash of default border color
-GROUP_FRAME_FILL_ALPHA       = 28   # opacity of the body wash when a custom border color is picked
+GROUP_FRAME_FILL_ALPHA       = 28   # opacity of the body wash behind the frame border color
 GROUP_FRAME_BORDER_WIDTH     = 3
 GROUP_FRAME_TITLE_COLOR      = TEXT_COLOR
 GROUP_FRAME_TITLE_FONT       = UI_FONT_FAMILY
@@ -298,6 +298,18 @@ SEARCH_DIALOG_X_OFFSET = 700
 
 SCROLLBAR_TOGGLE_SHOW_GLYPH = "⊞"
 SCROLLBAR_TOGGLE_HIDE_GLYPH = "⊟"
-SCROLLBAR_TOGGLE_TOOLTIP = "Toggle scrollbars"
+
+# ── Clipboard ──────────────────────────────────────────────────────────────────
+# Marks NodeRC-owned clipboard text so paste ignores foreign content.
+CLIPBOARD_PAYLOAD_PREFIX = "NODERC_CLIPBOARD:"
+
+# ── Layout-independent language cycling ────────────────────────────────────────
+# Windows virtual-key codes of the physical bracket keys, plus the glyphs those
+# keys produce on the supported layouts (US, Ukrainian, Russian) — so [ and ]
+# cycle the UI language whatever layout is active.
+VK_OEM_LEFT_BRACKET  = 0xDB
+VK_OEM_RIGHT_BRACKET = 0xDD
+PREV_LANG_LAYOUT_CHARS = frozenset(("[", "{", "х", "Х", "ї", "Ї"))
+NEXT_LANG_LAYOUT_CHARS = frozenset(("]", "}", "ъ", "Ъ", "і", "І"))
 
 

@@ -1,9 +1,15 @@
+"""scene.py — Canvas Scene: Grid, Connection Drags and Item Picking
+
+Manages typed connections between nodes (exec↔exec / param↔param), the
+connection drag preview, frame-header picking, and the pre-click selection
+snapshot the linked mass-edit machinery relies on.
+"""
 from __future__ import annotations
 from typing import Optional
 
-from PyQt5.QtWidgets import QGraphicsScene, QGraphicsLineItem, QDialog, QApplication
+from PyQt5.QtWidgets import QGraphicsScene, QGraphicsLineItem, QGraphicsProxyWidget, QDialog, QApplication
 from PyQt5.QtCore import Qt, QPointF, QRectF, QTimer
-from PyQt5.QtGui import QPen, QColor, QPainter
+from PyQt5.QtGui import QPen, QColor, QPainter, QTransform
 
 from configuration import (
     CANVAS_BACKGROUND_COLOR, GRID_SIZE_SMALL, GRID_SIZE_LARGE,
@@ -11,15 +17,11 @@ from configuration import (
     SCENE_INITIAL_X, SCENE_INITIAL_Y, SCENE_INITIAL_WIDTH, SCENE_INITIAL_HEIGHT,
     DRAG_PREVIEW_LINE_WIDTH, NODE_DRAG_Z, GROUP_FRAME_HEADER_HEIGHT,
 )
-from search_menu import SearchMenuDialog
-from nodes_base import Connection, SocketItem, MetaNode, GroupFrameItem
+from ui.search_menu import SearchMenuDialog
+from ui.graph_items import Connection, SocketItem, MetaNode, GroupFrameItem
 
 
 class NodeScene(QGraphicsScene):
-    """
-    Manages typed connections between nodes.
-    Interprets drag actions and enforces exec↔exec / param↔param.
-    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -144,10 +146,8 @@ class NodeScene(QGraphicsScene):
                 frame.setZValue(NODE_DRAG_Z + 1)
                 break
 
-        from PyQt5.QtGui import QTransform
-        from PyQt5.QtWidgets import QGraphicsProxyWidget
         clicked_item = self.itemAt(event.scenePos(), QTransform())
-        
+
         is_proxy_click = False
         curr = clicked_item
         while curr:
@@ -171,7 +171,7 @@ class NodeScene(QGraphicsScene):
                     item.setSelected(True)
 
         self._drag_start_positions = {item: item.pos() for item in self.selectedItems() if isinstance(item, MetaNode)}
-        
+
         # Why: Raised Z-value prevents dragged nodes from clipping under siblings.
         self._dragged_nodes = []
         selected_meta = [item for item in self.selectedItems() if isinstance(item, MetaNode)]
@@ -181,7 +181,7 @@ class NodeScene(QGraphicsScene):
                 for other in getattr(item, '_dragged_inner_nodes', []):
                     if other not in self._dragged_nodes:
                         self._dragged_nodes.append(other)
-                        
+
         for node in self._dragged_nodes:
             if not hasattr(node, '_original_z'):
                 node._original_z = node.zValue()
@@ -205,9 +205,11 @@ class NodeScene(QGraphicsScene):
             self._drag_preview_line.setLine(origin.x(), origin.y(), cursor.x(), cursor.y())
         super().mouseMoveEvent(event)
 
-    def _enforce_connection_rules(self, out_sock, in_sock):
+    def enforce_connection_rules(self, out_sock, in_sock):
+        """One wire per input; one exec wire out of an exec output."""
         win = self.nodeEditorWindow
-        if not win: return
+        if not win:
+            return
         for c in list(win.connections):
             if out_sock.sock_def.is_exec and c.source == out_sock:
                 if c.scene():
@@ -229,7 +231,7 @@ class NodeScene(QGraphicsScene):
             if target:
                 out_sock = source_socket if source_socket.sock_def.kind == "output" else target
                 in_sock  = target if source_socket.sock_def.kind == "output" else source_socket
-                self._enforce_connection_rules(out_sock, in_sock)
+                self.enforce_connection_rules(out_sock, in_sock)
                 conn = Connection(out_sock, in_sock)
                 super().addItem(conn)
                 if self.nodeEditorWindow:
@@ -238,7 +240,7 @@ class NodeScene(QGraphicsScene):
                     self.nodeEditorWindow.push_undo_state()
             else:
                 if self.nodeEditorWindow:
-                    self._show_node_creation_menu(
+                    self.show_node_creation_menu(
                         event.scenePos(), event.screenPos(),
                         source_socket=source_socket,
                         original_dest=original_dest
@@ -294,12 +296,12 @@ class NodeScene(QGraphicsScene):
         transform        = view.transform() if view else None
         item_under_cursor = self.itemAt(event.scenePos(), transform) if transform else None
         if not item_under_cursor or isinstance(item_under_cursor, Connection):
-            self._show_node_creation_menu(event.scenePos(), event.screenPos())
+            self.show_node_creation_menu(event.scenePos(), event.screenPos())
             event.accept()
         else:
             super().contextMenuEvent(event)
 
-    def _show_node_creation_menu(self, scene_pos: QPointF, screen_pos, source_socket=None, original_dest=None):
+    def show_node_creation_menu(self, scene_pos: QPointF, screen_pos, source_socket=None, original_dest=None):
         win = self.nodeEditorWindow
         if not win:
             return
@@ -335,7 +337,7 @@ class NodeScene(QGraphicsScene):
                         out_sock, in_sock = source_socket, target_socket
                     else:
                         out_sock, in_sock = target_socket, source_socket
-                    self._enforce_connection_rules(out_sock, in_sock)
+                    self.enforce_connection_rules(out_sock, in_sock)
                     conn = Connection(out_sock, in_sock)
                     self.addItem(conn)
                     win.connections.append(conn)
@@ -348,10 +350,10 @@ class NodeScene(QGraphicsScene):
                                 break
                         if c_out_sock:
                             if original_dest.socket_type == "input":
-                                self._enforce_connection_rules(c_out_sock, original_dest)
+                                self.enforce_connection_rules(c_out_sock, original_dest)
                                 conn2 = Connection(c_out_sock, original_dest)
                             else:
-                                self._enforce_connection_rules(original_dest, c_out_sock)
+                                self.enforce_connection_rules(original_dest, c_out_sock)
                                 conn2 = Connection(original_dest, c_out_sock)
                             self.addItem(conn2)
                             win.connections.append(conn2)

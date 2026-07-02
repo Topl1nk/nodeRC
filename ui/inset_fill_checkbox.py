@@ -1,8 +1,7 @@
-"""Shared UI widget primitives used by both the canvas and the color picker.
+"""inset_fill_checkbox.py — The Editor's Checkbox Primitive
 
-Living in its own module so both ``nodes_base`` (Bool param node) and
-``color_picker`` (only-header flag) reach for one and the same checkbox class
-— if the look needs to evolve, there is one place to change.
+One checkbox class shared by the Bool parameter node and the color picker's
+only-header flag — if the look needs to evolve, there is one place to change.
 """
 from __future__ import annotations
 
@@ -11,12 +10,10 @@ from PyQt5.QtGui import QBrush, QColor, QPainter, QPen
 from PyQt5.QtWidgets import QCheckBox
 
 from configuration import (
-    CANVAS_BACKGROUND_COLOR, CHECKBOX_FILL_INSET, CHECKBOX_INDICATOR_SIZE,
-    CHECKBOX_LABEL_SPACING, NODE_SELECTED_COLOR, TEXT_COLOR, UI_FONT_FAMILY,
+    CHECKBOX_FILL_INSET, CHECKBOX_INDICATOR_SIZE, CHECKBOX_LABEL_SPACING,
+    NODE_SELECTED_COLOR, TEXT_COLOR,
 )
-# NODE_BORDER_COLOR and BUTTON_BG_COLOR are derived dynamically from
-# DEFAULT_HEADER_COLOR in color_picker, so we import them from there.
-from color_picker import BUTTON_BG_COLOR, NODE_BORDER_COLOR
+from ui.theme import DEFAULT_WIDGET_PALETTE, WIDGET_FONT
 
 
 class InsetFillCheckBox(QCheckBox):
@@ -32,12 +29,13 @@ class InsetFillCheckBox(QCheckBox):
 
     def __init__(self, text: str = "", parent=None):
         super().__init__(text, parent)
-        self._ind_border_color: str = NODE_BORDER_COLOR
-        self._ind_bg_color: str = CANVAS_BACKGROUND_COLOR
+        self._ind_border_color: str = DEFAULT_WIDGET_PALETTE.border
+        self._ind_bg_color: str = DEFAULT_WIDGET_PALETTE.indicator_bg
         # Only the label text/background use QSS; indicator is drawn manually.
         self.setStyleSheet(
-            f"QCheckBox{{font:9pt {UI_FONT_FAMILY};color:{TEXT_COLOR};"
-            f"background:{BUTTON_BG_COLOR};spacing:{CHECKBOX_LABEL_SPACING}px;}}"
+            f"QCheckBox{{font:{WIDGET_FONT};color:{TEXT_COLOR};"
+            f"background:{DEFAULT_WIDGET_PALETTE.button_bg};"
+            f"spacing:{CHECKBOX_LABEL_SPACING}px;}}"
         )
 
     def update_indicator_colors(self, border: str, bg: str) -> None:

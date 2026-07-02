@@ -395,3 +395,23 @@ msgstr "Змінити колір"
 #. Only header
 msgid "color_only_header"
 msgstr "Лише шапка"
+
+#. > Launch
+msgid "btn_launch"
+msgstr "> Запустити"
+
+#. Open
+msgid "btn_open"
+msgstr "Відкрити"
+
+#. Save
+msgid "btn_save"
+msgstr "Зберегти"
+
+#. Save As
+msgid "btn_save_as"
+msgstr "Зберегти як"
+
+#. Toggle scrollbars
+msgid "tooltip_toggle_scrollbars"
+msgstr "Показати/приховати смуги прокрутки"

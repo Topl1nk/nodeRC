@@ -71,15 +71,25 @@ python nodeRC.py
 ## プロジェクト構造
 
 - `nodeRC.py` - メインエントリポイント。
-- `canvas.py` - メインエディタウィンドウのロジック。
-- `scene.py` - キャンバスシーンおよびビジュアルアイテムのイベント処理。
-- `view.py` - グラフィックビューのロジック、パン、ズーム。
-- `nodes_base.py` - ノード、ソケット、接続のベースクラス。
-- `nodes_concrete.py` - 特化ノード（Start、Command、Parameterノード）の具体的な実装。
+- `ui/editor_window.py` - メインエディタウィンドウ：キーボードショートカット、Undo履歴、プロジェクトダイアログ。
+- `ui/scene.py` - キャンバスシーン、接続のドラッグ、ビジュアルアイテムのイベント処理。
+- `ui/view.py` - グラフィックビューのロジック、パン、ズーム。
+- `ui/graph_items.py` - シーンのビジュアル要素：ソケット、接続、ノード/フレームの描画。
+- `ui/command_nodes.py` - StartノードとCommandノードのクラス。
+- `ui/param_nodes.py` - パラメータノードのクラス（String、Bool、Integer、Float、Enum、Pathなど）。
+- `core/node_blueprint.py` - ノード/ソケットの仕様とコマンド・パラメータ定義のビルダー。
+- `core/graph_serialization.py` - 保存/読み込み/コピー＆ペースト/Undoで共有するスナップショット形式。
+- `core/chain_execution.py` - ノードグラフからRealityCapture CLI呼び出しを構築。
+- `core/command_database.py` - 解析済みのRealityCaptureコマンドカタログを読み込み。
+- `ui/theme.py` - 埋め込みウィジェット用の派生カラーとQtスタイルシート。
+- `ui/color_picker.py` - アプリ内HSVAカラーピッカーのポップアップ。
+- `ui/inset_fill_checkbox.py` - 共有チェックボックスのプリミティブ。
+- `ui/flag_icon.py` - 現在のUI言語を反映するウィンドウアイコン。
 - `configuration.py` - スタイル、UI設定、ショートカットキーの一元化された設定ファイル。
-- `search_menu.py` - ノードを生成するためのオートコンプリート検索ダイアログ。
+- `ui/search_menu.py` - ノードを生成するためのオートコンプリート検索ダイアログ。
 - `diagnostics.py` - 例外処理およびエラーログ出力。
-- `rc_documentation_extractor.py` - ローカルのRealityCaptureドキュメントからコマンドデータベースを構築するユーティリティ。
+- `localization.py` - gettextベースの実行時翻訳レイヤー。
+- `core/rc_documentation_extractor.py` - ローカルのRealityCaptureドキュメントからコマンドデータベースを構築するユーティリティ。
 
 ## ライセンス
 

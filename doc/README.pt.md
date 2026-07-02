@@ -71,15 +71,25 @@ python nodeRC.py
 ## Estrutura do Projeto
 
 - `nodeRC.py` - Ponto de entrada principal.
-- `canvas.py` - Lógica da janela principal do editor.
-- `scene.py` - Cena da tela (canvas) e tratamento de eventos de itens visuais.
-- `view.py` - Lógica da visualização gráfica, deslocamento (panning) e zoom.
-- `nodes_base.py` - Classes base para nós, sockets e conexões.
-- `nodes_concrete.py` - Implementações concretas de nós especializados (nós Start, Command, Parameter).
+- `ui/editor_window.py` - Janela principal do editor: atalhos de teclado, histórico de desfazer, diálogos de projeto.
+- `ui/scene.py` - Cena da tela (canvas), arraste de conexões e tratamento de eventos de itens visuais.
+- `ui/view.py` - Lógica da visualização gráfica, deslocamento (panning) e zoom.
+- `ui/graph_items.py` - Itens visuais da cena: sockets, conexões, renderização de nós e molduras.
+- `ui/command_nodes.py` - Classes dos nós Start e Command.
+- `ui/param_nodes.py` - Classes dos nós de parâmetro (String, Bool, Integer, Float, Enum, Path, ...).
+- `core/node_blueprint.py` - Especificações de nós/sockets e construtores de definições de comandos e parâmetros.
+- `core/graph_serialization.py` - Formato único de snapshot para salvar/carregar/copiar-colar/desfazer.
+- `core/chain_execution.py` - Constrói a chamada da CLI do RealityCapture a partir do grafo de nós.
+- `core/command_database.py` - Carrega o catálogo de comandos do RealityCapture já processado.
+- `ui/theme.py` - Cores derivadas e folhas de estilo Qt para os widgets embutidos.
+- `ui/color_picker.py` - Popup de seleção de cor HSVA integrado ao aplicativo.
+- `ui/inset_fill_checkbox.py` - Primitivo de caixa de seleção compartilhado.
+- `ui/flag_icon.py` - Ícone da janela que reflete o idioma de interface ativo.
 - `configuration.py` - Fonte única de verdade para estilos, configurações de UI e atalhos.
-- `search_menu.py` - Caixa de diálogo de pesquisa com autocompletar para criar nós.
+- `ui/search_menu.py` - Caixa de diálogo de pesquisa com autocompletar para criar nós.
 - `diagnostics.py` - Tratamento de exceções e registro de erros.
-- `rc_documentation_extractor.py` - Utilitário para construir o banco de dados de comandos a partir da documentação local do RealityCapture.
+- `localization.py` - Camada de tradução em tempo de execução baseada em gettext.
+- `core/rc_documentation_extractor.py` - Utilitário para construir o banco de dados de comandos a partir da documentação local do RealityCapture.
 
 ## Licença
 

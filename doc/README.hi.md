@@ -71,15 +71,25 @@ python nodeRC.py
 ## प्रोजेक्ट संरचना
 
 - `nodeRC.py` - मुख्य प्रविष्टि बिंदु।
-- `canvas.py` - मुख्य संपादक विंडो लॉजिक।
-- `scene.py` - कैनवास दृश्य (सीन) और दृश्य तत्वों के ईवेंट हैंडलिंग।
-- `view.py` - ग्राफिक व्यू लॉजिक, पैनिंग और ज़ूमिंग।
-- `nodes_base.py` - नोड्स, सॉकेट्स और कनेक्शन के लिए बेस कक्षाएं।
-- `nodes_concrete.py` - विशेष नोड्स (Start, Command, Parameter नोड्स) के ठोस कार्यान्वयन।
+- `ui/editor_window.py` - मुख्य संपादक विंडो: कीबोर्ड शॉर्टकट, अंडू इतिहास, प्रोजेक्ट डायलॉग।
+- `ui/scene.py` - कैनवास दृश्य (सीन), कनेक्शन ड्रैगिंग और दृश्य तत्वों के ईवेंट हैंडलिंग।
+- `ui/view.py` - ग्राफिक व्यू लॉजिक, पैनिंग और ज़ूमिंग।
+- `ui/graph_items.py` - सीन के दृश्य तत्व: सॉकेट्स, कनेक्शन, नोड/फ्रेम रेंडरिंग।
+- `ui/command_nodes.py` - Start और Command नोड कक्षाएं।
+- `ui/param_nodes.py` - पैरामीटर नोड कक्षाएं (String, Bool, Integer, Float, Enum, Path, ...)।
+- `core/node_blueprint.py` - नोड/सॉकेट स्पेसिफिकेशन तथा कमांड और पैरामीटर परिभाषा बिल्डर।
+- `core/graph_serialization.py` - सेव/लोड/कॉपी-पेस्ट/अंडू के लिए साझा स्नैपशॉट फॉर्मेट।
+- `core/chain_execution.py` - नोड ग्राफ से RealityCapture CLI आह्वान बनाता है।
+- `core/command_database.py` - पार्स किए गए RealityCapture कमांड कैटलॉग को लोड करता है।
+- `ui/theme.py` - एम्बेडेड विजेट्स के लिए व्युत्पन्न रंग और Qt स्टाइलशीट।
+- `ui/color_picker.py` - इन-ऐप HSVA रंग चयनकर्ता पॉपअप।
+- `ui/inset_fill_checkbox.py` - साझा चेकबॉक्स प्रिमिटिव।
+- `ui/flag_icon.py` - सक्रिय UI भाषा दर्शाने वाला विंडो आइकन।
 - `configuration.py` - शैलियों, UI सेटिंग्स और शॉर्टकट कुंजियों के लिए एकल स्रोत (Single Source of Truth)।
-- `search_menu.py` - नोड्स बनाने के लिए स्वतः पूर्ण (autocomplete) खोज संवाद।
+- `ui/search_menu.py` - नोड्स बनाने के लिए स्वतः पूर्ण (autocomplete) खोज संवाद।
 - `diagnostics.py` - अपवाद हैंडलर और त्रुटि लॉगिंग।
-- `rc_documentation_extractor.py` - स्थानीय RealityCapture दस्तावेज़ीकरण से कमांड डेटाबेस बनाने की उपयोगिता।
+- `localization.py` - gettext आधारित रनटाइम अनुवाद परत।
+- `core/rc_documentation_extractor.py` - स्थानीय RealityCapture दस्तावेज़ीकरण से कमांड डेटाबेस बनाने की उपयोगिता।
 
 ## लाइसेंस
 
