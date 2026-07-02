@@ -1170,7 +1170,8 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
             if hasattr(self, "_refresh_selection_visuals"):
                 self._refresh_selection_visuals()
             else:
-                self._selection_overlay.setVisible(bool(value))
+                show = bool(value) and not self._has_open_combo_popup()
+                self._selection_overlay.setVisible(show)
         return super().itemChange(change, value)
 
     def mouseReleaseEvent(self, event):
@@ -1259,6 +1260,16 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
                 conn.dest.meta_node._refresh_connections()
                 win.push_undo_state()
                 break
+
+    def _has_open_combo_popup(self) -> bool:
+        for child in self.childItems():
+            if isinstance(child, QGraphicsProxyWidget) and child.widget():
+                for combo in child.widget().findChildren(NodeComboBox):
+                    if combo._popup_open:
+                        return True
+                if isinstance(child.widget(), NodeComboBox) and child.widget()._popup_open:
+                    return True
+        return False
 
     def _refresh_connections(self):
         scene = self.scene()
@@ -1357,16 +1368,30 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
 
 
 class NodeComboBox(QComboBox):
+    _popup_open = False
+
     def __init__(self, node: MetaNode):
         super().__init__()
         self.node = node
 
+    def _find_proxy(self):
+        """Walk up the widget parent chain to find the QGraphicsProxyWidget."""
+        w = self
+        while w is not None:
+            proxy = w.graphicsProxyWidget()
+            if proxy is not None:
+                return proxy
+            w = w.parentWidget()
+        return None
+
     def showPopup(self):
-        # Lift the node above its siblings and hide the selection wash so the
-        # embedded popup list (combobox-popup:0 makes it a scene proxy) renders
-        # above the translucent overlay instead of being occluded by it.
+        self._popup_open = True
         try:
             self.node.setZValue(NODE_POPUP_Z)
+            proxy = self._find_proxy()
+            if proxy is not None:
+                self._original_proxy_z = proxy.zValue()
+                proxy.setZValue(4000)
             overlay = getattr(self.node, "_selection_overlay", None)
             if overlay is not None:
                 overlay.setVisible(False)
@@ -1376,8 +1401,19 @@ class NodeComboBox(QComboBox):
 
     def hidePopup(self):
         super().hidePopup()
+        self._popup_open = False
         try:
             self.node.setZValue(0)
+            proxy = self._find_proxy()
+            if proxy is not None and hasattr(self, '_original_proxy_z'):
+                proxy.setZValue(self._original_proxy_z)
+                delattr(self, '_original_proxy_z')
+        except RuntimeError:
+            pass
+        QTimer.singleShot(0, self._restore_overlay)
+
+    def _restore_overlay(self):
+        try:
             overlay = getattr(self.node, "_selection_overlay", None)
             if overlay is not None:
                 overlay.setVisible(self.node.isSelected())

@@ -28,7 +28,7 @@ TINT_BORDER_LIGHTEN_STEP  = 130  # per-iteration lighten factor when brightening
 DEFAULT_HEADER_COLOR = "#3a7cd1"
 # When True, parameter nodes use their socket colour as the header colour
 # (e.g. String → pink, Integer → blue). Exec/command nodes keep DEFAULT_HEADER_COLOR.
-PARAM_NODE_HEADER_FROM_SOCKET = False
+PARAM_NODE_HEADER_FROM_SOCKET = True
 NODE_SELECTED_COLOR = "#FFFFFF"
 CONNECTION_SELECTED_COLOR = "#FFFFFF"
 BUTTON_TEXT_COLOR = "#FFFFFF"

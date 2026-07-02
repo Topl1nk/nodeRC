@@ -314,7 +314,8 @@ class ParamNode(MetaNode):
     def _refresh_selection_visuals(self):
         win = editor_window_of(self)
         is_linked = win is not None and self in getattr(win, '_linked_group', [])
-        self._selection_overlay.setVisible(self.isSelected() or is_linked)
+        show = (self.isSelected() or is_linked) and not self._has_open_combo_popup()
+        self._selection_overlay.setVisible(show)
         self.update()
         self._adjust_proxy_z_values()
 
