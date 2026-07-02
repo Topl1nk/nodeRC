@@ -229,8 +229,7 @@ SCROLLBAR_TOGGLE_HOVER = "rgba(38,50,56,240)"
 # body never intercepts clicks meant for the nodes it contains; only the border
 # strip — the resize zone — stays reachable.
 GROUP_FRAME_Z                = -100
-GROUP_FRAME_FILL_RGBA        = (58, 118, 184, 28)   # faint wash of default border color
-GROUP_FRAME_FILL_ALPHA       = 28   # opacity of the body wash when a custom border color is picked
+GROUP_FRAME_FILL_ALPHA       = 28   # opacity of the body wash behind the frame border color
 GROUP_FRAME_BORDER_WIDTH     = 3
 GROUP_FRAME_TITLE_COLOR      = TEXT_COLOR
 GROUP_FRAME_TITLE_FONT       = UI_FONT_FAMILY

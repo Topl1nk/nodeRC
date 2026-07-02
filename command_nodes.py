@@ -126,7 +126,7 @@ class CommandNode(MetaNode):
 
     @staticmethod
     def _rewire(scene, win, out_sock: SocketItem, in_sock: SocketItem):
-        scene._enforce_connection_rules(out_sock, in_sock)
+        scene.enforce_connection_rules(out_sock, in_sock)
         conn = Connection(out_sock, in_sock)
         scene.addItem(conn)
         win.connections.append(conn)

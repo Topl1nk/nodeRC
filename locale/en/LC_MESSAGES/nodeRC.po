@@ -397,3 +397,23 @@ msgstr "Change Color"
 #. Only header
 msgid "color_only_header"
 msgstr "Only header"
+
+#. > Launch
+msgid "btn_launch"
+msgstr "> Launch"
+
+#. Open
+msgid "btn_open"
+msgstr "Open"
+
+#. Save
+msgid "btn_save"
+msgstr "Save"
+
+#. Save As
+msgid "btn_save_as"
+msgstr "Save As"
+
+#. Toggle scrollbars
+msgid "tooltip_toggle_scrollbars"
+msgstr "Toggle scrollbars"

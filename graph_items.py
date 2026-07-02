@@ -1182,12 +1182,12 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
                 if conn in win.connections:
                     win.connections.remove(conn)
 
-                scene._enforce_connection_rules(conn.source, in_sock)
+                scene.enforce_connection_rules(conn.source, in_sock)
                 conn1 = Connection(conn.source, in_sock)
                 scene.addItem(conn1)
                 win.connections.append(conn1)
 
-                scene._enforce_connection_rules(out_sock, conn.dest)
+                scene.enforce_connection_rules(out_sock, conn.dest)
                 conn2 = Connection(out_sock, conn.dest)
                 scene.addItem(conn2)
                 win.connections.append(conn2)

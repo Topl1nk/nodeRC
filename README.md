@@ -71,14 +71,24 @@ python nodeRC.py
 ## Project Structure
 
 - `nodeRC.py` - Main entry point.
-- `canvas.py` - Main editor window logic.
-- `scene.py` - Canvas scene and visual item event handling.
+- `editor_window.py` - Main editor window: keyboard shortcuts, undo stack, project dialogs.
+- `scene.py` - Canvas scene, connection dragging, and visual item event handling.
 - `view.py` - Graphic view logic, panning, and zooming.
-- `nodes_base.py` - Base classes for nodes, sockets, and connections.
-- `nodes_concrete.py` - Concrete implementations of specialized nodes (Start, Command, Parameter nodes).
+- `graph_items.py` - Visual scene items: sockets, connections, node body/frame rendering.
+- `command_nodes.py` - Start and Command node classes.
+- `param_nodes.py` - Parameter node classes (String, Bool, Integer, Float, Enum, Path, ...).
+- `node_blueprint.py` - Node/socket specifications and command/parameter def builders.
+- `graph_serialization.py` - Shared save/load/copy-paste/undo snapshot format.
+- `chain_execution.py` - Builds the RealityCapture CLI invocation from the node graph.
+- `command_database.py` - Loads the parsed RealityCapture command catalog.
+- `theme.py` - Derived colors and Qt stylesheets for embedded widgets.
+- `color_picker.py` - In-app HSVA color picker popup.
+- `inset_fill_checkbox.py` - Shared checkbox primitive.
+- `flag_icon.py` - Window icon reflecting the active UI language.
 - `configuration.py` - Single source of truth for styles, UI settings, and hotkeys.
 - `search_menu.py` - Autocomplete search dialog for spawning nodes.
 - `diagnostics.py` - Exception handler and error logging.
+- `localization.py` - Runtime gettext translation layer.
 - `rc_documentation_extractor.py` - Command database builder from local RealityCapture documentation.
 
 ## License

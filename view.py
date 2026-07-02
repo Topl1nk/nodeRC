@@ -1,17 +1,17 @@
 from __future__ import annotations
 from typing import Optional
 
-from PyQt5.QtWidgets import QGraphicsView, QPushButton
+from PyQt5.QtWidgets import QGraphicsView, QGraphicsProxyWidget, QPushButton
 from PyQt5.QtGui import QPainter, QColor, QRadialGradient, QBrush
 from PyQt5.QtCore import Qt, QPoint, QRectF
 
+from localization import t
 from configuration import (
     CANVAS_BACKGROUND_COLOR, SCROLLBAR_TOGGLE_BG, SCROLLBAR_TOGGLE_HOVER,
     VIGNETTE_COLOR, VIGNETTE_RADIUS, SCROLLBAR_BTN_MARGIN, SCROLLBAR_BTN_OFFSET,
     SCROLLBAR_BTN_SIZE, VIEW_ZOOM_STEP, VIEW_ZOOM_MIN, VIEW_ZOOM_MAX,
     VIEW_FRAME_MARGIN,
     SCROLLBAR_TOGGLE_SHOW_GLYPH, SCROLLBAR_TOGGLE_HIDE_GLYPH,
-    SCROLLBAR_TOGGLE_TOOLTIP,
 )
 
 
@@ -43,7 +43,7 @@ class GraphicsView(QGraphicsView):
 
         self._scrollbar_toggle_btn = QPushButton(SCROLLBAR_TOGGLE_SHOW_GLYPH, self)
         self._scrollbar_toggle_btn.setFixedSize(SCROLLBAR_BTN_SIZE, SCROLLBAR_BTN_SIZE)
-        self._scrollbar_toggle_btn.setToolTip(SCROLLBAR_TOGGLE_TOOLTIP)
+        self._scrollbar_toggle_btn.setToolTip(t("tooltip_toggle_scrollbars"))
         self._scrollbar_toggle_btn.setStyleSheet(f"""
             QPushButton {{
                 background:{SCROLLBAR_TOGGLE_BG};color:white;
@@ -58,7 +58,6 @@ class GraphicsView(QGraphicsView):
         # Wheel over an embedded widget (combo dropdown, spinbox, scrollable text)
         # must scroll the widget, not zoom the canvas. Forward to the scene first
         # and only zoom when no widget claimed it.
-        from PyQt5.QtWidgets import QGraphicsProxyWidget
         item = self.itemAt(event.pos())
         cursor = item
         while cursor is not None:
@@ -168,4 +167,6 @@ class GraphicsView(QGraphicsView):
         policy = Qt.ScrollBarAsNeeded if self._scrollbars_visible else Qt.ScrollBarAlwaysOff
         self.setHorizontalScrollBarPolicy(policy)
         self.setVerticalScrollBarPolicy(policy)
-        self._scrollbar_toggle_btn.setText("⊟" if self._scrollbars_visible else "⊞")
+        self._scrollbar_toggle_btn.setText(
+            SCROLLBAR_TOGGLE_HIDE_GLYPH if self._scrollbars_visible
+            else SCROLLBAR_TOGGLE_SHOW_GLYPH)

@@ -1,17 +1,25 @@
+"""search_menu.py — Node Spawning Palette
+
+Fuzzy-searchable catalog of commands and parameter nodes with a live node
+preview; the primary way nodes get onto the canvas.
+"""
 import re
 
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QTreeWidget, QTreeWidgetItem, QLabel, QGraphicsView, QGraphicsScene, QSizePolicy, QFrame, QWidget, QApplication
 )
-from PyQt5.QtCore import Qt, QEvent
+from PyQt5.QtCore import Qt, QEvent, QTimer
+from PyQt5.QtGui import QPainter
 
 from configuration import (
     SEARCH_DIALOG_WIDTH,
     SEARCH_DIALOG_HEIGHT, SEARCH_RESULTS_LIMIT,
     SEARCH_DIALOG_X_OFFSET,
 )
-from color_picker import NODE_BORDER_COLOR, SEARCH_DIALOG_STYLESHEET
+from theme import NODE_BORDER_COLOR, SEARCH_DIALOG_STYLESHEET
 from localization import t
+from param_nodes import PARAM_NODE_TYPES
+from command_nodes import CommandNode
 
 
 
@@ -52,7 +60,7 @@ class SearchMenuDialog(QDialog):
         self.preview_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.preview_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.preview_view.setInteractive(False)
-        self.preview_view.setRenderHint(1)
+        self.preview_view.setRenderHint(QPainter.Antialiasing)
         preview_layout.addWidget(self.preview_view)
         info_layout.addWidget(self.preview_frame)
 
@@ -142,7 +150,6 @@ class SearchMenuDialog(QDialog):
         self._param_specs = []   # [(label, payload)] for the browse tree
         self._entries = []       # [{"payload", "label", "haystack"}] for searching
 
-        from nodes_concrete import PARAM_NODE_TYPES
         seen_classes = set()
         for ptype, pclass in PARAM_NODE_TYPES.items():
             if ptype in ("any", "enum_int") or pclass in seen_classes:
@@ -338,21 +345,18 @@ class SearchMenuDialog(QDialog):
             self.desc_label.setText(desc)
             
         self.preview_scene.clear()
-        
-        node = None
-        from nodes_concrete import CommandNode, PARAM_NODE_TYPES
 
+        node = None
         if "command" in item_payload:
             node = CommandNode(item_payload)
         elif "param_type" in item_payload:
             pclass = PARAM_NODE_TYPES.get(item_payload["param_type"])
             if pclass:
                 node = pclass()
-            
+
         if node:
             self.preview_scene.addItem(node)
             # Why: QTimer.singleShot(0) defers execution until the view updates its geometry, ensuring fitInView works correctly.
-            from PyQt5.QtCore import QTimer
             QTimer.singleShot(0, lambda: self._center_preview(node))
             
     def _center_preview(self, node):

@@ -71,14 +71,24 @@ python nodeRC.py
 ## Projektstruktur
 
 - `nodeRC.py` - Haupteinstiegspunkt.
-- `canvas.py` - Logik des Haupteditorfensters.
-- `scene.py` - Leinwandszene und Ereignisbehandlung für visuelle Elemente.
+- `editor_window.py` - Haupteditorfenster: Tastenkürzel, Undo-Verlauf, Projektdialoge.
+- `scene.py` - Leinwandszene, Verbindungs-Ziehen und Ereignisbehandlung für visuelle Elemente.
 - `view.py` - Logik für Grafikansicht, Schwenken und Zoomen.
-- `nodes_base.py` - Basisklassen für Nodes, Sockets und Verbindungen.
-- `nodes_concrete.py` - Konkrete Implementierungen spezialisierter Nodes (Start-, Befehls- und Parameter-Nodes).
+- `graph_items.py` - Visuelle Szenenelemente: Sockets, Verbindungen, Rendering von Nodes und Rahmen.
+- `command_nodes.py` - Start- und Command-Node-Klassen.
+- `param_nodes.py` - Parameter-Node-Klassen (String, Bool, Integer, Float, Enum, Path, ...).
+- `node_blueprint.py` - Node-/Socket-Spezifikationen und Erzeuger für Befehls- und Parameterdefinitionen.
+- `graph_serialization.py` - Gemeinsames Snapshot-Format für Speichern/Laden/Kopieren-Einfügen/Undo.
+- `chain_execution.py` - Erstellt den RealityCapture-CLI-Aufruf aus dem Node-Graphen.
+- `command_database.py` - Lädt den geparsten RealityCapture-Befehlskatalog.
+- `theme.py` - Abgeleitete Farben und Qt-Stylesheets für eingebettete Widgets.
+- `color_picker.py` - Eingebettetes HSVA-Farbauswahl-Popup.
+- `inset_fill_checkbox.py` - Gemeinsame Checkbox-Primitive.
+- `flag_icon.py` - Fenstersymbol, das die aktive UI-Sprache widerspiegelt.
 - `configuration.py` - Zentrale Quelle für Stile, UI-Einstellungen und Tastenkürzel.
 - `search_menu.py` - Suchdialog mit automatischer Vervollständigung zum Erstellen von Nodes.
 - `diagnostics.py` - Ausnahmebehandlung und Fehlerprotokollierung.
+- `localization.py` - Laufzeit-Übersetzungsebene auf gettext-Basis.
 - `rc_documentation_extractor.py` - Dienstprogramm zum Erstellen der Befehlsdatenbank aus der lokalen RealityCapture-Dokumentation.
 
 ## Lizenz
