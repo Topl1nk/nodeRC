@@ -132,6 +132,7 @@ def serialize_graph(scene, connections: List[Connection], *,
         connection_records.append(record)
 
     return {
+        "version": 1,
         "nodes": node_records,
         "connections": connection_records,
         "groups": group_records,
