@@ -22,8 +22,8 @@ from configuration import (
     COLOR_PICKER_PRESET_COLS, COLOR_PICKER_PRESET_GAP,
     DEFAULT_HEADER_COLOR,
 )
-from theme import BUTTON_BG_COLOR, NODE_BORDER_COLOR
-from inset_fill_checkbox import InsetFillCheckBox
+from ui.theme import BUTTON_BG_COLOR, NODE_BORDER_COLOR
+from ui.inset_fill_checkbox import InsetFillCheckBox
 
 
 class GradientSlider(QWidget):

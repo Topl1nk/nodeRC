@@ -71,25 +71,25 @@ python nodeRC.py
 ## 项目结构
 
 - `nodeRC.py` - 主入口点。
-- `editor_window.py` - 主编辑器窗口：键盘快捷键、撤销历史、项目对话框。
-- `scene.py` - 画布场景、连接拖拽和可视项事件处理。
-- `view.py` - 图形视图逻辑、平移和缩放。
-- `graph_items.py` - 场景可视元素：套接字、连接、节点/框架渲染。
-- `command_nodes.py` - Start 和 Command 节点类。
-- `param_nodes.py` - 参数节点类（String、Bool、Integer、Float、Enum、Path 等）。
-- `node_blueprint.py` - 节点/套接字规格以及命令与参数定义构建器。
-- `graph_serialization.py` - 保存/加载/复制粘贴/撤销共用的快照格式。
-- `chain_execution.py` - 根据节点图构建 RealityCapture CLI 调用。
-- `command_database.py` - 加载已解析的 RealityCapture 命令目录。
-- `theme.py` - 派生颜色以及内嵌控件的 Qt 样式表。
-- `color_picker.py` - 应用内 HSVA 取色器弹窗。
-- `inset_fill_checkbox.py` - 共享的复选框基础控件。
-- `flag_icon.py` - 反映当前界面语言的窗口图标。
+- `ui/editor_window.py` - 主编辑器窗口：键盘快捷键、撤销历史、项目对话框。
+- `ui/scene.py` - 画布场景、连接拖拽和可视项事件处理。
+- `ui/view.py` - 图形视图逻辑、平移和缩放。
+- `ui/graph_items.py` - 场景可视元素：套接字、连接、节点/框架渲染。
+- `ui/command_nodes.py` - Start 和 Command 节点类。
+- `ui/param_nodes.py` - 参数节点类（String、Bool、Integer、Float、Enum、Path 等）。
+- `core/node_blueprint.py` - 节点/套接字规格以及命令与参数定义构建器。
+- `core/graph_serialization.py` - 保存/加载/复制粘贴/撤销共用的快照格式。
+- `core/chain_execution.py` - 根据节点图构建 RealityCapture CLI 调用。
+- `core/command_database.py` - 加载已解析的 RealityCapture 命令目录。
+- `ui/theme.py` - 派生颜色以及内嵌控件的 Qt 样式表。
+- `ui/color_picker.py` - 应用内 HSVA 取色器弹窗。
+- `ui/inset_fill_checkbox.py` - 共享的复选框基础控件。
+- `ui/flag_icon.py` - 反映当前界面语言的窗口图标。
 - `configuration.py` - 样式、UI 设置和快捷键的单数据源。
-- `search_menu.py` - 用于生成节点的自动完成搜索对话框。
+- `ui/search_menu.py` - 用于生成节点的自动完成搜索对话框。
 - `diagnostics.py` - 异常处理和错误日志记录。
 - `localization.py` - 基于 gettext 的运行时翻译层。
-- `rc_documentation_extractor.py` - 从本地 RealityCapture 文档构建命令数据库的实用程序。
+- `core/rc_documentation_extractor.py` - 从本地 RealityCapture 文档构建命令数据库的实用程序。
 
 ## 许可证
 

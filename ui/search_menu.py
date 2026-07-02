@@ -16,10 +16,10 @@ from configuration import (
     SEARCH_DIALOG_HEIGHT, SEARCH_RESULTS_LIMIT,
     SEARCH_DIALOG_X_OFFSET,
 )
-from theme import NODE_BORDER_COLOR, SEARCH_DIALOG_STYLESHEET
+from ui.theme import NODE_BORDER_COLOR, SEARCH_DIALOG_STYLESHEET
 from localization import t
-from param_nodes import PARAM_NODE_TYPES
-from command_nodes import CommandNode
+from ui.param_nodes import PARAM_NODE_TYPES
+from ui.command_nodes import CommandNode
 
 
 

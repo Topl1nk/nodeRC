@@ -39,18 +39,18 @@ from configuration import (
     CLIPBOARD_PAYLOAD_PREFIX,
 )
 from diagnostics import log_and_explain
-from command_database import load_command_database
+from core.command_database import load_command_database
 
-from view import GraphicsView
-from scene import NodeScene
-from graph_items import Connection, GroupFrameItem, MetaNode
-from command_nodes import CommandNode, StartNode
-from graph_serialization import (
+from ui.view import GraphicsView
+from ui.scene import NodeScene
+from ui.graph_items import Connection, GroupFrameItem, MetaNode
+from ui.command_nodes import CommandNode, StartNode
+from core.graph_serialization import (
     build_param_node, clear_graph, materialize_graph, payload_center,
     serialize_graph,
 )
-from chain_execution import build_exec_chain, build_launch_tokens, launch
-from flag_icon import language_flag_icon
+from core.chain_execution import build_exec_chain, build_launch_tokens, launch
+from ui.flag_icon import language_flag_icon
 
 
 class NodeEditorWindow(QMainWindow):

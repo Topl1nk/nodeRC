@@ -18,7 +18,7 @@ from configuration import (
     SOCKET_COLOR_SCHEMA, INTEGER_PARAM_NAMES,
     TINT_BODY_DARKEN, UI_FONT_FAMILY, NODE_RENAME_FONT_SIZE,
 )
-from theme import darker_hex
+from ui.theme import darker_hex
 
 # Visual prefix per parameter type — keeps auto-created nodes consistent with the
 # titles the typed ParamNode classes assign themselves.

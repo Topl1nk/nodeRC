@@ -71,25 +71,25 @@ python nodeRC.py
 ## Structure du projet
 
 - `nodeRC.py` - Point d'entrée principal.
-- `editor_window.py` - Fenêtre principale de l'éditeur : raccourcis clavier, historique d'annulation, boîtes de dialogue de projet.
-- `scene.py` - Scène de canevas, glisser des connexions et gestion des événements des éléments visuels.
-- `view.py` - Logique de vue graphique, panoramique et zoom.
-- `graph_items.py` - Éléments visuels de la scène : ports, connexions, rendu des nœuds et des cadres.
-- `command_nodes.py` - Classes des nœuds Start et Command.
-- `param_nodes.py` - Classes des nœuds de paramètre (String, Bool, Integer, Float, Enum, Path, ...).
-- `node_blueprint.py` - Spécifications des nœuds/ports et constructeurs de définitions de commandes et paramètres.
-- `graph_serialization.py` - Format unique d'instantané pour l'enregistrement/chargement/copier-coller/annulation.
-- `chain_execution.py` - Construit l'invocation de la CLI RealityCapture à partir du graphe de nœuds.
-- `command_database.py` - Charge le catalogue de commandes RealityCapture analysé.
-- `theme.py` - Couleurs dérivées et feuilles de style Qt pour les widgets intégrés.
-- `color_picker.py` - Fenêtre contextuelle de sélection de couleur HSVA.
-- `inset_fill_checkbox.py` - Primitive de case à cocher partagée.
-- `flag_icon.py` - Icône de fenêtre reflétant la langue d'interface active.
+- `ui/editor_window.py` - Fenêtre principale de l'éditeur : raccourcis clavier, historique d'annulation, boîtes de dialogue de projet.
+- `ui/scene.py` - Scène de canevas, glisser des connexions et gestion des événements des éléments visuels.
+- `ui/view.py` - Logique de vue graphique, panoramique et zoom.
+- `ui/graph_items.py` - Éléments visuels de la scène : ports, connexions, rendu des nœuds et des cadres.
+- `ui/command_nodes.py` - Classes des nœuds Start et Command.
+- `ui/param_nodes.py` - Classes des nœuds de paramètre (String, Bool, Integer, Float, Enum, Path, ...).
+- `core/node_blueprint.py` - Spécifications des nœuds/ports et constructeurs de définitions de commandes et paramètres.
+- `core/graph_serialization.py` - Format unique d'instantané pour l'enregistrement/chargement/copier-coller/annulation.
+- `core/chain_execution.py` - Construit l'invocation de la CLI RealityCapture à partir du graphe de nœuds.
+- `core/command_database.py` - Charge le catalogue de commandes RealityCapture analysé.
+- `ui/theme.py` - Couleurs dérivées et feuilles de style Qt pour les widgets intégrés.
+- `ui/color_picker.py` - Fenêtre contextuelle de sélection de couleur HSVA.
+- `ui/inset_fill_checkbox.py` - Primitive de case à cocher partagée.
+- `ui/flag_icon.py` - Icône de fenêtre reflétant la langue d'interface active.
 - `configuration.py` - Source unique de vérité pour les styles, les paramètres d'interface et les raccourcis.
-- `search_menu.py` - Boîte de dialogue de recherche avec saisie semi-automatique pour créer des nœuds.
+- `ui/search_menu.py` - Boîte de dialogue de recherche avec saisie semi-automatique pour créer des nœuds.
 - `diagnostics.py` - Gestionnaire d'exceptions et journalisation des erreurs.
 - `localization.py` - Couche de traduction à l'exécution basée sur gettext.
-- `rc_documentation_extractor.py` - Générateur de base de données de commandes à partir de la documentation locale de RealityCapture.
+- `core/rc_documentation_extractor.py` - Générateur de base de données de commandes à partir de la documentation locale de RealityCapture.
 
 ## Licence
 

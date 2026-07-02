@@ -17,8 +17,8 @@ from configuration import (
     SCENE_INITIAL_X, SCENE_INITIAL_Y, SCENE_INITIAL_WIDTH, SCENE_INITIAL_HEIGHT,
     DRAG_PREVIEW_LINE_WIDTH, NODE_DRAG_Z, GROUP_FRAME_HEADER_HEIGHT,
 )
-from search_menu import SearchMenuDialog
-from graph_items import Connection, SocketItem, MetaNode, GroupFrameItem
+from ui.search_menu import SearchMenuDialog
+from ui.graph_items import Connection, SocketItem, MetaNode, GroupFrameItem
 
 
 class NodeScene(QGraphicsScene):

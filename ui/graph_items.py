@@ -43,15 +43,15 @@ from configuration import (
     TINT_BODY_DARKEN, TINT_TITLE_LUMINANCE_THRESHOLD,
     PARAM_NODE_HEADER_FROM_SOCKET,
 )
-from theme import (
+from ui.theme import (
     NODE_BORDER_COLOR, GROUP_FRAME_BORDER_COLOR,
     relative_luminance, brightened_for_canvas,
     DEFAULT_WIDGET_QSS, widget_stylesheets, tinted_widget_palette,
     VECTOR_TOGGLE_QSS, CONTEXT_MENU_STYLESHEET,
 )
-from node_blueprint import NodeDef, SocketDef, html_title
-from color_picker import ColorPickerPopup
-from inset_fill_checkbox import InsetFillCheckBox
+from core.node_blueprint import NodeDef, SocketDef, html_title
+from ui.color_picker import ColorPickerPopup
+from ui.inset_fill_checkbox import InsetFillCheckBox
 
 
 def editor_window_of(item):

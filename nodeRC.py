@@ -22,12 +22,12 @@ if __name__ == "__main__":
     app.setStyle(WINDOW_STYLE)
 
     try:
-        from rc_documentation_extractor import rebuild_command_database_from_html
+        from core.rc_documentation_extractor import rebuild_command_database_from_html
         rebuild_command_database_from_html(RC_HELP_HTML, COMMAND_DB_JSON)
     except Exception as exc:
         _logger.warning("Documentation refresh skipped: %s", exc)
 
-    from editor_window import NodeEditorWindow
+    from ui.editor_window import NodeEditorWindow
     win = NodeEditorWindow()
     win.show()
     sys.exit(app.exec_())

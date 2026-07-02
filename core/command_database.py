@@ -11,7 +11,7 @@ import os
 from typing import Dict, List, Tuple
 
 from configuration import COMMAND_DB_JSON
-from rc_documentation_extractor import command_display_name, command_action_word
+from core.rc_documentation_extractor import command_display_name, command_action_word
 
 CommandCategoryTree = Dict[str, Dict[str, List[dict]]]
 

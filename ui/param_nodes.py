@@ -25,14 +25,14 @@ from configuration import (
     NODE_WIDGET_V_OFFSET, NODE_WIDGET_HEIGHT, NODE_LINKED_FIELD_Z,
     NODE_WIDGET_Z_BASE, BROWSE_BTN_WIDTH, TEXT_COLOR,
 )
-from theme import (
+from ui.theme import (
     FIELD_QSS, COMBOBOX_QSS, SPINBOX_QSS, TOOLBTN_QSS, VECTOR_AXIS_LABEL_QSS,
 )
-from node_blueprint import (
+from core.node_blueprint import (
     NodeDef, SocketDef, html_title, param_node_def, resolve_color_schema,
 )
-from graph_items import MetaNode, NodeComboBox, editor_window_of
-from inset_fill_checkbox import InsetFillCheckBox
+from ui.graph_items import MetaNode, NodeComboBox, editor_window_of
+from ui.inset_fill_checkbox import InsetFillCheckBox
 from diagnostics import log_and_explain
 
 

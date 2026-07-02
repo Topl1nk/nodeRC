@@ -14,12 +14,12 @@ from configuration import (
     NODE_HEADER_HEIGHT, NODE_ROW_HEIGHT, NODE_HORIZONTAL_PAD, NODE_WIDGET_V_OFFSET,
     AUTOSPAWN_X_GAP, AUTOSPAWN_Y_OFFSET, AUTOSPAWN_V_GAP,
 )
-from theme import PUSHBTN_QSS, NODE_BORDER_COLOR
-from node_blueprint import (
+from ui.theme import PUSHBTN_QSS, NODE_BORDER_COLOR
+from core.node_blueprint import (
     PARAM_TYPE_PREFIX, command_node_def, group_xyz_params, param_spec_name,
     resolve_param_type, start_node_def,
 )
-from graph_items import Connection, MetaNode, SocketItem, editor_window_of
+from ui.graph_items import Connection, MetaNode, SocketItem, editor_window_of
 from diagnostics import log_and_explain
 
 

@@ -13,7 +13,7 @@ from configuration import (
     CHECKBOX_FILL_INSET, CHECKBOX_INDICATOR_SIZE, CHECKBOX_LABEL_SPACING,
     NODE_SELECTED_COLOR, TEXT_COLOR,
 )
-from theme import DEFAULT_WIDGET_PALETTE, WIDGET_FONT
+from ui.theme import DEFAULT_WIDGET_PALETTE, WIDGET_FONT
 
 
 class InsetFillCheckBox(QCheckBox):

@@ -10,10 +10,10 @@ import subprocess
 from typing import Dict, Iterable, List, Optional
 
 from configuration import RC_EXECUTABLE, VECTOR_PARAM_TYPES
-from graph_items import Connection, MetaNode
-from node_blueprint import group_xyz_params
-from param_nodes import ParamNode
-from command_nodes import CommandNode, StartNode
+from ui.graph_items import Connection, MetaNode
+from core.node_blueprint import group_xyz_params
+from ui.param_nodes import ParamNode
+from ui.command_nodes import CommandNode, StartNode
 
 
 def build_exec_chain(nodes: Iterable[MetaNode],

@@ -19,9 +19,9 @@ from PyQt5.QtCore import QPointF, QRectF
 from localization import get_all_translations, t
 from configuration import GROUP_FRAME_DEFAULT_WIDTH, GROUP_FRAME_DEFAULT_HEIGHT
 from diagnostics import log_and_explain
-from graph_items import Connection, GroupFrameItem, MetaNode
-from param_nodes import EnumParamNode, PARAM_NODE_TYPES, ParamNode, StringParamNode
-from command_nodes import CommandNode, StartNode
+from ui.graph_items import Connection, GroupFrameItem, MetaNode
+from ui.param_nodes import EnumParamNode, PARAM_NODE_TYPES, ParamNode, StringParamNode
+from ui.command_nodes import CommandNode, StartNode
 
 
 def build_param_node(creation_data: dict) -> ParamNode:
