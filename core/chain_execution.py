@@ -2,84 +2,80 @@
 
 Walks the exec wires from the StartNode, resolves every connected parameter to
 its live value, and assembles the token list RealityCapture is launched with.
-No scene or window knowledge — callers hand in nodes and connections.
+
+Operates entirely on GraphModel — no Qt or ui imports.
 """
 from __future__ import annotations
 
 import subprocess
-from typing import Dict, Iterable, List, Optional
+from typing import List, Optional
 
 from configuration import RC_EXECUTABLE, VECTOR_PARAM_TYPES
-from ui.graph_items import Connection, MetaNode
+from core.graph_model import GraphModel, NodeModel
 from core.node_blueprint import group_xyz_params
-from ui.param_nodes import ParamNode
-from ui.command_nodes import CommandNode, StartNode
 
 
-def build_exec_chain(nodes: Iterable[MetaNode],
-                     connections: List[Connection]) -> Optional[List[MetaNode]]:
+def build_exec_chain(graph: GraphModel) -> Optional[List[NodeModel]]:
     """The linear node sequence reachable from the StartNode over exec wires.
 
     A visited-set guards against cycles: a looped chain terminates at the first
     revisited node instead of hanging the editor.
     """
-    all_nodes = set(nodes)
-    start_nodes = [n for n in all_nodes if isinstance(n, StartNode)]
+    start_nodes = [n for n in graph.nodes if n.node_type == "StartNode"]
     if not start_nodes:
         return None
 
-    next_node: Dict[MetaNode, Optional[MetaNode]] = {n: None for n in all_nodes}
-    for conn in connections:
-        if not conn.is_exec:
-            continue
-        if conn.source.sock_def.name in ("exec_out", "__exec_out__"):
-            next_node[conn.source.meta_node] = conn.dest.meta_node
+    next_node = {}
+    for conn in graph.connections:
+        if conn.src_socket in ("exec_out", "__exec_out__"):
+            src = graph.node_by_uid(conn.src_node_uid)
+            dst = graph.node_by_uid(conn.dst_node_uid)
+            if src and dst:
+                next_node[src.uid] = dst
 
-    chain: List[MetaNode] = []
-    current: Optional[MetaNode] = start_nodes[0]
+    chain: List[NodeModel] = []
+    current: Optional[NodeModel] = start_nodes[0]
     visited: set = set()
-    while current and current not in visited:
+    while current and current.uid not in visited:
         chain.append(current)
-        visited.add(current)
-        current = next_node.get(current)
+        visited.add(current.uid)
+        current = next_node.get(current.uid)
     return chain
 
 
-def resolve_connected_param_value(node: MetaNode, param_name: str,
-                                  connections: List[Connection]) -> str:
+def _resolve_param_value(graph: GraphModel, node: NodeModel,
+                         param_name: str) -> str:
     """The live value feeding a command input — following pass-through outputs
     on upstream command nodes (their ``new*_out`` sockets mirror the input)."""
-    socket = node.get_socket(param_name)
-    if not socket:
-        return ""
-    for conn in connections:
-        if conn.dest is socket:
-            source_node = conn.source.meta_node
-            if isinstance(source_node, ParamNode):
-                return source_node.get_value(conn.source.sock_def.name)
-            if isinstance(source_node, CommandNode):
-                out_sock_name = conn.source.sock_def.name
-                in_sock_name = (out_sock_name[:-len("_out")]
-                                if out_sock_name.endswith("_out") else out_sock_name)
-                return resolve_connected_param_value(source_node, in_sock_name, connections)
+    for conn in graph.connections_to(node.uid, param_name):
+        src = graph.node_by_uid(conn.src_node_uid)
+        if not src:
+            continue
+        if src.node_type.endswith("ParamNode"):
+            return src.socket_values.get(conn.src_socket, "")
+        if src.node_type == "CommandNode":
+            out_name = conn.src_socket
+            in_name = (out_name[:-len("_out")]
+                       if out_name.endswith("_out") else out_name)
+            return _resolve_param_value(graph, src, in_name)
     return ""
 
 
-def build_launch_tokens(chain: List[MetaNode],
-                        connections: List[Connection]) -> List[str]:
+def build_launch_tokens(chain: List[NodeModel],
+                        graph: GraphModel) -> List[str]:
     """CLI tokens for the chain: executable, then per command its flag and every
     non-empty resolved parameter (vector values split into components)."""
     tokens = [RC_EXECUTABLE]
     for node in chain[1:]:
-        if not isinstance(node, CommandNode):
+        if node.node_type != "CommandNode" or not node.cmd_def:
             continue
         tokens.append(node.cmd_def["command"])
-        expanded = getattr(node, "expanded_vectors", set())
+        expanded = node.expanded_vectors or set()
         for key in ("required", "optional"):
             for p in group_xyz_params(node.cmd_def.get(key, []), expanded):
                 name  = p if isinstance(p, str) else p["name"]
                 ptype = "string" if isinstance(p, str) else p.get("type", "string")
-                value = resolve_connected_param_value(node, name, connections)
+                value = _resolve_param_value(graph, node, name)
                 if not value:
                     continue
                 if ptype in VECTOR_PARAM_TYPES:

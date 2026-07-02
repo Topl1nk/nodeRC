@@ -47,7 +47,7 @@ from ui.graph_items import Connection, GroupFrameItem, MetaNode
 from ui.command_nodes import CommandNode, StartNode
 from core.graph_serialization import (
     build_param_node, clear_graph, materialize_graph, payload_center,
-    serialize_graph,
+    scene_to_graph_model, serialize_graph,
 )
 from core.chain_execution import build_exec_chain, build_launch_tokens, launch
 from ui.flag_icon import language_flag_icon
@@ -474,13 +474,13 @@ class NodeEditorWindow(QMainWindow):
     # ── Chain execution ───────────────────────────────────────────────────────
 
     def execute_chain(self):
-        nodes = [i for i in self.scene.items() if isinstance(i, MetaNode)]
-        chain = build_exec_chain(nodes, self.connections)
+        graph = scene_to_graph_model(self.scene, self.connections)
+        chain = build_exec_chain(graph)
         if not chain or len(chain) < 2:
             QMessageBox.warning(self, t("dialog_incomplete_chain_title"),
                                 t("msg_incomplete_chain_desc"))
             return
-        tokens = build_launch_tokens(chain, self.connections)
+        tokens = build_launch_tokens(chain, graph)
         try:
             launch(tokens)
         except Exception as exc:

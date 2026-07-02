@@ -19,6 +19,7 @@ from PyQt5.QtCore import QPointF, QRectF
 from localization import get_all_translations, t
 from configuration import GROUP_FRAME_DEFAULT_WIDTH, GROUP_FRAME_DEFAULT_HEIGHT
 from diagnostics import log_and_explain
+from core.graph_model import GraphModel, NodeModel, ConnectionModel, GroupModel
 from ui.graph_items import Connection, GroupFrameItem, MetaNode
 from ui.param_nodes import EnumParamNode, PARAM_NODE_TYPES, ParamNode, StringParamNode
 from ui.command_nodes import CommandNode, StartNode
@@ -224,3 +225,54 @@ def materialize_graph(scene, connections: List[Connection], payload: dict, *,
     for frame in frames:
         frame.commit_members(force_all=True)
     return id_to_node, frames
+
+
+def scene_to_graph_model(scene, connections: List[Connection]) -> GraphModel:
+    """Build a GraphModel from the live scene for chain execution."""
+    node_id_map: Dict[MetaNode, int] = {}
+    nodes = []
+    groups = []
+
+    for idx, item in enumerate(scene.items()):
+        if isinstance(item, MetaNode):
+            node_id_map[item] = idx
+            pos = item.scenePos()
+            nm = NodeModel(
+                uid=idx,
+                node_type=type(item).__name__,
+                x=pos.x(), y=pos.y(),
+                color=item.color_override(),
+                color_only_header=item.color_only_header(),
+            )
+            if isinstance(item, CommandNode):
+                nm.cmd_def = item.cmd_def
+                nm.expanded_vectors = getattr(item, "expanded_vectors", None)
+            if isinstance(item, ParamNode):
+                nm.creation_data = getattr(item, "creation_data", None)
+                nm.current_value = item.get_value_state()
+                for name, sock in item.sockets.items():
+                    nm.socket_values[name] = item.get_value(name)
+            nodes.append(nm)
+        elif isinstance(item, GroupFrameItem):
+            pos = item.pos()
+            rect = item.rect()
+            groups.append(GroupModel(
+                title=item.title,
+                x=pos.x(), y=pos.y(),
+                width=rect.width(), height=rect.height(),
+                color=item.color(),
+            ))
+
+    conns = []
+    for conn in connections:
+        src_id = node_id_map.get(conn.source.meta_node)
+        dst_id = node_id_map.get(conn.dest.meta_node)
+        if src_id is not None and dst_id is not None:
+            conns.append(ConnectionModel(
+                src_node_uid=src_id,
+                src_socket=conn.source.sock_def.name,
+                dst_node_uid=dst_id,
+                dst_socket=conn.dest.sock_def.name,
+            ))
+
+    return GraphModel(nodes=nodes, connections=conns, groups=groups)

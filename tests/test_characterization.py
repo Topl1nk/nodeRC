@@ -479,3 +479,51 @@ def test_rename_cancel_restores_title(window):
     p.title_item.setPlainText("garbage")
     p._cancel_rename()
     assert p.title_item.toPlainText() == original
+
+
+# ── import boundary: core/ must not pull in Qt or ui ───────────────────────────
+
+def test_core_graph_model_has_no_qt_or_ui_deps():
+    import importlib, sys
+    mods_before = set(sys.modules)
+    importlib.reload(importlib.import_module("core.graph_model"))
+    new_mods = set(sys.modules) - mods_before
+    for m in new_mods:
+        assert not m.startswith("PyQt"), f"core.graph_model pulled in {m}"
+        assert not m.startswith("ui."), f"core.graph_model pulled in {m}"
+
+
+def test_graph_model_dict_roundtrip():
+    from core.graph_model import GraphModel, NodeModel, ConnectionModel, GroupModel
+    original = GraphModel(
+        nodes=[
+            NodeModel(uid=1, node_type="StartNode", x=0, y=0),
+            NodeModel(uid=2, node_type="CommandNode", x=100, y=0,
+                      cmd_def={"command": "-align"}, color="#ff0000"),
+            NodeModel(uid=3, node_type="StringParamNode", x=-100, y=0,
+                      creation_data={"param_type": "string", "display": "val"},
+                      current_value="hello"),
+        ],
+        connections=[ConnectionModel(src_node_uid=1, src_socket="exec_out",
+                                     dst_node_uid=2, dst_socket="exec_in")],
+        groups=[GroupModel(title="G", x=0, y=0, width=200, height=150, color="#00ff00")],
+    )
+    d = original.to_dict(include_selection=True)
+    restored = GraphModel.from_dict(d)
+    assert len(restored.nodes) == 3
+    assert len(restored.connections) == 1
+    assert len(restored.groups) == 1
+    assert restored.nodes[1].cmd_def["command"] == "-align"
+    assert restored.nodes[2].current_value == "hello"
+    assert restored.groups[0].color == "#00ff00"
+    assert d == restored.to_dict(include_selection=True)
+
+
+def test_core_chain_execution_has_no_qt_or_ui_deps():
+    import importlib, sys
+    mods_before = set(sys.modules)
+    importlib.reload(importlib.import_module("core.chain_execution"))
+    new_mods = set(sys.modules) - mods_before
+    for m in new_mods:
+        assert not m.startswith("PyQt"), f"core.chain_execution pulled in {m}"
+        assert not m.startswith("ui."), f"core.chain_execution pulled in {m}"
