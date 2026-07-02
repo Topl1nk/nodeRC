@@ -50,5 +50,3 @@ nodeRC.spec
 nodeRC_Release/
 nodeRC_Release.zip
 
-# Testing
-tests/
