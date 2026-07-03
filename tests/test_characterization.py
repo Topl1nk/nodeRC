@@ -16,7 +16,7 @@ from PyQt5.QtCore import QPointF, QEvent
 from PyQt5.QtGui import QFocusEvent
 
 from ui.editor_window import NodeEditorWindow
-from ui.graph_items import MetaNode, GroupFrameItem, Connection
+from ui.graph_items import MetaNode, Connection
 from ui.param_nodes import (
     ParamNode, StringParamNode, IntParamNode, EnumParamNode, PathParamNode,
 )
@@ -397,7 +397,7 @@ def test_view_uses_partial_updates(window):
 
 
 def test_vignette_is_under_items_not_dimming_them(window, app):
-    from PyQt5.QtWidgets import QGraphicsView, QGraphicsRectItem
+    from PyQt5.QtWidgets import QGraphicsRectItem
     from PyQt5.QtGui import QColor, QBrush
     from PyQt5.QtCore import QRectF
     window.resize(600, 400)
