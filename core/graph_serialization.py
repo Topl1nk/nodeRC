@@ -69,7 +69,7 @@ def _deserialize_node(scene, record: dict, pos: QPointF) -> Optional[MetaNode]:
     if node_type == "StartNode":
         node = StartNode()
     elif node_type == "CommandNode":
-        node = CommandNode(record["cmd_def"])
+        node = CommandNode(record["cmd_def"], set(record.get("expanded_vectors", [])))
     elif node_type.endswith("ParamNode"):
         node = build_param_node(
             record.get("creation_data", {"param_type": "string", "display": "value"}))

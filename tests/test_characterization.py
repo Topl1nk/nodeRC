@@ -189,8 +189,25 @@ def test_rename_persists_in_creation_data(window):
 
 def test_title_escapes_html_special_chars(window):
     node = _param(window, "string")
-    node._apply_title("Tom & Jerry <x>")
-    assert node.title_item.toPlainText() == "Tom & Jerry <x>"
+    node._apply_title("A & B <x>")
+    assert node.title_item.toPlainText() == "A & B <x>"
+
+
+def test_long_title_elides_instead_of_overflowing_node(window):
+    node = _param(window, "string")
+    long_name = "A Very Long Parameter Name That Cannot Possibly Fit"
+    node._apply_title(long_name)
+    shown = node.title_item.toPlainText()
+    assert shown != long_name
+    assert shown.endswith("…")
+    assert node.toolTip() == long_name
+
+
+def test_short_title_is_not_elided_and_has_no_tooltip(window):
+    node = _param(window, "string")
+    node._apply_title("short")
+    assert node.title_item.toPlainText() == "short"
+    assert node.toolTip() == ""
 
 
 # ── command node / vector grouping ──────────────────────────────────────────────
@@ -213,6 +230,33 @@ def test_vector_toggle_preserves_selection(window):
     cmd.toggle_vector_expansion(next(iter(cmd._vector_buttons)))
     rebuilt = _nodes_of(window, CommandNode)[0]
     assert rebuilt.isSelected()
+
+
+def test_expanded_vector_and_its_wiring_survive_save_load(window):
+    # A save/load round-trip used to silently drop an expanded vector's state:
+    # CommandNode.serialize_payload() never wrote expanded_vectors, so a
+    # reload collapsed the socket back to "pos" — orphaning any connection
+    # into "posX"/"posY"/"posZ" (the values just vanished from CLI output).
+    cmd = _command(window, required=["posX", "posY", "posZ"])
+    cmd.toggle_vector_expansion(next(iter(cmd._vector_buttons)))
+    cmd = _nodes_of(window, CommandNode)[0]
+
+    x_val = _param(window, "float", x=-200, y=0)
+    x_val.set_value_state("1.5")
+    conn = Connection(x_val.get_socket("value_out"), cmd.get_socket("posX"))
+    window.scene.addItem(conn)
+    window.connections.append(conn)
+    conn.refresh()
+
+    window.set_project_state(window.get_project_state())
+
+    reloaded = _nodes_of(window, CommandNode)[0]
+    assert reloaded.expanded_vectors == {"pos"}
+    assert set(reloaded.sockets) & {"posX", "posY", "posZ"} == {"posX", "posY", "posZ"}
+    assert any(
+        c.dest.meta_node is reloaded and c.dest.sock_def.name == "posX"
+        for c in window.connections
+    )
 
 
 def test_restore_isolates_a_corrupt_node(window):
@@ -527,3 +571,114 @@ def test_core_chain_execution_has_no_qt_or_ui_deps():
     for m in new_mods:
         assert not m.startswith("PyQt"), f"core.chain_execution pulled in {m}"
         assert not m.startswith("ui."), f"core.chain_execution pulled in {m}"
+
+
+# ── duplicate param names: same-typed inputs a command's own docs don't
+#    distinguish (e.g. -exportModel's "modelName fileName" both infer to the
+#    generic "filepath") must not collide in the name-keyed socket dict or in
+#    connection-value resolution — see dedupe_param_name in node_blueprint.py.
+
+def test_dedupe_param_name_disambiguates_repeats():
+    from core.node_blueprint import dedupe_param_name
+    seen = {}
+    assert dedupe_param_name("filepath", seen) == "filepath"
+    assert dedupe_param_name("filepath", seen) == "filepath_2"
+    assert dedupe_param_name("filepath", seen) == "filepath_3"
+    assert dedupe_param_name("boolean", seen) == "boolean"
+
+
+def test_command_node_def_gives_duplicate_named_params_unique_sockets():
+    from core.node_blueprint import command_node_def
+    cmd_def = {
+        "command": "-exportModel", "display": "Export Model",
+        "required": [{"name": "filepath", "type": "filepath", "values": []},
+                     {"name": "filepath", "type": "filepath", "values": []}],
+        "optional": [{"name": "xml_file", "type": "filepath", "values": []}],
+    }
+    ndef = command_node_def(cmd_def)
+    names = [s.name for s in ndef.sockets if not s.is_exec]
+    assert names == ["filepath", "filepath_2", "xml_file"]
+    assert len(names) == len(set(names))
+
+
+def test_build_launch_tokens_resolves_duplicate_named_inputs_independently():
+    from core.graph_model import GraphModel, NodeModel, ConnectionModel
+    from core.chain_execution import build_exec_chain, build_launch_tokens
+    cmd_def = {
+        "command": "-exportModel", "display": "Export Model",
+        "required": [{"name": "filepath", "type": "filepath", "values": []},
+                     {"name": "filepath", "type": "filepath", "values": []}],
+        "optional": [],
+    }
+    graph = GraphModel(
+        nodes=[
+            NodeModel(uid="start", node_type="StartNode", x=0, y=0),
+            NodeModel(uid="cmd", node_type="CommandNode", x=100, y=0, cmd_def=cmd_def),
+            NodeModel(uid="a", node_type="StringParamNode", x=-100, y=0,
+                      socket_values={"value_out": "C:/first.obj"}),
+            NodeModel(uid="b", node_type="StringParamNode", x=-100, y=100,
+                      socket_values={"value_out": "C:/second.obj"}),
+        ],
+        connections=[
+            ConnectionModel(src_node_uid="start", src_socket="exec_out",
+                             dst_node_uid="cmd", dst_socket="__exec_in__"),
+            ConnectionModel(src_node_uid="a", src_socket="value_out",
+                             dst_node_uid="cmd", dst_socket="filepath"),
+            ConnectionModel(src_node_uid="b", src_socket="value_out",
+                             dst_node_uid="cmd", dst_socket="filepath_2"),
+        ],
+    )
+    chain = build_exec_chain(graph)
+    tokens = build_launch_tokens(chain, graph)
+    assert tokens[-2:] == ["C:/first.obj", "C:/second.obj"]
+
+
+# ── param type inference: axis suffix vs. lookalike words ──────────────────────
+
+def test_infer_param_type_distinguishes_real_axis_from_lookalike_words():
+    from core.rc_documentation_extractor import _infer_param_type
+    assert _infer_param_type("x") == "float"
+    assert _infer_param_type("offsetX") == "float"
+    assert _infer_param_type("rotateX") == "float"
+    # "index"/"box.rsbox" end in a bare lowercase 'x' too, but aren't axes.
+    assert _infer_param_type("index") == "integer"
+    assert _infer_param_type("box.rsbox") == "filepath"
+    assert _infer_param_type("width") == "integer"
+    assert _infer_param_type("height") == "integer"
+
+
+# ── named vector grouping: yaw/pitch/roll folds like x/y/z, independently ──────
+
+def test_yaw_pitch_roll_collapses_into_its_own_vector_distinct_from_xyz():
+    from core.node_blueprint import group_xyz_params
+    params = [
+        {"name": "x", "type": "float", "values": []},
+        {"name": "y", "type": "float", "values": []},
+        {"name": "z", "type": "float", "values": []},
+        {"name": "yaw", "type": "float", "values": []},
+        {"name": "pitch", "type": "float", "values": []},
+        {"name": "roll", "type": "float", "values": []},
+    ]
+    grouped = group_xyz_params(params)
+    assert [g["name"] for g in grouped] == ["XYZ", "yaw_pitch_roll"]
+    assert grouped[1]["label"] == "Yaw,Pitch,Roll"
+    assert grouped[1]["type"] == "float3"
+    # Expanding one must not disturb the other, and each must round-trip
+    # back to its own collapsed group via the same key it was expanded with.
+    expanded = group_xyz_params(params, {"yaw_pitch_roll"})
+    assert [g["name"] for g in expanded] == ["XYZ", "yaw", "pitch", "roll"]
+    assert all(g["vector_base"] == "yaw_pitch_roll" for g in expanded[1:])
+
+
+def test_expanded_axis_vector_propagates_base_to_every_member():
+    from core.node_blueprint import group_xyz_params
+    params = [
+        {"name": "offsetX", "type": "float", "values": []},
+        {"name": "offsetY", "type": "float", "values": []},
+        {"name": "offsetZ", "type": "float", "values": []},
+    ]
+    collapsed = group_xyz_params(params)
+    assert collapsed[0]["vector_base"] == "offset"
+    expanded = group_xyz_params(params, {collapsed[0]["vector_base"]})
+    assert [p["name"] for p in expanded] == ["offsetX", "offsetY", "offsetZ"]
+    assert all(p["vector_base"] == "offset" for p in expanded)

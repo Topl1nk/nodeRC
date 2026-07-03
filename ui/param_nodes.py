@@ -643,6 +643,7 @@ class EnumParamNode(ParamNode):
             # stretch far enough to contain it and the combobox visibly
             # spills out past the node's own border.
             extra_rows=1.0,
+            plain_title=param_name,
         )
         super().__init__(node_def)
 
@@ -796,6 +797,7 @@ class PathParamNode(ParamNode):
             ],
             width=260,
             has_footer=False,
+            plain_title=param_name,
         )
         super().__init__(node_def)
 

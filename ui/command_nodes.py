@@ -89,7 +89,10 @@ class CommandNode(MetaNode):
         super().__init__(command_node_def(cmd_def, self.expanded_vectors))
 
     def serialize_payload(self) -> dict:
-        return {"cmd_def": self.cmd_def}
+        payload = {"cmd_def": self.cmd_def}
+        if self.expanded_vectors:
+            payload["expanded_vectors"] = sorted(self.expanded_vectors)
+        return payload
 
     def toggle_vector_expansion(self, base_name: str):
         self.expanded_vectors.symmetric_difference_update({base_name})

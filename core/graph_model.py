@@ -39,6 +39,8 @@ class NodeModel:
         d: dict = {"id": self.uid, "x": self.x, "y": self.y, "type": self.node_type}
         if self.node_type == "CommandNode" and self.cmd_def is not None:
             d["cmd_def"] = self.cmd_def
+            if self.expanded_vectors:
+                d["expanded_vectors"] = sorted(self.expanded_vectors)
         if self.node_type.endswith("ParamNode") or self.node_type == "ParamNode":
             if self.creation_data is not None:
                 d["creation_data"] = self.creation_data
@@ -65,6 +67,7 @@ class NodeModel:
             creation_data=record.get("creation_data"),
             cmd_def=record.get("cmd_def"),
             current_value=record.get("current_value"),
+            expanded_vectors=set(record["expanded_vectors"]) if record.get("expanded_vectors") else None,
         )
 
 

@@ -22,7 +22,7 @@ import os
 import re
 import json
 import logging
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from configuration import RC_HELP_HTML, COMMAND_DB_JSON
 
@@ -80,6 +80,19 @@ def _split_param_tokens(text: str) -> List[str]:
 
 # ── Type inference ─────────────────────────────────────────────────────────────
 
+def _is_axis_token(param_token: str) -> bool:
+    """True only for a genuine coordinate-axis parameter: the bare letter
+    ('x') or a compound name ending in a capitalized axis letter ('offsetX',
+    'rotateX', 'atX') — never a word that merely happens to end in that
+    letter ('index', 'box.rsbox'). Checked on the original casing: RC's docs
+    always capitalize the axis suffix on a compound name, so a *lowercase*
+    trailing x/y/z is never one.
+    """
+    if param_token.lower() in ("x", "y", "z"):
+        return True
+    return len(param_token) > 1 and param_token[-1] in "XYZ" and param_token[-2].islower()
+
+
 def _infer_param_type(param_token: str) -> str:
     lower = param_token.lower()
     if "|" in lower:
@@ -91,27 +104,33 @@ def _infer_param_type(param_token: str) -> str:
         if any(ext in lower for ext in [".xml", "file", "path", "folder", "dir", "list"]):
             return "filepath"
         return "enum"
-        
+
     if lower in ("true", "false"):
         return "bool"
     if re.match(r'^-?\d+$', param_token):
         return "integer"
+    if _is_axis_token(param_token):
+        return "float"
     if any(lower.endswith(x) or lower == x for x in (
-        "x", "y", "z", "distance", "focallength", "yaw", "pitch", "roll", 
-        "offsetx", "offsety", "offsetz", "movex", "movey", "movez",
-        "scalex", "scaley", "scalez", "errorvalue", "heightvalue",
-        "upx", "upy", "upz", "step", "axis", "number", "size"
+        "distance", "focallength", "yaw", "pitch", "roll",
+        "errorvalue", "heightvalue", "step", "axis", "number", "size"
     )):
         return "float"
     if any(lower.endswith(x) or lower == x for x in (
-        "count", "length", "index", "threshold"
+        "count", "length", "index", "threshold", "width", "height",
     )):
         return "integer"
     if any(lower.endswith(x) or lower == x for x in (
         ".xml", ".rcproj", ".rsproj", ".abc", ".obj", ".las", ".laz",
-        ".rscmd", ".rsbox", ".rsalign", ".cmi",
+        ".rscmd", ".rsbox", ".rsalign", ".cmi", ".rcconfig", ".rclicense",
         "file", "filepath", "rsboxfile", "rsorthofile", "filename", "file path",
-        "xmlfilepath", "cpmfilename", "flfilename", "gcpfilename", "orthoname", "modelname", "shapename", "contoursname", "crosssectionsname", "layername"
+        "xmlfilepath", "cpmfilename", "flfilename", "gcpfilename",
+        # NOT here: "modelName", "orthoName", "shapeName", "crossSectionsName",
+        # "contoursName", "layerName" — every one of their occurrences in RC's
+        # docs (checked all 11) names an item *already in the project* for
+        # select/rename/duplicate to act on, never a path on disk. A token
+        # only earns "filepath" by containing an actual file/path word itself
+        # (".xml", "File", "Path", ...); bare "...Name" is an identifier.
     )):
         return "filepath"
     if any(lower.endswith(x) or lower == x for x in (
@@ -124,23 +143,92 @@ def _infer_param_type(param_token: str) -> str:
     return "string"
 
 
+_IDENTIFIER_RE = re.compile(r'^[A-Za-z][A-Za-z0-9]*$')
+
+
+def _readable_name(raw_token: str) -> str:
+    """A doc token turned into a snake_case identifier: 'rsorthoFile' → 'rsortho_file'.
+
+    Pre-splits an acronym run directly abutting a lowercase word ('XMLfilePath',
+    a docs typo missing the capital that would normally mark the new word) —
+    split_camel_case's own heuristic has no capital to anchor the boundary on
+    there and garbles it ('xm_lfile_path') instead of 'xml_file_path'. Non-
+    identifier characters ('imagePath|regexp', a docs cell describing two
+    accepted formats in one token) collapse to '_' rather than leaking
+    through into the socket's name.
+    """
+    normalized = re.sub(r'([A-Z]{2,})([a-z])', r'\1_\2', raw_token)
+    readable = split_camel_case(normalized).lower().replace(" ", "_")
+    return re.sub(r'[^a-z0-9_]+', '_', readable).strip('_')
+
+
+def _enum_choice_name(raw_token: str) -> str:
+    """A two-option enum's own values, joined, when they read as plain words
+    ('origin|center' → 'origin_center') — falls back to 'choice' for anything
+    with a wildcard/instance-name option ('instanceName|*') that wouldn't make
+    a sensible identifier, or a join so long ('recoverAutosave|deleteAutosave')
+    it would be less readable than the generic name."""
+    options = [v.strip() for v in raw_token.split("|") if v.strip()]
+    if len(options) == 2 and all(_IDENTIFIER_RE.match(o) for o in options):
+        joined = "_".join(o.lower() for o in options)
+        if len(joined) <= 24:
+            return joined
+    return "choice"
+
+
+# A one-extension file type is more recognizable as its literal extension
+# (".xml") than a spelled-out word ("xml_file") — the connection-key `name`
+# stays a plain identifier, the `label` is what the user actually reads.
+# Matched as a bare substring so it catches both a literally-dotted doc token
+# ("component.rsalign") and a compound camelCase one with no dot at all
+# ("rsorthoFile", "XMLfilePath") — RC's docs use both forms for the exact
+# same file kind, inconsistently, even within one command's own param list.
+# Order matters only in that longer/more specific roots should be checked
+# before anything they could be a substring of; none currently overlap.
+_KNOWN_FILE_KINDS: Tuple[Tuple[str, str, str], ...] = (
+    ("xml",        "xml_file",      ".xml"),
+    ("rscmd",      "command_file",  ".rscmd"),
+    ("rcconfig",   "settings_file", ".rcconfig"),
+    ("rsortho",    "rsortho_file",  ".rsortho"),
+    ("rsbox",      "rsbox_file",    ".rsbox"),
+    ("rsalign",    "rsalign_file",  ".rsalign"),
+    ("rclicense",  "license_file",  ".rclicense"),
+)
+
+
 def _build_param_record(raw_token: str) -> dict:
     ptype = _infer_param_type(raw_token)
     name = raw_token
     lower_name = name.lower()
-    
-    # Semantic Renaming
+
+    # Semantic renaming: known filename/path patterns get a fixed, well-known
+    # name; anything else keeps its own doc-token identity (as a readable
+    # snake_case label) instead of collapsing every same-typed param onto one
+    # bare word. RC's own docs often give two same-typed params of a single
+    # command genuinely distinct tokens (-exportModel's "modelName fileName",
+    # -exportReport's "outputFileName templateFileName") that a blanket
+    # rename would otherwise throw away — leaving both inputs on the node
+    # identically named and impossible to tell apart without opening the
+    # docs. Any pair still left generic after this (e.g. two bare booleans
+    # with no name in the docs at all) gets a numeric suffix downstream, in
+    # core.node_blueprint.dedupe_param_name.
+    label = None
     if ptype == "filepath":
-        if ".xml" in lower_name: name = "xml_file"
-        elif ".rsproj" in lower_name or ".rcproj" in lower_name: name = "project_file"
-        elif ".rscmd" in lower_name: name = "command_file"
+        known = next(((n, l) for root, n, l in _KNOWN_FILE_KINDS if root in lower_name), None)
+        if known:
+            name, label = known
+        elif ".rsproj" in lower_name or ".rcproj" in lower_name:
+            # Two different extensions share one concept — a single compact
+            # ".rsproj" label would misname a .rcproj instance and vice versa.
+            name = "project_file"
         elif "list" in lower_name: name = "list_file"
         elif "folder" in lower_name or "dir" in lower_name:
             name = "dirpath"
             ptype = "dirpath"
-        else: name = "filepath"
+        else:
+            name = _readable_name(raw_token)
     elif ptype == "dirpath":
-        name = "dirpath"
+        name = _readable_name(raw_token)
     elif ptype == "bool":
         name = "boolean"
     elif ptype == "keyvalue":
@@ -149,13 +237,16 @@ def _build_param_record(raw_token: str) -> dict:
         if "union" in lower_name and "sub" in lower_name:
             name = "selection_mode"
         else:
-            name = "choice"
+            name = _enum_choice_name(raw_token)
 
-    return {
+    record = {
         "name":   name,
         "type":   ptype,
         "values": [v.strip() for v in raw_token.split("|")] if ptype in ("enum", "enum_int") else [],
     }
+    if label:
+        record["label"] = label
+    return record
 
 
 # ── HTML parsing ───────────────────────────────────────────────────────────────
@@ -227,6 +318,54 @@ def _extract_categories(soup: BeautifulSoup) -> CommandCategoryTree:
     return categories
 
 
+# ── Undocumented commands ────────────────────────────────────────────────────
+#
+# Real, working CLI flags that Epic's own sample scripts use but that never
+# made it into allcommands.htm's table (confirmed absent from the shipped
+# docs, not a parsing gap — grepping the raw HTML for either name finds
+# nothing). Curated by hand here instead of silently missing from the
+# catalog, so a regen from HTML doesn't quietly drop them again.
+
+def _manual_command(command: str, display: str, section: str, subsection: str,
+                    required: List[str] = (), optional: List[str] = (),
+                    description: str = "") -> dict:
+    words = display.split()
+    return {
+        "command":     command,
+        "display":     display,
+        "action_word": words[0] if words else "",
+        "action":      command_action_word(command),
+        "required":    [_build_param_record(p) for p in required],
+        "optional":    [_build_param_record(p) for p in optional],
+        "section":     section,
+        "subsection":  subsection,
+        "description": description,
+    }
+
+
+def _add_undocumented_commands(categories: CommandCategoryTree) -> None:
+    extra = [
+        _manual_command(
+            "-importLicense", "Import License",
+            "Settings' and Error-handling Commands", None,
+            required=["licenseFile.rclicense"],
+            description="Import a per-photogroup PPI (pay-per-input) license file, "
+                        "consumed by the sample dataset it was issued for.",
+        ),
+        _manual_command(
+            "-exportDepthAndMask", "Export Depth And Mask",
+            "Project and Images", "Commands for Selected Images",
+            required=["maskSettings.xml"],
+            description="Export a depth map and mask for the selected images against "
+                        "the current model, using the given export settings.",
+        ),
+    ]
+    for cmd in extra:
+        section = categories.setdefault(cmd["section"], {})
+        subsection = cmd["subsection"] or "__root__"
+        section.setdefault(subsection, []).append(cmd)
+
+
 # ── Writers ────────────────────────────────────────────────────────────────────
 
 def _write_json_database(categories: CommandCategoryTree, path: str) -> int:
@@ -257,6 +396,8 @@ def rebuild_command_database_from_html(
     if not categories:
         _logger.warning("No commands found in documentation.")
         return False
+
+    _add_undocumented_commands(categories)
 
     n_json = _write_json_database(categories, json_output)
     _logger.info("%d commands successfully extracted to %s", n_json, json_output)

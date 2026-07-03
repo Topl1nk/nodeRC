@@ -8,11 +8,11 @@ Operates entirely on GraphModel — no Qt or ui imports.
 from __future__ import annotations
 
 import subprocess
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from configuration import RC_EXECUTABLE, VECTOR_PARAM_TYPES
 from core.graph_model import GraphModel, NodeModel
-from core.node_blueprint import group_xyz_params
+from core.node_blueprint import dedupe_param_name, group_xyz_params
 
 
 def build_exec_chain(graph: GraphModel) -> Optional[List[NodeModel]]:
@@ -71,9 +71,11 @@ def build_launch_tokens(chain: List[NodeModel],
             continue
         tokens.append(node.cmd_def["command"])
         expanded = node.expanded_vectors or set()
+        seen: Dict[str, int] = {}
         for key in ("required", "optional"):
             for p in group_xyz_params(node.cmd_def.get(key, []), expanded):
-                name  = p if isinstance(p, str) else p["name"]
+                base_name = p if isinstance(p, str) else p["name"]
+                name  = dedupe_param_name(base_name, seen)
                 ptype = "string" if isinstance(p, str) else p.get("type", "string")
                 value = _resolve_param_value(graph, node, name)
                 if not value:

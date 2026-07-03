@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (
     QToolButton, QStyle, QMenu, QPushButton,
 )
 from PyQt5.QtGui import (
-    QPen, QBrush, QColor, QPainterPath, QFont, QPainter, QPolygonF,
+    QPen, QBrush, QColor, QPainterPath, QFont, QFontMetrics, QPainter, QPolygonF,
     QCursor,
 )
 from PyQt5.QtCore import QRectF, Qt, QPointF, QTimer
@@ -34,7 +34,7 @@ from configuration import (
     VECTOR_COLLAPSE_GLYPH, VECTOR_EXPAND_GLYPH,
     NODE_SELECTION_OVERLAY_RGBA, NODE_SELECTION_OVERLAY_Z, NODE_SOCKET_Z,
     CONNECTION_Z,
-    UI_FONT_FAMILY, NODE_LABEL_FONT_SIZE,
+    UI_FONT_FAMILY, NODE_LABEL_FONT_SIZE, NODE_RENAME_FONT_SIZE,
     TINT_BODY_DARKEN, TINT_TITLE_LUMINANCE_THRESHOLD,
     PARAM_NODE_HEADER_FROM_SOCKET,
 )
@@ -248,9 +248,8 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         self._selection_overlay = _SelectionOverlay(self)
 
         self.title_item = _EditableTitleItem(self)
-        self.title_item.setHtml(d.title)
         self.title_item.setDefaultTextColor(QColor("white"))
-        self._center_title()
+        self._set_title_text(d.plain_title)
 
         for socket_def in d.sockets:
             socket = SocketItem(socket_def, socket_def.row, d, self)
@@ -304,6 +303,23 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
             (NODE_HEADER_HEIGHT - text_h) / 2.0,
         )
 
+    def _set_title_text(self, text: str):
+        """Set the header title, eliding it (with the full text as a tooltip)
+        if it would otherwise overflow the node's fixed width.
+
+        Why: the title is plain QGraphicsTextItem HTML with no wrap/clip of
+        its own, so an unbounded long one paints straight through the node's
+        right edge and over whatever sits next to it — this is the single
+        place every title (initial build and rename) goes through, so no
+        node type can reintroduce the overflow by skipping it.
+        """
+        max_width = self.node_def.width - NODE_HORIZONTAL_PAD * 2
+        font = QFont(UI_FONT_FAMILY, NODE_RENAME_FONT_SIZE, QFont.Bold)
+        elided = QFontMetrics(font).elidedText(text, Qt.ElideRight, max_width)
+        self.title_item.setHtml(html_title(elided))
+        self.setToolTip(text if elided != text else "")
+        self._center_title()
+
     # ── In-place rename ───────────────────────────────────────────────────────
 
     def _commit_title(self, name: str):
@@ -314,8 +330,7 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         self._apply_title(backup)
 
     def _apply_title(self, text: str):
-        self.title_item.setHtml(html_title(text))
-        self._center_title()
+        self._set_title_text(text)
         # Restore the tint-aware title colour _begin_rename forced to the edit
         # colour. The picked colour family — or default text colour when there is
         # no override — decides whether the title reads dark or light.
