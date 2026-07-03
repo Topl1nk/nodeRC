@@ -18,9 +18,9 @@ from PyQt5.QtGui import QKeyEvent
 from PyQt5.QtCore import QEvent
 
 from ui.editor_window import NodeEditorWindow
-from ui.graph_items import MetaNode, GroupFrameItem, Connection, InsetFillCheckBox
-from ui.param_nodes import ParamNode, StringParamNode
-from ui.command_nodes import CommandNode, StartNode
+from ui.graph_items import GroupFrameItem
+from ui.param_nodes import StringParamNode
+from ui.command_nodes import StartNode
 from ui.theme import brightened_for_canvas, relative_luminance
 from core.graph_serialization import serialize_graph
 import configuration as cfg
@@ -430,7 +430,7 @@ def test_color_picker_preset_swatches_have_white_hover_border():
 
 def test_only_header_does_not_paint_outer_border(window):
     from PyQt5.QtWidgets import QStyleOptionGraphicsItem
-    from PyQt5.QtGui import QImage, QPainter, QColor as _QC
+    from PyQt5.QtGui import QImage, QPainter
     node = _param(window)
     node.set_color("#ff0000", only_header=True, record_undo=False)
     img = QImage(260, 140, QImage.Format_ARGB32); img.fill(0)
@@ -471,7 +471,6 @@ def test_clicking_frame_title_text_picks_frame_not_title(window):
 
 
 def test_title_becomes_clickable_during_rename(window):
-    from PyQt5.QtCore import QPointF
     frame = GroupFrameItem(QRectF(0, 0, 200, 150), title="G")
     window.scene.addItem(frame)
     # boundingRect() always reports the title's real paint area (needed so the
@@ -609,7 +608,7 @@ def test_frame_header_click_picks_frame_over_overlapping_node(window):
     # to the node instead. The scene briefly lifts the frame's Z before super()
     # routes the press, so the frame becomes the click target.
     from PyQt5.QtGui import QTransform
-    n = _param(window, x=100, y=30)
+    _param(window, x=100, y=30)  # node in the scene, overlapping the frame header below
     frame = GroupFrameItem(QRectF(0, 0, 260, 200), title="F")
     frame.setPos(60, 20)
     window.scene.addItem(frame)
@@ -735,7 +734,6 @@ def test_combo_popup_hides_overlay_and_restores_on_close(window):
 
 
 def test_title_color_after_rename_tracks_color_override(window):
-    from PyQt5.QtGui import QColor
     node = _param(window)
     node.set_color("#FFFF00", record_undo=False)  # bright yellow → dark title
     node._begin_rename()
