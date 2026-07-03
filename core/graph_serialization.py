@@ -21,7 +21,7 @@ from configuration import GROUP_FRAME_DEFAULT_WIDTH, GROUP_FRAME_DEFAULT_HEIGHT
 from diagnostics import log_and_explain
 from core.graph_model import GraphModel, NodeModel, ConnectionModel, GroupModel
 from ui.graph_items import Connection, GroupFrameItem, MetaNode
-from ui.param_nodes import EnumParamNode, PARAM_NODE_TYPES, ParamNode, StringParamNode
+from ui.param_nodes import EnumParamNode, PARAM_NODE_TYPES, ParamNode, PathParamNode, StringParamNode
 from ui.command_nodes import CommandNode, StartNode
 
 
@@ -45,6 +45,10 @@ def build_param_node(creation_data: dict) -> ParamNode:
     values = creation_data.get("values", [])
     if node_class is EnumParamNode and values:
         node = node_class(name, values) if name else node_class(values=values)
+    elif node_class is PathParamNode:
+        # PathParamNode always exposes both a dirpath and a filepath output —
+        # ptype tells it which one to lead with for its header/socket color.
+        node = node_class(name, param_type=ptype) if name else node_class(param_type=ptype)
     else:
         node = node_class(name) if name else node_class()
     node.creation_data = creation_data

@@ -30,6 +30,13 @@ DEFAULT_HEADER_COLOR = "#3a7cd1"
 # (e.g. String → pink, Integer → blue). Exec/command nodes keep DEFAULT_HEADER_COLOR.
 PARAM_NODE_HEADER_FROM_SOCKET = True
 NODE_SELECTED_COLOR = "#FFFFFF"
+NODE_HOVER_COLOR = "#FFFFFF"          # outline shown while the cursor is over a node, unselected
+NODE_HOVER_BORDER_WIDTH = 1.5         # thinner than the 2.0 selected border so selection still reads stronger
+# How often the view polls the real cursor position for the hover outline (ms).
+# Driven by a timer rather than mouse-move events because QGraphicsProxyWidget
+# does not reliably deliver mouse-move to the view once a focusable/editable
+# embedded widget (QLineEdit, QComboBox) is under the cursor — see view.py.
+NODE_HOVER_POLL_INTERVAL_MS = 40
 CONNECTION_SELECTED_COLOR = "#FFFFFF"
 BUTTON_TEXT_COLOR = "#FFFFFF"
 TEXT_COLOR = "#FFFFFF"
@@ -88,6 +95,10 @@ UNDO_HISTORY_LIMIT = 100  # retained editor snapshots for undo/redo
 
 # ── Node z-order ───────────────────────────────────────────────────────────────
 NODE_POPUP_Z = 100  # node z-value while its combobox popup is open — above siblings
+# StartNode's fixed resting Z: always above every regular node, including ones
+# brought to front by a drag (see NodeScene._next_node_z) — a drag-front counter
+# would need ~100k moves in one session to ever reach this.
+NODE_START_Z = 100_000.0
 
 # Child stacking inside a node, ascending. The selection wash sits above every
 # embedded widget yet below the sockets so connectors stay vivid when selected.
@@ -95,6 +106,7 @@ NODE_WIDGET_Z_BASE       = 1000  # embedded editor proxies; higher rows stack fi
 NODE_SELECTION_OVERLAY_Z = 2000
 NODE_LINKED_FIELD_Z      = 2500  # the field being linked-edited, lifted above the wash
 NODE_SOCKET_Z            = 3000
+NODE_COMBO_POPUP_PROXY_Z = 4000  # a proxy's own Z while its combobox popup is open
 
 # ── Selection highlight ────────────────────────────────────────────────────────
 # One translucent-white wash painted above the whole node (body, embedded widgets,
@@ -107,8 +119,11 @@ DWMWA_USE_IMMERSIVE_DARK_MODE = 20
 DWMWA_CAPTION_COLOR           = 35
 DWMWA_TEXT_COLOR              = 36
 
-# ── PathParamNode browse button ────────────────────────────────────────────────
-BROWSE_BTN_WIDTH = 22  # pixel width shared by the browse "…" button and drop-down area
+# ── Square button footprint ────────────────────────────────────────────────────
+# Every button-like control (browse "…", combobox drop-down, +/- toolbuttons, a
+# spinbox's combined up/down arrow area) is a square the same size as the field
+# row height — one constant instead of each matching it with its own number.
+BROWSE_BTN_WIDTH = NODE_WIDGET_HEIGHT
 
 # ── Checkbox primitive ─────────────────────────────────────────────────────────
 # The InsetFillCheckBox draws its indicator manually so the checked fill sits

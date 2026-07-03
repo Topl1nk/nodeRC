@@ -27,9 +27,10 @@ from configuration import (
     NODE_EXEC_SOCKET_HALFSIZE, NODE_PARAM_SOCKET_RADIUS,
     NODE_HORIZONTAL_PAD,
     NODE_SHADOW_OFFSET_X, NODE_SHADOW_OFFSET_Y, NODE_SHADOW_BLUR, NODE_BOUNDS_MARGIN,
-    SOCKET_HOVER_COLOR, NODE_SELECTED_COLOR, CONNECTION_SELECTED_COLOR, TEXT_COLOR,
+    SOCKET_HOVER_COLOR, NODE_SELECTED_COLOR, NODE_HOVER_COLOR, NODE_HOVER_BORDER_WIDTH,
+    CONNECTION_SELECTED_COLOR, TEXT_COLOR,
     BEZIER_CTRL_FACTOR, BEZIER_CTRL_MIN,
-    GRID_SIZE_SMALL, NODE_POPUP_Z,
+    GRID_SIZE_SMALL, NODE_POPUP_Z, NODE_COMBO_POPUP_PROXY_Z,
     VECTOR_COLLAPSE_GLYPH, VECTOR_EXPAND_GLYPH,
     NODE_SELECTION_OVERLAY_RGBA, NODE_SELECTION_OVERLAY_Z, NODE_SOCKET_Z,
     CONNECTION_Z,
@@ -42,7 +43,6 @@ from ui.theme import (
     relative_luminance, brightened_for_canvas,
     DEFAULT_WIDGET_QSS, widget_stylesheets, tinted_widget_palette,
     VECTOR_TOGGLE_QSS, CONTEXT_MENU_STYLESHEET,
-    DEFAULT_WIDGET_PALETTE,
 )
 from core.node_blueprint import NodeDef, SocketDef, html_title
 from ui.color_picker import ColorPickerPopup
@@ -50,7 +50,7 @@ from ui.color_picker import ColorPickerPopup
 # Re-exports from extracted modules — keep ``from ui.graph_items import …`` working.
 from ui.title_item import (                                          # noqa: F401
     _EditableTitleItem, RenamableTitleMixin,
-    editor_window_of, _merge_hsv_component,
+    editor_window_of, _merge_hsv_component, selected_of_type_including,
 )
 from ui.group_frame import GroupFrameItem                            # noqa: F401
 from ui.widgets import InsetFillCheckBox                             # noqa: F401
@@ -205,6 +205,7 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
 
     is_protected = False  # the single source for "bulk delete must spare this node"
     supports_plain_rename = False  # param nodes enable the generic Rename entry
+    always_on_top = False  # StartNode: never joins the drag-brings-to-front stacking order
 
     def __init__(self, node_def: NodeDef):
         super().__init__()
@@ -216,6 +217,17 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         # and embedded widgets keep their default scheme. Lets the user mark a
         # node visually without re-skinning every inner control.
         self._color_only_header: bool = False
+        # The Z this node returns to once no combo popup is open — 0 by default,
+        # bumped by NodeScene after a drag (bring-to-front), fixed high for
+        # StartNode. _refresh_selection_visuals is the only place that applies
+        # it, so a popup opening/closing can never clobber it.
+        self._resting_z: float = 0.0
+        # Set by GraphicsView's mouse-move tracking (view.py), the single place
+        # hover is computed — not by this item's own hoverEnterEvent, which
+        # never fires while the cursor is over an embedded proxy widget
+        # (QLineEdit/QComboBox/etc. quietly disable a QGraphicsProxyWidget's
+        # own hover delivery unless the embedded widget itself requests hover).
+        self._hovered = False
         self.setFlags(
             QGraphicsItem.ItemIsMovable |
             QGraphicsItem.ItemIsSelectable |
@@ -261,10 +273,17 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
                             VECTOR_COLLAPSE_GLYPH if socket_def.is_collapsed_vector
                             else VECTOR_EXPAND_GLYPH
                         )
+                        # Marks this button for _apply_widget_qss so it can tell a
+                        # vector toggle apart from a regular QToolButton without
+                        # matching on its glyph text — text-based matching is what
+                        # broke when an unrelated button (a numeric field's ▼
+                        # stepper) happened to reuse VECTOR_EXPAND_GLYPH's own
+                        # character and got recolored as a "neutral chevron"
+                        # (transparent, borderless) instead of a real button.
+                        toggle.setProperty("vectorToggle", True)
                         toggle.setStyleSheet(VECTOR_TOGGLE_QSS)
                         toggle.setCursor(Qt.PointingHandCursor)
-                        proxy = QGraphicsProxyWidget(self)
-                        proxy.setWidget(toggle)
+                        proxy = self._make_proxy(toggle)
                         proxy.setPos(label_x + label_width + 2, label_y)
                         base_name = socket_def.vector_base
                         toggle.clicked.connect(
@@ -371,11 +390,6 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
             if isinstance(child, QGraphicsProxyWidget) and child.widget():
                 self._apply_widget_qss(child.widget(), qss)
 
-    # Buttons that toggle a vector axis are visually neutral chevrons living over
-    # a socket label, not editable controls — they keep their inline glyph style
-    # regardless of any tint. Discriminate them by the actual glyph rather than
-    # by "+" / "-" text, which would also catch the Enum add/remove buttons.
-    _VECTOR_TOGGLE_GLYPHS = frozenset((VECTOR_COLLAPSE_GLYPH, VECTOR_EXPAND_GLYPH))
     # Inline separators are zero-purpose strips with maximumHeight <= this.
     _SEPARATOR_MAX_HEIGHT = 2
 
@@ -400,7 +414,7 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
             if isinstance(widget, InsetFillCheckBox):
                 widget.update_indicator_colors(qss["check_border"], qss["check_bg"])
         elif isinstance(widget, QToolButton):
-            if widget.text() in cls._VECTOR_TOGGLE_GLYPHS:
+            if widget.property("vectorToggle"):
                 widget.setStyleSheet(VECTOR_TOGGLE_QSS)
             else:
                 widget.setStyleSheet(qss["tool"])
@@ -418,16 +432,18 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         if not win:
             return
 
-        selected_nodes = [item for item in self.scene().selectedItems() if isinstance(item, MetaNode)]
-        if self not in selected_nodes:
-            selected_nodes.append(self)
+        selected_nodes = selected_of_type_including(self, MetaNode)
 
+        # Suppressed for the popup's lifetime so the wash doesn't obscure the
+        # color preview; restored via _refresh_selection_visuals() on close so
+        # it lands on whatever the real selection/linked state is by then,
+        # not a stale isSelected() snapshot.
         for node in selected_nodes:
             node._selection_overlay.setVisible(False)
 
         def on_close():
             for node in selected_nodes:
-                node._selection_overlay.setVisible(node.isSelected())
+                node._refresh_selection_visuals()
             win.push_undo_state()
 
         def apply_color_to_all(c, only_header, changed_component=None):
@@ -497,10 +513,17 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
             body_color = QColor(d.body_color)
             body_border_color = QColor(NODE_BORDER_COLOR)
 
-        painter.setPen(
-            QPen(QColor(NODE_SELECTED_COLOR), 2.0) if visually_selected
-            else QPen(body_border_color, 1.0)
-        )
+        if visually_selected:
+            border_pen = QPen(QColor(NODE_SELECTED_COLOR), 2.0)
+        elif self._hovered:
+            # This one rect spans the whole node (header included — the header
+            # fill just paints over its top portion), so a single hover pen
+            # here outlines the entire node whether the cursor is over the
+            # header or the body.
+            border_pen = QPen(QColor(NODE_HOVER_COLOR), NODE_HOVER_BORDER_WIDTH)
+        else:
+            border_pen = QPen(body_border_color, 1.0)
+        painter.setPen(border_pen)
         painter.setBrush(QBrush(body_color))
         painter.drawRect(QRectF(0, 0, d.width, d.body_height))
 
@@ -535,12 +558,89 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
             if not value:
                 if hasattr(self, '_dissolve_linked_group'):
                     self._dissolve_linked_group()
-            if hasattr(self, "_refresh_selection_visuals"):
-                self._refresh_selection_visuals()
-            else:
-                show = bool(value) and not self._has_open_combo_popup()
-                self._selection_overlay.setVisible(show)
+            self._refresh_selection_visuals()
         return super().itemChange(change, value)
+
+    def _refresh_selection_visuals(self):
+        """Recompute the selection wash and every embedded proxy's Z-order from
+        current state — the single place that decides both. ParamNode overrides
+        this to also account for the cross-node linked-editing group; every
+        other caller (combo popup open/close, color picker, itemChange) should
+        go through this method rather than touching ``_selection_overlay`` or a
+        proxy's Z-value directly.
+
+        Deliberately a full recompute rather than an incremental push/pop of a
+        stashed "original" value: with push/pop, any skipped teardown step (an
+        exception, a reentrant popup, a node torn down mid-interaction) leaves a
+        boosted Z or hidden wash stuck forever. A full recompute self-heals on
+        the very next selection/popup event because it never trusts leftover
+        state — it re-derives the answer from what is true *right now*.
+        """
+        popup_open = self._has_open_combo_popup()
+        self._selection_overlay.setVisible(self._is_visually_selected() and not popup_open)
+        self.setZValue(NODE_POPUP_Z if popup_open else self._resting_z)
+        self._resync_proxy_z()
+        self.update()
+        self._selection_overlay.update()
+
+    def _set_resting_z(self, z: float):
+        """Change the Z this node returns to once no popup is open (see
+        ``_resting_z``) and apply it immediately through the one recompute
+        that owns node Z, so a resting-Z change while a popup happens to be
+        open can't jump the node in front of its own popup.
+        """
+        self._resting_z = z
+        self._refresh_selection_visuals()
+
+    def _is_visually_selected(self) -> bool:
+        """Whether the wash should show while no popup is open. ParamNode
+        extends this to also cover the cross-node linked-editing group."""
+        return self.isSelected()
+
+    def _resync_proxy_z(self):
+        """Set every embedded proxy to its resolved Z (see ``_proxy_target_z``)."""
+        for child in self.childItems():
+            if not (isinstance(child, QGraphicsProxyWidget) and child.widget()):
+                continue
+            if not hasattr(child, '_base_z'):
+                child._base_z = child.zValue()
+            target = self._proxy_target_z(child)
+            if child.zValue() != target:
+                child.setZValue(target)
+                child.update()
+
+    def _proxy_target_z(self, proxy) -> float:
+        """Resting Z, or the popup-boost Z while this proxy's own combobox is open.
+
+        ParamNode extends this to also boost the actively linked-edited field.
+        """
+        widget = proxy.widget()
+        popup_open = isinstance(widget, NodeComboBox) and widget.popup_is_open
+        if not popup_open:
+            popup_open = any(c.popup_is_open for c in widget.findChildren(NodeComboBox))
+        return NODE_COMBO_POPUP_PROXY_Z if popup_open else proxy._base_z
+
+    def _set_hovered(self, hovered: bool):
+        """Single setter for the hover outline. Called from exactly one place:
+        GraphicsView's mouse-move tracking (view.py) — not from this item's
+        own hover events, which QGraphicsProxyWidget children make unreliable
+        (see the note by ``self._hovered`` in ``__init__``). Deriving hover
+        from one authoritative poll instead of per-item hover events sidesteps
+        that entirely instead of working around it per widget type.
+        """
+        if self._hovered == hovered:
+            return
+        self._hovered = hovered
+        self.update()
+
+    def _make_proxy(self, widget: QWidget) -> QGraphicsProxyWidget:
+        """Every embedded widget must be attached through this — the single
+        place a proxy is created, so any future proxy-level behavior can't be
+        wired differently by different node/field types.
+        """
+        proxy = QGraphicsProxyWidget(self)
+        proxy.setWidget(widget)
+        return proxy
 
     def mouseReleaseEvent(self, event):
         super().mouseReleaseEvent(event)
@@ -632,10 +732,10 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
     def _has_open_combo_popup(self) -> bool:
         for child in self.childItems():
             if isinstance(child, QGraphicsProxyWidget) and child.widget():
-                for combo in child.widget().findChildren(NodeComboBox):
-                    if combo._popup_open:
-                        return True
-                if isinstance(child.widget(), NodeComboBox) and child.widget()._popup_open:
+                widget = child.widget()
+                if isinstance(widget, NodeComboBox) and widget.popup_is_open:
+                    return True
+                if any(c.popup_is_open for c in widget.findChildren(NodeComboBox)):
                     return True
         return False
 
@@ -736,54 +836,36 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
 
 
 class NodeComboBox(QComboBox):
-    _popup_open = False
+    """Note: deliberately no hand-maintained "is my popup open" flag — see
+    ``popup_is_open``. A flag that has to be set on show and unset on hide is
+    exactly the kind of paired state that leaks when a step gets skipped
+    (an exception, a reentrant popup, a node torn down mid-interaction);
+    asking Qt directly cannot go stale.
+    """
 
     def __init__(self, node: MetaNode):
         super().__init__()
         self.node = node
 
-    def _find_proxy(self):
-        """Walk up the widget parent chain to find the QGraphicsProxyWidget."""
-        w = self
-        while w is not None:
-            proxy = w.graphicsProxyWidget()
-            if proxy is not None:
-                return proxy
-            w = w.parentWidget()
-        return None
+    @property
+    def popup_is_open(self) -> bool:
+        view = self.view()
+        return view is not None and view.isVisible()
 
     def showPopup(self):
-        self._popup_open = True
-        try:
-            self.node.setZValue(NODE_POPUP_Z)
-            proxy = self._find_proxy()
-            if proxy is not None:
-                self._original_proxy_z = proxy.zValue()
-                proxy.setZValue(4000)
-            overlay = getattr(self.node, "_selection_overlay", None)
-            if overlay is not None:
-                overlay.setVisible(False)
-        except RuntimeError:
-            pass
         super().showPopup()
+        self._safe_refresh()
 
     def hidePopup(self):
         super().hidePopup()
-        self._popup_open = False
-        try:
-            self.node.setZValue(0)
-            proxy = self._find_proxy()
-            if proxy is not None and hasattr(self, '_original_proxy_z'):
-                proxy.setZValue(self._original_proxy_z)
-                delattr(self, '_original_proxy_z')
-        except RuntimeError:
-            pass
-        QTimer.singleShot(0, self._restore_overlay)
+        self._safe_refresh()
+        # Belt-and-suspenders: on some platforms popup teardown can still be
+        # mid-flight when hidePopup() returns, so re-settle once the event
+        # loop catches up.
+        QTimer.singleShot(0, self._safe_refresh)
 
-    def _restore_overlay(self):
+    def _safe_refresh(self):
         try:
-            overlay = getattr(self.node, "_selection_overlay", None)
-            if overlay is not None:
-                overlay.setVisible(self.node.isSelected())
+            self.node._refresh_selection_visuals()
         except RuntimeError:
             pass

@@ -471,16 +471,22 @@ def test_clicking_frame_title_text_picks_frame_not_title(window):
 
 
 def test_title_becomes_clickable_during_rename(window):
+    from PyQt5.QtCore import QPointF
     frame = GroupFrameItem(QRectF(0, 0, 200, 150), title="G")
     window.scene.addItem(frame)
-    frame._begin_rename()
-    # During edit the title regains its bounding rect + accepted buttons so the
-    # user can position the cursor / select text by clicking it.
+    # boundingRect() always reports the title's real paint area (needed so the
+    # scene knows to repaint it — see title_item.py) — only hit-testing
+    # (contains()/shape()) and event delivery (acceptedMouseButtons) toggle
+    # with edit mode, so those are what this test locks in.
     assert not frame.title_item.boundingRect().isEmpty()
+    frame._begin_rename()
+    center = frame.title_item.boundingRect().center()
+    assert frame.title_item.contains(center)
     assert int(frame.title_item.acceptedMouseButtons()) != 0
     frame._end_rename()
-    assert frame.title_item.boundingRect().isEmpty()
+    assert not frame.title_item.contains(center)
     assert int(frame.title_item.acceptedMouseButtons()) == 0
+    assert not frame.title_item.boundingRect().isEmpty()
 
 
 def test_group_frame_paint_strips_default_selection_dashes(window):

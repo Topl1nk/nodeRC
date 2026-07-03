@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from PyQt5.QtWidgets import QGraphicsTextItem
 from PyQt5.QtGui import QColor, QPainterPath, QFont, QTextCursor
-from PyQt5.QtCore import QRectF, Qt
+from PyQt5.QtCore import Qt
 
 from configuration import (
     UI_FONT_FAMILY, NODE_RENAME_FONT_SIZE, TEXT_COLOR,
@@ -19,6 +19,19 @@ def editor_window_of(item):
     """The editor window owning a scene item, or None when it is unparented."""
     scene = item.scene()
     return getattr(scene, "nodeEditorWindow", None) if scene else None
+
+
+def selected_of_type_including(item, cls):
+    """Scene's currently-selected items of ``cls``, guaranteed to include ``item``.
+
+    Shared by MetaNode and GroupFrameItem's color pickers so a multi-select
+    color change always covers the item the user right-clicked, even if it
+    wasn't part of the selection.
+    """
+    selected = [other for other in item.scene().selectedItems() if isinstance(other, cls)]
+    if item not in selected:
+        selected.append(item)
+    return selected
 
 
 def _merge_hsv_component(current_hex: str, picked_hex: str,
@@ -62,14 +75,26 @@ class _EditableTitleItem(QGraphicsTextItem):
         self.prepareGeometryChange()
 
     def shape(self):
+        # Empty while not editing so clicks/double-clicks pass through to the
+        # node body instead of hit-testing the title.
         if not self._editing:
             return QPainterPath()
         return super().shape()
 
-    def boundingRect(self):
+    def contains(self, point):
+        # Point hit-testing (itemAt, scene picking) goes through contains(),
+        # not through boundingRect() — so this, not boundingRect(), is what
+        # makes clicks/double-clicks pass through to the node body while not
+        # editing. boundingRect() is deliberately left reporting the item's
+        # real paint area (see below): it's what the scene uses to know which
+        # screen region needs repainting, and a connection wire passing close
+        # to the header would trigger a partial repaint of just its own area —
+        # if the title claimed an empty bounding rect, the scene wouldn't know
+        # the title also lives there and would skip repainting it, leaving
+        # stale/erased text until something else forced a full node repaint.
         if not self._editing:
-            return QRectF()
-        return super().boundingRect()
+            return False
+        return super().contains(point)
 
     def paint(self, painter, option, widget=None):
         if self.textInteractionFlags() != Qt.NoTextInteraction:

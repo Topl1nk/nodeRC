@@ -31,6 +31,10 @@ class NodeScene(QGraphicsScene):
         self._drag_active = False
         self._drag_original_dest: Optional[SocketItem] = None
         self._rect_recalc_pending = False
+        # Bring-to-front counter for nodes just dragged (see _restore_dragged_z):
+        # each drag hands out the next value, so the most recently moved node
+        # always reads as "on top" of siblings that haven't moved since.
+        self._next_node_z = 1.0
         self.setSceneRect(SCENE_INITIAL_X, SCENE_INITIAL_Y, SCENE_INITIAL_WIDTH, SCENE_INITIAL_HEIGHT)
         self.setBackgroundBrush(QColor(CANVAS_BACKGROUND_COLOR))
         self.grid_visible = True
@@ -187,12 +191,24 @@ class NodeScene(QGraphicsScene):
                 node._original_z = node.zValue()
             node.setZValue(NODE_DRAG_Z)
 
-    def _restore_dragged_z(self):
-        # Why: Reverts Z lift post-drag and clears local group memberships.
+    def _restore_dragged_z(self, bring_to_front: bool = False):
+        """Reverts the drag-time Z lift. When the drag actually moved
+        something (``bring_to_front``), the node keeps a freshly-assigned,
+        permanently higher resting Z instead of reverting to what it had
+        before — it now reads as on top of siblings that haven't moved since,
+        the way raising a window works elsewhere. A node opting out via
+        ``always_on_top`` (the StartNode) is left exactly where it is and
+        never joins this stacking order.
+        """
         for node in getattr(self, '_dragged_nodes', []):
+            original_z = getattr(node, '_original_z', 0.0)
             if hasattr(node, '_original_z'):
-                node.setZValue(node._original_z)
                 del node._original_z
+            if bring_to_front and not getattr(node, 'always_on_top', False):
+                node._set_resting_z(self._next_node_z)
+                self._next_node_z += 1
+            else:
+                node._set_resting_z(original_z)
         self._dragged_nodes = []
         for item in self.items():
             if isinstance(item, GroupFrameItem):
@@ -223,6 +239,7 @@ class NodeScene(QGraphicsScene):
                     win.connections.remove(c)
 
     def mouseReleaseEvent(self, event):
+        moved = False
         if self._drag_active:
             target        = self._find_compatible_socket(event.scenePos())
             source_socket = self._drag_source
@@ -247,7 +264,6 @@ class NodeScene(QGraphicsScene):
                     )
         else:
             super().mouseReleaseEvent(event)
-            moved = False
             if hasattr(self, "_drag_start_positions"):
                 for item, start_pos in self._drag_start_positions.items():
                     if item.scene() and item.pos() != start_pos:
@@ -256,7 +272,7 @@ class NodeScene(QGraphicsScene):
                 self._drag_start_positions = {}
             if moved and self.nodeEditorWindow:
                 self.nodeEditorWindow.push_undo_state()
-        self._restore_dragged_z()
+        self._restore_dragged_z(bring_to_front=moved)
 
     def _find_compatible_socket(self, scene_pos: QPointF) -> Optional[SocketItem]:
         """

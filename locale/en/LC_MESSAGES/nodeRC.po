@@ -276,13 +276,13 @@ msgstr "[E] Enum"
 msgid "param_enum_new_placeholder"
 msgstr "new item..."
 
-#. [F/F] Load
+#. [F/F/T] Load
 msgid "param_path_title"
-msgstr "[F/F] Load"
+msgstr "[F/F/T] Load"
 
-#. dirpath...
+#. folder...
 msgid "param_path_dir_placeholder"
-msgstr "dirpath..."
+msgstr "folder..."
 
 #. filename...
 msgid "param_path_file_placeholder"
