@@ -31,7 +31,7 @@ from ui.theme import (
 )
 from ui.title_item import (
     _EditableTitleItem, RenamableTitleMixin,
-    editor_window_of, _merge_hsv_component,
+    editor_window_of, _merge_hsv_component, selected_of_type_including,
 )
 from ui.color_picker import ColorPickerPopup
 
@@ -116,10 +116,7 @@ class GroupFrameItem(RenamableTitleMixin, QGraphicsRectItem):
         if not win:
             return
 
-        selected_frames = [item for item in self.scene().selectedItems()
-                           if isinstance(item, GroupFrameItem)]
-        if self not in selected_frames:
-            selected_frames.append(self)
+        selected_frames = selected_of_type_including(self, GroupFrameItem)
 
         def on_close():
             win.push_undo_state()

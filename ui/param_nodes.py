@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 from PyQt5.QtWidgets import (
     QAbstractButton, QAbstractSpinBox, QApplication, QCheckBox, QComboBox,
     QFileDialog, QGraphicsItem, QGraphicsProxyWidget, QHBoxLayout, QLabel,
-    QLineEdit, QSpinBox, QToolButton, QWidget,
+    QLineEdit, QSpinBox, QToolButton, QVBoxLayout, QWidget,
 )
 from PyQt5.QtGui import QColor, QDoubleValidator, QPalette
 from PyQt5.QtCore import QEvent, Qt, QTimer
@@ -105,11 +105,18 @@ class ParamNode(MetaNode):
         return w
 
     def _make_spinbox(self, lo: int = -999999, hi: int = 999999,
-                      value: int = 0) -> QSpinBox:
+                      value: int = 0, *, fixed_width: bool = True) -> QSpinBox:
         w = QSpinBox()
+        # Native up/down arrows are QStyle sub-controls painted *inside* the
+        # widget's own border, overlapping its right edge instead of living in
+        # their own space — the opposite of every other button in this app.
+        # _make_stepper() below builds the replacement: two separate square
+        # buttons that sit outside the field, the same way Enum's +/- do.
+        w.setButtonSymbols(QAbstractSpinBox.NoButtons)
         w.setRange(lo, hi)
         w.setValue(value)
-        w.setFixedWidth(self._widget_width())
+        if fixed_width:
+            w.setFixedWidth(self._widget_width())
         w.setFixedHeight(NODE_WIDGET_HEIGHT)
         w.setStyleSheet(SPINBOX_QSS)
         pal = w.palette()
@@ -134,9 +141,43 @@ class ParamNode(MetaNode):
             w.clicked.connect(callback)
         return w
 
+    def _make_stepper(self, on_up, on_down) -> QWidget:
+        """A right-hand up/down button pair, each in its own half-height
+        square slot stacked to form the same BROWSE_BTN_WIDTH square
+        footprint as any standalone button — the replacement for a
+        QSpinBox's native arrows (see _make_spinbox)."""
+        wrapper = QWidget()
+        wrapper.setFixedSize(BROWSE_BTN_WIDTH, NODE_WIDGET_HEIGHT)
+        wrapper.setStyleSheet("background:transparent;")
+        layout = QVBoxLayout(wrapper)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        top_height = NODE_WIDGET_HEIGHT // 2
+        up = self._make_toolbtn("", on_up)
+        up.setFixedHeight(top_height)
+        up.clicked.connect(self._on_widget_user_edit)
+        down = self._make_toolbtn("", on_down)
+        down.setFixedHeight(NODE_WIDGET_HEIGHT - top_height)
+        down.clicked.connect(self._on_widget_user_edit)
+        layout.addWidget(up)
+        layout.addWidget(down)
+        return wrapper
+
+    def _row_container(self, leaves: List[QWidget]) -> QWidget:
+        """Pack widgets edge-to-edge into one full-row-width wrapper — the
+        shared shape for every compound row (a field plus its button(s))."""
+        wrapper = QWidget()
+        wrapper.setStyleSheet("background:transparent;")
+        layout = QHBoxLayout(wrapper)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        for leaf in leaves:
+            layout.addWidget(leaf)
+        wrapper.setFixedWidth(self._widget_width())
+        return wrapper
+
     def _attach_widget_at_row(self, widget: QWidget, row: int):
-        proxy = QGraphicsProxyWidget(self)
-        proxy.setWidget(widget)
+        proxy = self._make_proxy(widget)
         proxy.setPos(
             NODE_HORIZONTAL_PAD,
             NODE_HEADER_HEIGHT + row * NODE_ROW_HEIGHT + NODE_WIDGET_V_OFFSET,
@@ -146,8 +187,7 @@ class ParamNode(MetaNode):
         self._watch_field_focus(widget)
 
     def _attach_input_widget(self, widget: QWidget):
-        proxy = QGraphicsProxyWidget(self)
-        proxy.setWidget(widget)
+        proxy = self._make_proxy(widget)
         param_rows = [s.row for s in self.node_def.sockets if not s.is_exec]
         rows = max(param_rows, default=-1) + 1
         proxy.setPos(
@@ -275,7 +315,7 @@ class ParamNode(MetaNode):
         if set(win._linked_group) == set(group):
             for node in win._linked_group:
                 if node.scene():
-                    node._adjust_proxy_z_values()
+                    node._resync_proxy_z()
             return
 
         saved_key = getattr(win, '_active_field_key', None)
@@ -311,35 +351,23 @@ class ParamNode(MetaNode):
                 node._refresh_selection_visuals()
         win.push_undo_state()
 
-    def _refresh_selection_visuals(self):
+    def _is_visually_selected(self) -> bool:
         win = editor_window_of(self)
         is_linked = win is not None and self in getattr(win, '_linked_group', [])
-        show = (self.isSelected() or is_linked) and not self._has_open_combo_popup()
-        self._selection_overlay.setVisible(show)
-        self.update()
-        self._adjust_proxy_z_values()
+        return self.isSelected() or is_linked
 
-    def _adjust_proxy_z_values(self):
+    def _proxy_target_z(self, proxy) -> float:
+        """Popup-boost (inherited) takes priority; otherwise boost the field
+        actively being linked-edited so it reads above the wash."""
+        base = super()._proxy_target_z(proxy)
+        if base != proxy._base_z:
+            return base
         win = editor_window_of(self)
         is_edited = win is not None and self in win._linked_group
         active_key = getattr(win, '_active_field_key', None) if is_edited else None
-
-        for child in self.childItems():
-            if isinstance(child, QGraphicsProxyWidget):
-                child_key = getattr(child, '_field_key', None)
-                if is_edited and active_key is not None and child_key == active_key:
-                    if not hasattr(child, '_original_z_value'):
-                        child._original_z_value = child.zValue()
-                    child.setZValue(NODE_LINKED_FIELD_Z)
-                    child.update()
-                else:
-                    if hasattr(child, '_original_z_value'):
-                        child.setZValue(child._original_z_value)
-                        delattr(child, '_original_z_value')
-                        child.update()
-
-        self.update()
-        self._selection_overlay.update()
+        if active_key is not None and getattr(proxy, '_field_key', None) == active_key:
+            return NODE_LINKED_FIELD_Z
+        return base
 
     def _broadcast_to_linked_peers(self):
         if ParamNode._broadcasting:
@@ -468,8 +496,7 @@ class VectorParamNode(ParamNode):
 
             cell_widget.setFixedWidth(col_w)
 
-            proxy = QGraphicsProxyWidget(self)
-            proxy.setWidget(cell_widget)
+            proxy = self._make_proxy(cell_widget)
             proxy.setPos(
                 NODE_HORIZONTAL_PAD + i * (col_w + spacing),
                 NODE_HEADER_HEIGHT + rows * NODE_ROW_HEIGHT + NODE_WIDGET_V_OFFSET,
@@ -505,7 +532,20 @@ class VectorParamNode(ParamNode):
         return " ".join(editor.text().strip() or "0.0" for editor in self._editors)
 
 
-class StringParamNode(ParamNode):
+class _SingleFieldParamNode(ParamNode):
+    """Value contract shared by every parameter node backed by one QLineEdit ``self._editor``."""
+
+    def get_value_state(self) -> Any:
+        return self._editor.text()
+
+    def set_value_state(self, val: Any):
+        self._editor.setText(str(val))
+
+    def get_value(self, socket_name: str = None) -> str:
+        return self._editor.text().strip()
+
+
+class StringParamNode(_SingleFieldParamNode):
     TYPE_ID = "string"
 
     def __init__(self, param_name=None, default=""):
@@ -516,15 +556,6 @@ class StringParamNode(ParamNode):
         self._editor.textChanged.connect(self._notify_connections_changed)
         self._editor.editingFinished.connect(self._on_widget_user_edit)
         self._attach_input_widget(self._editor)
-
-    def get_value_state(self) -> Any:
-        return self._editor.text()
-
-    def set_value_state(self, val: Any):
-        self._editor.setText(str(val))
-
-    def get_value(self, socket_name: str = None) -> str:
-        return self._editor.text().strip()
 
 
 class BoolParamNode(ParamNode):
@@ -561,10 +592,11 @@ class IntParamNode(ParamNode):
         if param_name is None:
             param_name = t("param_int_title")
         super().__init__(param_node_def(param_name, self.TYPE_ID))
-        self._spinbox = self._make_spinbox(-999999, 999999, default)
+        self._spinbox = self._make_spinbox(-999999, 999999, default, fixed_width=False)
         self._spinbox.valueChanged.connect(self._notify_connections_changed)
         self._spinbox.editingFinished.connect(self._on_widget_user_edit)
-        self._attach_input_widget(self._spinbox)
+        stepper = self._make_stepper(self._spinbox.stepUp, self._spinbox.stepDown)
+        self._attach_input_widget(self._row_container([self._spinbox, stepper]))
 
     def get_value_state(self) -> Any:
         return self._spinbox.value()
@@ -576,7 +608,7 @@ class IntParamNode(ParamNode):
         return str(self._spinbox.value())
 
 
-class FloatParamNode(ParamNode):
+class FloatParamNode(_SingleFieldParamNode):
     TYPE_ID = "float"
 
     def __init__(self, param_name=None, default=0.0):
@@ -588,15 +620,6 @@ class FloatParamNode(ParamNode):
         self._editor.textChanged.connect(self._notify_connections_changed)
         self._editor.editingFinished.connect(self._on_float_editing_finished)
         self._attach_input_widget(self._editor)
-
-    def get_value_state(self) -> Any:
-        return self._editor.text()
-
-    def set_value_state(self, val: Any):
-        self._editor.setText(str(val))
-
-    def get_value(self, socket_name: str = None) -> str:
-        return self._editor.text().strip()
 
 
 class EnumParamNode(ParamNode):
@@ -612,13 +635,24 @@ class EnumParamNode(ParamNode):
             header_color=schema["hdr"],
             body_color=schema["body"],
             sockets=[
+                # value_out sits alone at row 0 — the same convention every
+                # other param node uses (output first, right after the
+                # header). src shares row 1 with the new-item editor, the
+                # same way an input normally shares a row with the field it
+                # feeds; the combobox follows on row 2.
+                SocketDef("value_out", "output", row=0, label="enum output",
+                          color=string_schema["socket"], param_type="string"),
                 SocketDef("src", "input", row=1, label="",
                           color=string_schema["socket"], param_type="string",
                           optional=True),
-                SocketDef("value_out", "output", row=1, label="",
-                          color=string_schema["socket"], param_type="string"),
             ],
             has_footer=False,
+            # body_height is derived purely from socket rows (max row 1
+            # here), but the combobox is a third content row (row 2) with no
+            # socket of its own — without this, the node's body doesn't
+            # stretch far enough to contain it and the combobox visibly
+            # spills out past the node's own border.
+            extra_rows=1.0,
         )
         super().__init__(node_def)
 
@@ -630,17 +664,17 @@ class EnumParamNode(ParamNode):
         editor_row.setStyleSheet("background:transparent;")
         editor_layout = QHBoxLayout(editor_row)
         editor_layout.setContentsMargins(0, 0, 0, 0)
-        editor_layout.setSpacing(3)
+        editor_layout.setSpacing(0)
         editor_layout.addWidget(self._new_item)
         editor_layout.addWidget(self._add_btn)
         editor_layout.addWidget(self._remove_btn)
         editor_row.setFixedWidth(self._widget_width())
-        self._attach_widget_at_row(editor_row, 0)
+        self._attach_widget_at_row(editor_row, 1)
 
         self._combobox = self._make_combobox(values or ["option1", "option2"], editable=False)
         self._combobox.currentTextChanged.connect(self._notify_connections_changed)
         self._combobox.activated.connect(self._on_widget_user_edit)
-        self._attach_widget_at_row(self._combobox, 1)
+        self._attach_widget_at_row(self._combobox, 2)
 
     def _add_enum_item(self):
         text = self._new_item.text().strip()
@@ -728,28 +762,47 @@ class EnumParamNode(ParamNode):
 class PathParamNode(ParamNode):
     TYPE_ID = "path"
 
-    def __init__(self, param_name=None):
+    def __init__(self, param_name=None, param_type: str = "filepath"):
         if param_name is None:
             param_name = t("param_path_title")
         dir_schema    = resolve_color_schema("dirpath")
         file_schema   = resolve_color_schema("filepath")
         string_schema = resolve_color_schema("string")
 
+        # Outputs sit alone at row 0 — the same convention every other param
+        # node uses (output first, right after the header). Both share the
+        # same pink (filepath) socket color rather than dirpath's yellow —
+        # they already occupy the same position, so they read as one output.
+        dirpath_socket = SocketDef("dirpath_out", "output", row=0, label="path",
+                                   color=file_schema["socket"], param_type="dirpath")
+        filepath_socket = SocketDef("path_out", "output", row=0, label="path",
+                                    color=file_schema["socket"], param_type="filepath")
+        # This node always exposes both outputs, but MetaNode paints its header
+        # from whichever non-exec output socket comes first in the list — order
+        # them so a node created for a specific type (auto-create, or an
+        # explicit filepath/dirpath pick) actually gets that type's color
+        # instead of always landing on dirpath's.
+        ordered_sockets = ([dirpath_socket, filepath_socket] if param_type == "dirpath"
+                           else [filepath_socket, dirpath_socket])
+
         node_def = NodeDef(
             title=html_title(param_name),
             header_color=dir_schema["hdr"],
             body_color=dir_schema["body"],
             sockets=[
-                SocketDef("dirpath_out", "output", row=0, label="",
-                          color=dir_schema["socket"], param_type="dirpath"),
-                SocketDef("path_out", "output", row=0, label="",
-                          color=file_schema["socket"], param_type="filepath"),
-                SocketDef("filename", "input", row=1, label="",
+                # Row 0 shares the dir_editor row with an optional upstream
+                # folder input, mirroring how filename/filetype already sit
+                # on the same row as the widget they feed.
+                SocketDef("dirpath_in", "input", row=1, label="",
+                          color=file_schema["socket"], param_type="dirpath",
+                          optional=True),
+                SocketDef("filename", "input", row=2, label="",
                           color=string_schema["socket"], param_type="string",
                           optional=True),
-                SocketDef("filetype", "input", row=2, label="",
+                SocketDef("filetype", "input", row=3, label="",
                           color=string_schema["socket"], param_type="string",
                           optional=True),
+                *ordered_sockets,
             ],
             width=260,
             has_footer=False,
@@ -780,20 +833,9 @@ class PathParamNode(ParamNode):
         # otherwise a bare leaf like the combobox can lose its proxy widget reference
         # and silently skip the recolour pass.
         self._attach_widget_at_row(self._row_container(
-            [self._dir_editor, self._make_toolbtn("…", self._browse_for_folder)]), 0)
-        self._attach_widget_at_row(self._row_container([self._file_combo]), 1)
-        self._attach_widget_at_row(self._row_container([self._ext_filter]), 2)
-
-    def _row_container(self, leaves):
-        wrapper = QWidget()
-        wrapper.setStyleSheet("background:transparent;")
-        layout = QHBoxLayout(wrapper)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(3)
-        for leaf in leaves:
-            layout.addWidget(leaf)
-        wrapper.setFixedWidth(self._widget_width())
-        return wrapper
+            [self._dir_editor, self._make_toolbtn("…", self._browse_for_folder)]), 1)
+        self._attach_widget_at_row(self._row_container([self._file_combo]), 2)
+        self._attach_widget_at_row(self._row_container([self._ext_filter]), 3)
 
     def _browse_for_folder(self):
         path = QFileDialog.getExistingDirectory(None, t("dialog_select_folder"), self._dir_editor.text())
@@ -802,6 +844,13 @@ class PathParamNode(ParamNode):
             self._on_widget_user_edit()
 
     def _update_connected_values(self):
+        connected_dir = self._get_connected_input_value("dirpath_in")
+        self._show_connected_value(self._dir_editor, connected_dir)
+        if connected_dir:
+            # _show_connected_value blocks signals while it sets the text, so
+            # the usual textChanged -> _on_dir_changed listing refresh never
+            # fires on its own for a value that arrived via connection.
+            self._on_dir_changed(connected_dir)
         self._show_connected_combobox(self._file_combo,
                                       self._get_connected_input_value("filename"))
         self._show_connected_value(self._ext_filter,
@@ -845,11 +894,11 @@ class PathParamNode(ParamNode):
             self._dir_editor.setText(str(val))
 
     def _apply_linked_sync(self, source_node: ParamNode, active_key: Optional[str]):
-        if active_key == "row_0":
+        if active_key == "row_1":
             self._dir_editor.setText(source_node._dir_editor.text())
-        elif active_key == "row_1":
-            self._file_combo.setCurrentText(source_node._file_combo.currentText())
         elif active_key == "row_2":
+            self._file_combo.setCurrentText(source_node._file_combo.currentText())
+        elif active_key == "row_3":
             self._ext_filter.setText(source_node._ext_filter.text())
         else:
             self.set_value_state(source_node.get_value_state())
@@ -870,7 +919,7 @@ class PathParamNode(ParamNode):
         return d
 
 
-class KeyValueParamNode(ParamNode):
+class KeyValueParamNode(_SingleFieldParamNode):
     TYPE_ID = "keyvalue"
 
     def __init__(self, param_name=None):
@@ -881,15 +930,6 @@ class KeyValueParamNode(ParamNode):
         self._editor.textChanged.connect(self._notify_connections_changed)
         self._editor.editingFinished.connect(self._on_widget_user_edit)
         self._attach_input_widget(self._editor)
-
-    def get_value_state(self) -> Any:
-        return self._editor.text()
-
-    def set_value_state(self, val: Any):
-        self._editor.setText(str(val))
-
-    def get_value(self, socket_name: str = None) -> str:
-        return self._editor.text().strip()
 
 
 class Float2ParamNode(VectorParamNode):

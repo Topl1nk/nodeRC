@@ -140,6 +140,8 @@ def widget_stylesheets(p: WidgetPalette) -> Dict[str, str]:
         "combo": (
             f"QComboBox{{border:1px solid {p.border};background:{p.field_bg};color:{TEXT_COLOR};"
             f"border-radius:0px;padding:2px 4px;font:{WIDGET_FONT};combobox-popup:0;}}"
+            # [nodeHover] rather than :hover — see the note on "field" below.
+            f"QComboBox[nodeHover=\"true\"]{{border-color:{p.highlight};}}"
             f"QComboBox::drop-down{{border-left:1px solid {p.border};"
             f"width:{BROWSE_BTN_WIDTH}px;background:{p.button_bg};}}"
             f"QComboBox::drop-down:hover{{background:{p.hover_bg};border-color:{p.highlight};}}"
@@ -158,17 +160,30 @@ def widget_stylesheets(p: WidgetPalette) -> Dict[str, str]:
         "field": (
             f"QLineEdit{{border:1px solid {p.border};background:{p.field_bg};color:{TEXT_COLOR};"
             f"border-radius:0px;padding:2px 4px;font:{WIDGET_FONT};}}"
+            # A widget's native :hover pseudo-state depends on Qt correctly
+            # delivering Enter/Leave to it — which QGraphicsProxyWidget does
+            # not reliably do for a widget nested inside a wrapper container
+            # (EnumParamNode's new-item row, PathParamNode's row containers):
+            # moving between sibling widgets in the same wrapper can leave
+            # the previous one stuck "hovered" forever. [nodeHover="true"] is
+            # instead driven by GraphicsView's own cursor poll (view.py,
+            # _update_hovered_widget) — the same ground-truth-every-tick
+            # approach already used for the node border — so it can't get
+            # stuck regardless of whether the widget is standalone or wrapped.
+            f"QLineEdit[nodeHover=\"true\"]{{border-color:{p.highlight};}}"
             f"QLineEdit:read-only{{color:{TEXT_MUTED_COLOR};}}"
         ),
         "spin": (
+            # No ::up-button/::down-button rules: IntParamNode hides the
+            # native arrows (QAbstractSpinBox.NoButtons) and builds separate
+            # square buttons instead — see ParamNode._make_stepper. Qt's
+            # native spin arrows paint as sub-controls *inside* the widget's
+            # own border, overlapping it rather than living in their own
+            # space, which is exactly what every other button in this app
+            # avoids.
             f"QSpinBox{{border:1px solid {p.border};background:{p.field_bg};color:{TEXT_COLOR};"
             f"border-radius:0px;padding:2px;font:{WIDGET_FONT};}}"
-            f"QSpinBox::up-button{{background:{p.button_bg};border-left:1px solid {p.border};"
-            f"border-bottom:1px solid {p.border};width:16px;}}"
-            f"QSpinBox::down-button{{background:{p.button_bg};border-left:1px solid {p.border};width:16px;}}"
-            f"QSpinBox::up-button:hover,QSpinBox::down-button:hover{{"
-            f"background:{p.hover_bg};border-color:{p.highlight};}}"
-            f"QSpinBox:hover{{border-color:{p.highlight};}}"
+            f"QSpinBox[nodeHover=\"true\"]{{border-color:{p.highlight};}}"
         ),
         "check": (
             f"QCheckBox{{font:{WIDGET_FONT};color:{TEXT_COLOR};background:{p.button_bg};"
@@ -181,14 +196,14 @@ def widget_stylesheets(p: WidgetPalette) -> Dict[str, str]:
         "tool": (
             f"QToolButton{{background:{p.button_bg};color:{BUTTON_TEXT_COLOR};"
             f"border:1px solid {p.border};border-radius:0px;font:{WIDGET_FONT};}}"
-            f"QToolButton:hover{{background:{p.hover_bg};border-color:{p.highlight};}}"
+            f"QToolButton[nodeHover=\"true\"]{{background:{p.hover_bg};border-color:{p.highlight};}}"
             f"QToolButton:pressed{{background:{p.pressed_bg};}}"
         ),
         "push": (
             f"QPushButton{{background:{p.button_bg};color:{BUTTON_TEXT_COLOR};"
             f"border:1px solid {p.border};border-radius:0px;"
             f"padding:5px 8px;font:bold {WIDGET_FONT};}}"
-            f"QPushButton:hover{{background:{p.hover_bg};border-color:{p.highlight};}}"
+            f"QPushButton[nodeHover=\"true\"]{{background:{p.hover_bg};border-color:{p.highlight};}}"
             f"QPushButton:pressed{{background:{p.pressed_bg};}}"
         ),
         "separator": p.border,

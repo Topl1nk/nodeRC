@@ -6,13 +6,13 @@ collapsible X/Y/Z vector groups.
 """
 from __future__ import annotations
 
-from PyQt5.QtWidgets import QPushButton, QWidget, QGraphicsProxyWidget
+from PyQt5.QtWidgets import QPushButton, QWidget
 from PyQt5.QtCore import QPointF, Qt
 
 from localization import t
 from configuration import (
     NODE_HEADER_HEIGHT, NODE_ROW_HEIGHT, NODE_HORIZONTAL_PAD, NODE_WIDGET_V_OFFSET,
-    AUTOSPAWN_X_GAP, AUTOSPAWN_Y_OFFSET, AUTOSPAWN_V_GAP,
+    AUTOSPAWN_X_GAP, AUTOSPAWN_Y_OFFSET, AUTOSPAWN_V_GAP, NODE_START_Z,
 )
 from ui.theme import PUSHBTN_QSS, NODE_BORDER_COLOR
 from core.node_blueprint import (
@@ -25,9 +25,11 @@ from diagnostics import log_and_explain
 
 class StartNode(MetaNode):
     is_protected = True  # the chain's root: bulk delete and group-clear must spare it
+    always_on_top = True  # stays above every other node, even ones brought to front by a drag
 
     def __init__(self):
         super().__init__(start_node_def())
+        self._set_resting_z(NODE_START_Z)
         param_rows = [s.row for s in self.node_def.sockets if not s.is_exec]
         rows = max(param_rows, default=-1) + 1
         btn_w = self.node_def.width - NODE_HORIZONTAL_PAD * 2
@@ -38,8 +40,7 @@ class StartNode(MetaNode):
             btn.setFixedWidth(btn_w)
             btn.setToolTip(tooltip)
             btn.clicked.connect(callback)
-            proxy = QGraphicsProxyWidget(self)
-            proxy.setWidget(btn)
+            proxy = self._make_proxy(btn)
             y = NODE_HEADER_HEIGHT + (rows + row_offset) * NODE_ROW_HEIGHT + NODE_WIDGET_V_OFFSET
             proxy.setPos(NODE_HORIZONTAL_PAD, y)
 
@@ -51,8 +52,7 @@ class StartNode(MetaNode):
         sep.setFixedWidth(btn_w)
         sep.setFixedHeight(2)
         sep.setStyleSheet(f"background-color: {NODE_BORDER_COLOR};")
-        sep_proxy = QGraphicsProxyWidget(self)
-        sep_proxy.setWidget(sep)
+        sep_proxy = self._make_proxy(sep)
         sep_proxy.setPos(
             NODE_HORIZONTAL_PAD,
             NODE_HEADER_HEIGHT + (rows + 1.35) * NODE_ROW_HEIGHT + NODE_WIDGET_V_OFFSET,

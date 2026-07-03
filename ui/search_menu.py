@@ -34,9 +34,6 @@ class SearchMenuDialog(QDialog):
         self._all_items = []
         self._anchor_screen_pos = None
 
-        # Remove translucent background so the dialog background color applies
-        # self.setAttribute(Qt.WA_TranslucentBackground, True)
-        
         self.main_layout = QHBoxLayout(self)
         self.main_layout.setContentsMargins(10, 10, 10, 10)
         self.main_layout.setSpacing(10)
