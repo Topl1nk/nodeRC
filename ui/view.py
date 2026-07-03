@@ -1,7 +1,10 @@
 from __future__ import annotations
 from typing import Optional
 
-from PyQt5.QtWidgets import QGraphicsView, QGraphicsProxyWidget, QPushButton, QApplication, QWidget
+from PyQt5.QtWidgets import (
+    QGraphicsView, QGraphicsProxyWidget, QPushButton, QApplication, QWidget,
+    QAbstractSpinBox, QComboBox,
+)
 from PyQt5.QtGui import QPainter, QColor, QRadialGradient, QBrush, QCursor
 from PyQt5.QtCore import Qt, QPoint, QRectF, QTimer
 
@@ -210,7 +213,19 @@ class GraphicsView(QGraphicsView):
             return None
         local_pos = proxy.mapFromScene(self.mapToScene(pos)).toPoint()
         leaf = top_widget.childAt(local_pos)
-        return leaf if leaf is not None else top_widget
+        if leaf is None:
+            return top_widget
+        # A compound editor (QSpinBox, QComboBox) carries its own [nodeHover]
+        # rule on itself, not on the native internal child childAt() actually
+        # lands on (e.g. the spin box's built-in QLineEdit) — climb back up to
+        # that compound widget so the property lands where the stylesheet
+        # looks for it, instead of on an untargeted descendant.
+        w = leaf
+        while w is not top_widget:
+            if isinstance(w, (QAbstractSpinBox, QComboBox)):
+                return w
+            w = w.parentWidget()
+        return leaf
 
     def _update_hovered_node(self, pos: Optional[QPoint]):
         """The single, authoritative source of the node hover outline: which
