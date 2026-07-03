@@ -81,9 +81,13 @@ class NodeDef:
     extra_rows: float = 0.0
 
     @property
-    def body_height(self) -> int:
+    def param_row_count(self) -> int:
         param_rows = [s.row for s in self.sockets if not s.is_exec]
-        rows = max(param_rows, default=-1) + 1
+        return max(param_rows, default=-1) + 1
+
+    @property
+    def body_height(self) -> int:
+        rows = self.param_row_count
         return int(NODE_HEADER_HEIGHT + (rows + self.extra_rows) * NODE_ROW_HEIGHT + (
             NODE_FOOTER_HEIGHT if self.has_footer else NODE_BOTTOM_PAD
         ))

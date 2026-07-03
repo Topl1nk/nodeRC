@@ -30,8 +30,7 @@ class StartNode(MetaNode):
     def __init__(self):
         super().__init__(start_node_def())
         self._set_resting_z(NODE_START_Z)
-        param_rows = [s.row for s in self.node_def.sockets if not s.is_exec]
-        rows = max(param_rows, default=-1) + 1
+        rows = self.node_def.param_row_count
         btn_w = self.node_def.width - NODE_HORIZONTAL_PAD * 2
 
         def _add_btn(label: str, tooltip: str, callback, row_offset: float):

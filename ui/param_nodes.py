@@ -187,16 +187,7 @@ class ParamNode(MetaNode):
         self._watch_field_focus(widget)
 
     def _attach_input_widget(self, widget: QWidget):
-        proxy = self._make_proxy(widget)
-        param_rows = [s.row for s in self.node_def.sockets if not s.is_exec]
-        rows = max(param_rows, default=-1) + 1
-        proxy.setPos(
-            NODE_HORIZONTAL_PAD,
-            NODE_HEADER_HEIGHT + rows * NODE_ROW_HEIGHT + NODE_WIDGET_V_OFFSET,
-        )
-        proxy.setZValue(NODE_WIDGET_Z_BASE - rows)
-        proxy._field_key = f"row_{rows}"
-        self._watch_field_focus(widget)
+        self._attach_widget_at_row(widget, self.node_def.param_row_count)
 
     # ── Connected-input mirroring ─────────────────────────────────────────────
 
@@ -466,8 +457,7 @@ class VectorParamNode(ParamNode):
     def __init__(self, param_name: str):
         super().__init__(param_node_def(param_name, self.TYPE_ID))
 
-        param_rows = [s.row for s in self.node_def.sockets if not s.is_exec]
-        rows = max(param_rows, default=-1) + 1
+        rows = self.node_def.param_row_count
 
         total_w = self._widget_width()
         n_axes = len(self.AXES)

@@ -231,7 +231,8 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         self.setFlags(
             QGraphicsItem.ItemIsMovable |
             QGraphicsItem.ItemIsSelectable |
-            QGraphicsItem.ItemSendsScenePositionChanges,
+            QGraphicsItem.ItemSendsScenePositionChanges |
+            QGraphicsItem.ItemIsFocusable,
         )
         self._generate()
         # When the config flag is set, parameter nodes are born with their
@@ -776,9 +777,6 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
 
     def get_socket(self, name: str) -> Optional[SocketItem]:
         return self.sockets.get(name)
-
-    def _editor_window(self):
-        return editor_window_of(self)
 
     def _run_context_menu(self, event, actions):
         """Show a node context menu.
