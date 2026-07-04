@@ -149,22 +149,23 @@ AUTOSPAWN_Y_OFFSET = -40  # vertical start offset of the first created param nod
 AUTOSPAWN_V_GAP    = 14   # vertical gap between stacked created param nodes (no overlap)
 
 # ── Socket/node color schema per type ─────────────────────────────────────────
-# Blueprint scheme: dark blue backgrounds, distinct pastel outlines/sockets
+# Matches Unreal Engine Blueprint pin colors (exec=white, bool=maroon, int=cyan,
+# float=pale green, vector/float2/float3=yellow, string=magenta, enum=olive, ...)
 SOCKET_COLOR_SCHEMA: dict[str, dict[str, str]] = {
-    "exec":     {"socket": "#3A76B8"},
-    "string":   {"socket": "#F48FB1"},
-    "bool":     {"socket": "#A3E4D7"},
-    "integer":  {"socket": "#3498DB"},
-    "float":    {"socket": "#EC7063"},
-    "float2":   {"socket": "#F7DC6F"},
-    "float3":   {"socket": "#C39BD3"},
-    "vector":   {"socket": "#C39BD3"},
-    "enum":     {"socket": "#F39C12"},
-    "enum_int": {"socket": "#F39C12"},
-    "filepath": {"socket": "#F5B7B1"},
-    "dirpath":  {"socket": "#F9E79F"},
-    "keyvalue": {"socket": "#D5F5E3"},
-    "any":      {"socket": "#3498DB"},
+    "exec":     {"socket": "#FFFFFF"},
+    "string":   {"socket": "#FF00FF"},
+    "bool":     {"socket": "#A0021A"},
+    "integer":  {"socket": "#1EA6EC"},
+    "float":    {"socket": "#98FB98"},
+    "float2":   {"socket": "#FFC800"},
+    "float3":   {"socket": "#FFC800"},
+    "vector":   {"socket": "#FFC800"},
+    "enum":     {"socket": "#B0A44A"},
+    "enum_int": {"socket": "#B0A44A"},
+    "filepath": {"socket": "#C39BF4"},
+    "dirpath":  {"socket": "#9B7EDE"},
+    "keyvalue": {"socket": "#0099A6"},
+    "any":      {"socket": "#C8C8C8"},
 }
 SOCKET_HOVER_COLOR = "#FFFFFF"
 
