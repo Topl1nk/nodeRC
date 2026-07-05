@@ -993,5 +993,11 @@ class NodeComboBox(QComboBox):
     def _safe_refresh(self):
         try:
             self.node._refresh_selection_visuals()
-        except RuntimeError:
+        except (RuntimeError, AttributeError):
+            # RuntimeError: the underlying C++ node was already deleted.
+            # AttributeError: this callback was deferred (see hidePopup's
+            # QTimer.singleShot above) and fired after the widget got
+            # reparented/rebuilt elsewhere (e.g. mid session-restore) without
+            # its Python __init__ running again, so self.node was never set.
+            # Either way, there's nothing left to refresh.
             pass

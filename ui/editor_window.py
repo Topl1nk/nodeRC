@@ -221,16 +221,17 @@ class NodeEditorWindow(QMainWindow):
             self.switch_to_tab(tab)
             if "graph" in envelope:
                 self._restore(envelope["graph"], restore_selection=False)
-            # Merely calling setScene() doesn't make Qt actually paint this
-            # tab — that only happens once the event loop gets a turn. A
-            # normal File > Open always gets that turn for free (it's one
-            # user click, then the loop idles waiting for the next one); this
-            # restore loop instead marches straight through every tab with no
-            # gap, so without forcing one here, tab 2 onward get swapped away
-            # from before a single real paint/show event ever reaches their
-            # widgets — leaving them stuck with the same stale, unpolished
-            # (black) text a plain Open never produces.
-            QApplication.processEvents()
+            # Note: deliberately NOT forcing a QApplication.processEvents()
+            # flush here. It was tried as a belt-and-suspenders complement to
+            # switch_to_tab() above, but pumping the event loop mid-restore
+            # let stray deferred callbacks (e.g. NodeComboBox's
+            # QTimer.singleShot(0, self._safe_refresh) from hidePopup) fire
+            # against a tab's widgets while a *later* tab in this same loop
+            # was still being torn down/rebuilt — crashing with "NodeComboBox
+            # object has no attribute 'node'" on next launch. switch_to_tab()
+            # alone (making each tab briefly the real, on-screen scene while
+            # its graph is restored) already gets these widgets a proper
+            # paint pass without that risk.
             tab.project_path = path
             tab.untitled_number = None if path else self._next_untitled_number()
             tab.history = []
