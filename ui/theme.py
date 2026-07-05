@@ -14,20 +14,83 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict
 
-from PyQt5.QtGui import QColor
+from PyQt5.QtGui import QColor, QPalette
 
 from configuration import (
-    DEFAULT_HEADER_COLOR, CANVAS_BACKGROUND_COLOR,
+    DEFAULT_HEADER_COLOR, CANVAS_BACKGROUND_COLOR, WINDOW_BACKGROUND_COLOR,
     TEXT_COLOR, TEXT_MUTED_COLOR, BUTTON_TEXT_COLOR, NODE_SELECTED_COLOR,
     UI_FONT_FAMILY, WIDGET_FONT_PT, BROWSE_BTN_WIDTH,
     CHECKBOX_INDICATOR_SIZE, CHECKBOX_LABEL_SPACING,
     TINT_FIELD_DARKEN, TINT_BUTTON_DARKEN, TINT_HOVER_DARKEN,
     TINT_PRESSED_DARKEN, TINT_SELECTION_LIGHTEN,
     TINT_BORDER_MIN_LUMINANCE, TINT_BORDER_LIGHTEN_STEP,
-    VECTOR_AXIS_LABEL_COLOR,
+    VECTOR_AXIS_LABEL_COLOR, SOCKET_COLOR_SCHEMA, FIELD_PLACEHOLDER_COLOR,
 )
 
 WIDGET_FONT = f"{WIDGET_FONT_PT}pt {UI_FONT_FAMILY}"
+
+
+def apply_field_placeholder_palette(widget) -> None:
+    """Pin a text widget's real-text and placeholder-text colours via
+    QPalette instead of leaving them to Qt's own (stylesheet-cache-dependent)
+    derivation — see FIELD_PLACEHOLDER_COLOR's docstring in configuration.py
+    for why. The QSS ``color:`` property is supposed to cover this, but the
+    very first widget built with a given stylesheet in the process's
+    lifetime can render text with a stale/uncomputed colour (black) until a
+    second widget with the same stylesheet primes Qt's style cache —
+    pinning the palette directly sidesteps that entirely."""
+    pal = widget.palette()
+    pal.setColor(QPalette.Text, QColor(TEXT_COLOR))
+    pal.setColor(QPalette.WindowText, QColor(TEXT_COLOR))
+    pal.setColor(QPalette.PlaceholderText, QColor(FIELD_PLACEHOLDER_COLOR))
+    widget.setPalette(pal)
+
+    # A QComboBox's dropdown list is a separate popup widget (a QListView)
+    # that Qt creates lazily — its own palette is independent of the combo
+    # box's, so it needs the same pinning or its item text hits the same
+    # cold-cache black-text bug the first time the popup opens.
+    # An *editable* QComboBox (e.g. the [F/F] Load node's file-name combo)
+    # never draws its own visible text directly — that's delegated to an
+    # internal child QLineEdit, a separate widget with its own independent
+    # palette that this function was never patching. A non-editable combo
+    # (e.g. the [E] Enum node) has no such child and paints fine, which is
+    # why only editable combos ever showed black text here.
+    line_edit = getattr(widget, "lineEdit", None)
+    if callable(line_edit):
+        line_edit_widget = line_edit()
+        if line_edit_widget is not None:
+            apply_field_placeholder_palette(line_edit_widget)
+
+    view = getattr(widget, "view", None)
+    if callable(view):
+        view_widget = view()
+        if view_widget is not None:
+            _pin_view_palette(view_widget)
+
+        # A combo box built on a tab that isn't the active one yet (e.g. a
+        # background tab restored from a saved session) never gets a real
+        # on-screen show before the user switches to it — Qt only actually
+        # polishes/repaints the popup's style the first time showPopup() runs
+        # for real, and that first-real-polish silently overwrites the
+        # palette we just pinned above. Re-pinning right after every
+        # showPopup() call closes that gap for good, regardless of which tab
+        # (or how many tabs deep) the combo box lives on.
+        show_popup = getattr(widget, "showPopup", None)
+        if callable(show_popup) and not getattr(widget, "_placeholder_popup_patched", False):
+            def _show_popup_and_repin(_original=show_popup, _widget=widget):
+                _original()
+                view_widget = _widget.view()
+                if view_widget is not None:
+                    _pin_view_palette(view_widget)
+            widget.showPopup = _show_popup_and_repin
+            widget._placeholder_popup_patched = True
+
+
+def _pin_view_palette(view_widget) -> None:
+    view_pal = view_widget.palette()
+    view_pal.setColor(QPalette.Text, QColor(TEXT_COLOR))
+    view_pal.setColor(QPalette.WindowText, QColor(TEXT_COLOR))
+    view_widget.setPalette(view_pal)
 
 
 # ── Color math ─────────────────────────────────────────────────────────────────
@@ -303,5 +366,102 @@ QFrame#descFrame {{
     border-top: 1px solid {NODE_BORDER_COLOR};
     border-bottom: 1px solid {NODE_BORDER_COLOR};
     background: transparent;
+}}
+"""
+
+RESTORE_DIALOG_QSS = f"""
+#RestoreChoiceDialog {{
+    background-color: {CANVAS_BACKGROUND_COLOR};
+    border: 1px solid {NODE_BORDER_COLOR};
+}}
+#RestoreChoiceDialog QLabel {{
+    color: {TEXT_COLOR};
+    font-family: {UI_FONT_FAMILY};
+    background: transparent;
+}}
+#RestoreChoiceDialog QLabel#restoreTitle {{
+    font-weight: bold;
+    font-size: 11pt;
+}}
+#RestoreChoiceDialog QLabel#restoreBody {{
+    color: {TEXT_MUTED_COLOR};
+}}
+"""
+
+# ── Custom title bar / tab strip ───────────────────────────────────────────────
+# The close button's hover reuses the same muted red the "bool" param type
+# already uses (SOCKET_COLOR_SCHEMA) — one palette for the whole app, no
+# one-off color invented just for this button.
+TITLE_BAR_CLOSE_HOVER_COLOR = SOCKET_COLOR_SCHEMA["bool"]["socket"]
+
+TITLE_BAR_QSS = f"""
+#TitleBarWidget {{
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 {BUTTON_BG_COLOR}, stop:1 {WINDOW_BACKGROUND_COLOR});
+    border: none;
+}}
+#TitleBarWidget QLabel {{
+    color: {TEXT_COLOR};
+    font-family: {UI_FONT_FAMILY};
+    background: transparent;
+}}
+QToolButton#titleBarWinBtn {{
+    background: transparent;
+    color: {TEXT_COLOR};
+    border: none;
+    font-family: {UI_FONT_FAMILY};
+}}
+QToolButton#titleBarWinBtn:hover {{
+    background: {BUTTON_HOVER_COLOR};
+}}
+QToolButton#titleBarCloseBtn {{
+    background: transparent;
+    color: {TEXT_COLOR};
+    border: none;
+    font-family: {UI_FONT_FAMILY};
+}}
+QToolButton#titleBarCloseBtn:hover {{
+    background: {TITLE_BAR_CLOSE_HOVER_COLOR};
+}}
+"""
+
+TAB_STRIP_QSS = f"""
+#TabStripWidget {{
+    background: transparent;
+}}
+QToolButton#tabNewBtn {{
+    background: transparent;
+    color: {TEXT_MUTED_COLOR};
+    border: none;
+    font-family: {UI_FONT_FAMILY};
+}}
+QToolButton#tabNewBtn:hover {{
+    background: {BUTTON_HOVER_COLOR};
+    color: {TEXT_COLOR};
+}}
+"""
+
+TAB_BUTTON_QSS = f"""
+#TabButton {{
+    background: {BUTTON_BG_COLOR};
+    border: none;
+}}
+#TabButton[active="true"] {{
+    background: {CANVAS_BACKGROUND_COLOR};
+}}
+#TabButton QLabel {{
+    color: {TEXT_COLOR};
+    font-family: {UI_FONT_FAMILY};
+    background: transparent;
+}}
+#TabButton QToolButton {{
+    background: transparent;
+    color: {TEXT_MUTED_COLOR};
+    border: none;
+    font-family: {UI_FONT_FAMILY};
+}}
+#TabButton QToolButton:hover {{
+    background: {TITLE_BAR_CLOSE_HOVER_COLOR};
+    color: {TEXT_COLOR};
 }}
 """

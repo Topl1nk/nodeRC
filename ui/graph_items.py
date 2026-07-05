@@ -7,7 +7,7 @@ existing ``from ui.graph_items import …`` lines keep working.
 """
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from PyQt5.QtWidgets import (
     QGraphicsObject, QGraphicsItem, QGraphicsTextItem,
@@ -31,7 +31,7 @@ from configuration import (
     CONNECTION_SELECTED_COLOR, TEXT_COLOR,
     BEZIER_CTRL_FACTOR, BEZIER_CTRL_MIN,
     GRID_SIZE_SMALL, NODE_POPUP_Z, NODE_COMBO_POPUP_PROXY_Z,
-    VECTOR_COLLAPSE_GLYPH, VECTOR_EXPAND_GLYPH,
+    VECTOR_COLLAPSE_GLYPH, VECTOR_COLLAPSE_GLYPH_MIRRORED, VECTOR_EXPAND_GLYPH, VECTOR_TOGGLE_WIDTH,
     NODE_SELECTION_OVERLAY_RGBA, NODE_SELECTION_OVERLAY_Z, NODE_SOCKET_Z,
     CONNECTION_Z,
     UI_FONT_FAMILY, NODE_LABEL_FONT_SIZE, NODE_RENAME_FONT_SIZE,
@@ -43,6 +43,7 @@ from ui.theme import (
     relative_luminance, brightened_for_canvas,
     DEFAULT_WIDGET_QSS, widget_stylesheets, tinted_widget_palette,
     VECTOR_TOGGLE_QSS, CONTEXT_MENU_STYLESHEET,
+    apply_field_placeholder_palette,
 )
 from core.node_blueprint import NodeDef, SocketDef, html_title
 from ui.color_picker import ColorPickerPopup
@@ -217,6 +218,12 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         # and embedded widgets keep their default scheme. Lets the user mark a
         # node visually without re-skinning every inner control.
         self._color_only_header: bool = False
+        # True until the user actually picks a colour (or explicitly resets),
+        # so a node-shape rebuild (Float2/3 split/merge, command X/Y/Z
+        # expand/collapse — see _swap_node) knows whether to carry the
+        # current colour over or let the replacement compute its own
+        # type-based default.
+        self._color_is_default: bool = True
         # The Z this node returns to once no combo popup is open — 0 by default,
         # bumped by NodeScene after a drag (bring-to-front), fixed high for
         # StartNode. _refresh_selection_visuals is the only place that applies
@@ -251,6 +258,28 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         self.title_item.setDefaultTextColor(QColor("white"))
         self._set_title_text(d.plain_title)
 
+        def _make_vector_toggle(socket_def, base_name: str, *, mirrored: bool = False) -> QToolButton:
+            toggle = QToolButton()
+            if socket_def.is_collapsed_vector:
+                glyph = VECTOR_COLLAPSE_GLYPH_MIRRORED if mirrored else VECTOR_COLLAPSE_GLYPH
+            else:
+                glyph = VECTOR_EXPAND_GLYPH
+            toggle.setText(glyph)
+            # Marks this button for _apply_widget_qss so it can tell a
+            # vector toggle apart from a regular QToolButton without
+            # matching on its glyph text — text-based matching is what
+            # broke when an unrelated button (a numeric field's ▼
+            # stepper) happened to reuse VECTOR_EXPAND_GLYPH's own
+            # character and got recolored as a "neutral chevron"
+            # (transparent, borderless) instead of a real button.
+            toggle.setProperty("vectorToggle", True)
+            toggle.setStyleSheet(VECTOR_TOGGLE_QSS)
+            toggle.setCursor(Qt.PointingHandCursor)
+            toggle.clicked.connect(
+                lambda _, base=base_name: self.toggle_vector_expansion(base)
+            )
+            return toggle
+
         for socket_def in d.sockets:
             socket = SocketItem(socket_def, socket_def.row, d, self)
             self.sockets[socket_def.name] = socket
@@ -262,36 +291,30 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
                 label_height = label.boundingRect().height()
                 label_width  = label.boundingRect().width()
                 label_y      = d.socket_y(socket_def.row, socket_def.is_exec) - label_height / 2.0
+                has_toggle   = socket_def.is_collapsed_vector or socket_def.is_expanded_vector_start
 
                 if socket_def.kind == "input":
                     label_x = NODE_EXEC_SOCKET_HALFSIZE * 2 + 5
                     label.setPos(label_x, label_y)
 
-                    if socket_def.is_collapsed_vector or socket_def.is_expanded_vector_start:
-                        toggle = QToolButton()
-                        toggle.setText(
-                            VECTOR_COLLAPSE_GLYPH if socket_def.is_collapsed_vector
-                            else VECTOR_EXPAND_GLYPH
-                        )
-                        # Marks this button for _apply_widget_qss so it can tell a
-                        # vector toggle apart from a regular QToolButton without
-                        # matching on its glyph text — text-based matching is what
-                        # broke when an unrelated button (a numeric field's ▼
-                        # stepper) happened to reuse VECTOR_EXPAND_GLYPH's own
-                        # character and got recolored as a "neutral chevron"
-                        # (transparent, borderless) instead of a real button.
-                        toggle.setProperty("vectorToggle", True)
-                        toggle.setStyleSheet(VECTOR_TOGGLE_QSS)
-                        toggle.setCursor(Qt.PointingHandCursor)
+                    if has_toggle:
+                        toggle = _make_vector_toggle(socket_def, socket_def.vector_base)
                         proxy = self._make_proxy(toggle)
                         proxy.setPos(label_x + label_width + 2, label_y)
-                        base_name = socket_def.vector_base
-                        toggle.clicked.connect(
-                            lambda _, base=base_name: self.toggle_vector_expansion(base)
-                        )
-                        self._vector_buttons[base_name] = (toggle, proxy)
+                        self._vector_buttons[socket_def.vector_base] = (toggle, proxy)
                 else:
-                    label.setPos(d.width - NODE_EXEC_SOCKET_HALFSIZE * 2 - 5 - label_width, label_y)
+                    label_x = d.width - NODE_EXEC_SOCKET_HALFSIZE * 2 - 5 - label_width
+                    label.setPos(label_x, label_y)
+
+                    if has_toggle:
+                        # Mirrored placement: the arrow sits to the left of an
+                        # output's label instead of to the right of an input's,
+                        # so it still reads as "next to the name it toggles".
+                        toggle = _make_vector_toggle(socket_def, socket_def.vector_base, mirrored=True)
+                        toggle.setFixedWidth(VECTOR_TOGGLE_WIDTH)
+                        proxy = self._make_proxy(toggle)
+                        proxy.setPos(label_x - VECTOR_TOGGLE_WIDTH - 2, label_y)
+                        self._vector_buttons[socket_def.vector_base] = (toggle, proxy)
 
                 label.setDefaultTextColor(QColor(socket_def.color))
         self.update_vector_buttons_visibility()
@@ -343,6 +366,12 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
             return "#000000" if title_dark else "#FFFFFF"
         return TEXT_COLOR
 
+    def _rename_text_color(self) -> str:
+        # While editing, the title should read exactly like it does at rest
+        # — whatever the palette already picked for this node's header —
+        # not a plain white that can vanish against a bright custom color.
+        return self._title_text_color()
+
     def _on_renamed(self, name: str):
         """Override to react to a committed rename (e.g. update creation_data)."""
 
@@ -362,14 +391,29 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         if the user had opened the palette, picked the socket colour, and
         ticked "only header".
         """
+        color, only_header = self.default_color_override()
+        if color is not None:
+            self._color_override = color
+            self._color_only_header = only_header
+
+    def default_color_override(self) -> Tuple[Optional[str], bool]:
+        """The (color, only_header) pair this node is born with — reset target.
+
+        Mirrors ``_apply_initial_socket_color``: the first non-exec output
+        socket's colour, painted header-only, for param nodes; ``(None,
+        False)`` for exec/command nodes so they fall back to the plain
+        ``DEFAULT_HEADER_COLOR`` scheme.
+        """
         if not PARAM_NODE_HEADER_FROM_SOCKET:
-            return
-        # Only apply to output sockets on non-exec types.
+            return None, False
         for sd in self.node_def.sockets:
             if sd.kind == "output" and not sd.is_exec:
-                self._color_override = sd.color
-                self._color_only_header = True
-                return
+                return sd.color, True
+        return None, False
+
+    def reset_color(self, *, record_undo: bool = True):
+        color, only_header = self.default_color_override()
+        self.set_color(color, only_header=only_header, record_undo=record_undo, is_default=True)
 
     def color_override(self) -> Optional[str]:
         return self._color_override
@@ -378,9 +422,10 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         return self._color_only_header
 
     def set_color(self, color_hex: Optional[str], *, only_header: bool = False,
-                  record_undo: bool = True):
+                  record_undo: bool = True, is_default: bool = False):
         self._color_override = color_hex
         self._color_only_header = bool(only_header) and color_hex is not None
+        self._color_is_default = is_default
         self.update()
         self._update_children_colors()
         win = editor_window_of(self)
@@ -419,12 +464,15 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         """
         if isinstance(widget, QComboBox):
             widget.setStyleSheet(qss["combo"])
+            apply_field_placeholder_palette(widget)
             return
         if isinstance(widget, QSpinBox):
             widget.setStyleSheet(qss["spin"])
+            apply_field_placeholder_palette(widget)
             return
         if isinstance(widget, QLineEdit):
             widget.setStyleSheet(qss["field"])
+            apply_field_placeholder_palette(widget)
         elif isinstance(widget, QCheckBox):
             widget.setStyleSheet(qss["check"])
             if isinstance(widget, InsetFillCheckBox):
@@ -473,12 +521,19 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
             # own color, change only the scope flag so no node is re-colored.
             for node in selected_nodes:
                 node.set_color(node._color_override, only_header=only_header,
-                               record_undo=False)
+                               record_undo=False, is_default=node._color_is_default)
+
+        def reset_all():
+            for node in selected_nodes:
+                node.reset_color(record_undo=False)
+            color, only_header = self.default_color_override()
+            return color or self.node_def.header_color, only_header
 
         initial = self._color_override or self.node_def.header_color
         popup = ColorPickerPopup(
             on_color_selected=apply_color_to_all,
             on_only_header_changed=apply_scope_to_all if len(selected_nodes) > 1 else None,
+            on_reset=reset_all,
             initial_color=initial,
             initial_only_header=self._color_only_header,
             on_close=on_close,
@@ -508,8 +563,7 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
 
         # A picked color tints the header; in full-scope mode the body and outer
         # border take the same tint family, in only-header mode body and outer
-        # border stay on the default scheme and only the header (with the divider
-        # line beneath it) gets the pick.
+        # border stay on the default scheme and only the header gets the pick.
         only_header = bool(self._color_override) and self._color_only_header
         if self._color_override:
             header_color = QColor(self._color_override)
@@ -549,18 +603,15 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
 
         # Header outline: in only-header mode the picked colour traces the entire
         # header rectangle (top, sides, bottom) so the band reads as a self-
-        # contained region. In full-tint mode just the divider line at the bottom
-        # is enough, because the outer body border already carries the tint.
+        # contained region. In full-tint mode the outer body border already
+        # carries the tint, so no extra line is needed at the header/body seam
+        # — one used to be drawn there, but for the common (uncustomized)
+        # case it matched the header colour exactly and just looked like a
+        # stray line for no reason.
         if only_header and not visually_selected:
             painter.setPen(QPen(header_edge, 1))
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(QRectF(0, 0, d.width, NODE_HEADER_HEIGHT))
-        else:
-            painter.setPen(QPen(header_edge, 1))
-            painter.drawLine(
-                QPointF(0, NODE_HEADER_HEIGHT),
-                QPointF(d.width, NODE_HEADER_HEIGHT),
-            )
 
     def itemChange(self, change, value):
         if change == QGraphicsItem.ItemPositionChange and self.scene():
@@ -790,6 +841,59 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         """
         return
 
+    def _swap_node(self, new_node: "MetaNode"):
+        """Replace self with ``new_node`` in the scene, migrating any connection
+        whose socket name still exists on the replacement.
+
+        Shared by every "this node's socket layout changed shape" toggle
+        (CommandNode's X/Y/Z vector expand/collapse, VectorParamNode's
+        split/merge) so there is exactly one way a node ever gets rebuilt in
+        place: connections on sockets that don't survive the rebuild are
+        simply dropped, the same behaviour either caller already relied on.
+        """
+        scene = self.scene()
+        win = editor_window_of(self)
+        if not win or not scene:
+            return
+
+        was_selected = self.isSelected()
+        new_node.setPos(self.pos())
+        # A genuinely user-picked color survives the rebuild; an untouched
+        # default is left alone so the replacement computes its own
+        # type-based default (e.g. Float3 -> float on split).
+        if not self._color_is_default:
+            new_node.set_color(self._color_override, only_header=self._color_only_header,
+                               record_undo=False, is_default=False)
+        scene.addItem(new_node)
+        new_node.setSelected(was_selected)
+
+        for old in list(win.connections):
+            if old.source.meta_node is self:
+                migrated = new_node.sockets.get(old.source.sock_def.name)
+                if migrated:
+                    self._rewire(scene, win, migrated, old.dest)
+            elif old.dest.meta_node is self:
+                migrated = new_node.sockets.get(old.dest.sock_def.name)
+                if migrated:
+                    self._rewire(scene, win, old.source, migrated)
+            else:
+                continue
+            scene.removeItem(old)
+            if old in win.connections:
+                win.connections.remove(old)
+
+        scene.removeItem(self)
+        win.push_undo_state()
+
+    @staticmethod
+    def _rewire(scene, win, out_sock: "SocketItem", in_sock: "SocketItem"):
+        scene.enforce_connection_rules(out_sock, in_sock)
+        conn = Connection(out_sock, in_sock)
+        scene.addItem(conn)
+        win.connections.append(conn)
+        conn.source.meta_node._refresh_connections()
+        conn.dest.meta_node._refresh_connections()
+
     def get_socket(self, name: str) -> Optional[SocketItem]:
         return self.sockets.get(name)
 
@@ -822,15 +926,24 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
             self.setSelected(True)
             win._delete_selected_items()
 
+    def _extra_context_actions(self) -> list:
+        """Node-type-specific menu entries, inserted right after the color
+        picker. Override in a subclass instead of overriding the whole menu.
+        """
+        return []
+
     def contextMenuEvent(self, event):
         win = editor_window_of(self)
         if not win:
             super().contextMenuEvent(event)
             return
 
+        extra = self._extra_context_actions()
+
         self._run_context_menu(event, [
             (t("ctx_rename"),       getattr(self, "_begin_rename", None), self.supports_plain_rename),
             (t("ctx_change_color"), self._pick_color,                           True),
+            *([None, *extra] if extra else []),
             None,
             (t("ctx_duplicate"),    getattr(win, "duplicate_nodes",      None), True),
             (t("ctx_copy"),         getattr(win, "copy_nodes",           None), True),

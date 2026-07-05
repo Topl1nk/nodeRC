@@ -159,9 +159,57 @@ msgstr "У проєкті є незбережені зміни. Бажаєте �
 msgid "untitled"
 msgstr "Без назви"
 
-#. NodeRC Editor — 
+#. NodeRC Editor —
 msgid "window_title_prefix"
 msgstr "Редактор NodeRC — "
+
+#. Close tab
+msgid "tab_close_tooltip"
+msgstr "Закрити вкладку"
+
+#. New tab
+msgid "tab_new_tooltip"
+msgstr "Нова вкладка"
+
+#. Minimize
+msgid "titlebar_minimize_tooltip"
+msgstr "Згорнути"
+
+#. Maximize
+msgid "titlebar_maximize_tooltip"
+msgstr "Розгорнути"
+
+#. Restore
+msgid "titlebar_restore_tooltip"
+msgstr "Відновити"
+
+#. Close
+msgid "titlebar_close_tooltip"
+msgstr "Закрити"
+
+#. Restore previous session?
+msgid "session_restore_title"
+msgstr "Відновити попередню сесію?"
+
+#. nodeRC found tabs left open from your last session. Restore them?
+msgid "session_restore_body"
+msgstr "nodeRC знайшов вкладки, що залишились відкритими з минулої сесії. Відновити їх?"
+
+#. Yes
+msgid "session_restore_yes"
+msgstr "Так"
+
+#. No
+msgid "session_restore_no"
+msgstr "Ні"
+
+#. Always Yes
+msgid "session_restore_always_yes"
+msgstr "Завжди так"
+
+#. OK
+msgid "dialog_ok"
+msgstr "ОК"
 
 #. Save Error
 msgid "dialog_save_error_title"
@@ -392,9 +440,21 @@ msgstr ""
 msgid "ctx_change_color"
 msgstr "Змінити колір"
 
+#. Split into X/Y/Z
+msgid "ctx_split_vector"
+msgstr "Розбити на X/Y/Z"
+
+#. Merge into one output
+msgid "ctx_merge_vector"
+msgstr "Об'єднати в один вихід"
+
 #. Only header
 msgid "color_only_header"
 msgstr "Лише шапка"
+
+#. Reset
+msgid "color_reset"
+msgstr "Скинути"
 
 #. > Launch
 msgid "btn_launch"

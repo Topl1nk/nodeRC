@@ -160,9 +160,57 @@ msgstr "The project has unsaved changes. Do you want to save them?"
 msgid "untitled"
 msgstr "Untitled"
 
-#. NodeRC Editor — 
+#. NodeRC Editor —
 msgid "window_title_prefix"
 msgstr "NodeRC Editor — "
+
+#. Close tab
+msgid "tab_close_tooltip"
+msgstr "Close tab"
+
+#. New tab
+msgid "tab_new_tooltip"
+msgstr "New tab"
+
+#. Minimize
+msgid "titlebar_minimize_tooltip"
+msgstr "Minimize"
+
+#. Maximize
+msgid "titlebar_maximize_tooltip"
+msgstr "Maximize"
+
+#. Restore
+msgid "titlebar_restore_tooltip"
+msgstr "Restore"
+
+#. Close
+msgid "titlebar_close_tooltip"
+msgstr "Close"
+
+#. Restore previous session?
+msgid "session_restore_title"
+msgstr "Restore previous session?"
+
+#. nodeRC found tabs left open from your last session. Restore them?
+msgid "session_restore_body"
+msgstr "nodeRC found tabs left open from your last session. Restore them?"
+
+#. Yes
+msgid "session_restore_yes"
+msgstr "Yes"
+
+#. No
+msgid "session_restore_no"
+msgstr "No"
+
+#. Always Yes
+msgid "session_restore_always_yes"
+msgstr "Always Yes"
+
+#. OK
+msgid "dialog_ok"
+msgstr "OK"
 
 #. Save Error
 msgid "dialog_save_error_title"
@@ -276,9 +324,9 @@ msgstr "[E] Enum"
 msgid "param_enum_new_placeholder"
 msgstr "new item..."
 
-#. [F/F/T] Load
+#. [F/F] Load
 msgid "param_path_title"
-msgstr "[F/F/T] Load"
+msgstr "[F/F] Load"
 
 #. folder...
 msgid "param_path_dir_placeholder"
@@ -394,9 +442,21 @@ msgstr ""
 msgid "ctx_change_color"
 msgstr "Change Color"
 
+#. Split into X/Y/Z
+msgid "ctx_split_vector"
+msgstr "Split into X/Y/Z"
+
+#. Merge into one output
+msgid "ctx_merge_vector"
+msgstr "Merge into one output"
+
 #. Only header
 msgid "color_only_header"
 msgstr "Only header"
+
+#. Reset
+msgid "color_reset"
+msgstr "Reset"
 
 #. > Launch
 msgid "btn_launch"

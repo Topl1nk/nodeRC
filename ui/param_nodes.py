@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 import xml.etree.ElementTree as ET
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from PyQt5.QtWidgets import (
     QAbstractButton, QAbstractSpinBox, QApplication, QCheckBox, QComboBox,
@@ -27,6 +27,7 @@ from configuration import (
 )
 from ui.theme import (
     FIELD_QSS, COMBOBOX_QSS, SPINBOX_QSS, TOOLBTN_QSS, VECTOR_AXIS_LABEL_QSS,
+    apply_field_placeholder_palette,
 )
 from core.node_blueprint import (
     NodeDef, SocketDef, html_title, param_node_def, resolve_color_schema,
@@ -87,18 +88,32 @@ class ParamNode(MetaNode):
             w.setFixedWidth(self._widget_width())
         w.setFixedHeight(NODE_WIDGET_HEIGHT)
         w.setStyleSheet(FIELD_QSS)
+        apply_field_placeholder_palette(w)
         return w
 
-    def _make_combobox(self, items: List[str] = None, *,
+    def _make_combobox(self, items: List[str] = None, *, placeholder: str = "",
                        fixed_width: bool = True, editable: bool = True) -> QComboBox:
         w = NodeComboBox(self)
         w.setEditable(editable)
         for item in (items or []):
             w.addItem(item)
+        if placeholder and w.lineEdit():
+            # Every other field in this family (_make_field, the search bar)
+            # sets its placeholder text *before* the palette patch below —
+            # a stylesheet-styled QLineEdit only fully repaints from Qt's own
+            # QSS-derived colours the first time it's asked to paint actual
+            # placeholder content, so patching first and setting the text
+            # after (as PathParamNode's file combo used to do, calling
+            # lineEdit().setPlaceholderText() on the widget this returned)
+            # leaves exactly that one field's placeholder stuck on the
+            # stale/black colour. Keeping the same order here as everywhere
+            # else in the family closes that gap for good.
+            w.lineEdit().setPlaceholderText(placeholder)
         if fixed_width:
             w.setFixedWidth(self._widget_width())
         w.setFixedHeight(NODE_WIDGET_HEIGHT)
         w.setStyleSheet(COMBOBOX_QSS)
+        apply_field_placeholder_palette(w)
         pal = w.palette()
         pal.setColor(QPalette.ButtonText, QColor(TEXT_COLOR))
         w.setPalette(pal)
@@ -119,6 +134,7 @@ class ParamNode(MetaNode):
             w.setFixedWidth(self._widget_width())
         w.setFixedHeight(NODE_WIDGET_HEIGHT)
         w.setStyleSheet(SPINBOX_QSS)
+        apply_field_placeholder_palette(w)
         pal = w.palette()
         pal.setColor(QPalette.ButtonText, QColor(TEXT_COLOR))
         w.setPalette(pal)
@@ -454,37 +470,77 @@ class ParamNode(MetaNode):
 class VectorParamNode(ParamNode):
     AXES: tuple = ()
 
-    def __init__(self, param_name: str):
-        super().__init__(param_node_def(param_name, self.TYPE_ID))
+    def __init__(self, param_name: str, split: bool = False):
+        self._split = split
+        super().__init__(self._build_node_def(param_name))
+        self._editors: List[QLineEdit] = []
+        if split:
+            self._build_split_rows()
+        else:
+            self._build_columns()
 
+    # ── Layout ────────────────────────────────────────────────────────────────
+
+    def _build_node_def(self, param_name: str) -> NodeDef:
+        if self._split:
+            # Merged back together, each axis becomes its own plain "float"
+            # output row instead of one combined float2/float3 output — the
+            # node reads as N ordinary float nodes fused into one body.
+            schema = resolve_color_schema("float")
+            sockets = [
+                SocketDef(
+                    f"{axis.lower()}_out", "output", row=i, label=axis.lower(),
+                    color=schema["socket"], param_type="float",
+                    is_expanded_vector_start=(i == 0), vector_base="components",
+                )
+                for i, axis in enumerate(self.AXES)
+            ]
+            return NodeDef(
+                title=html_title(param_name),
+                header_color=schema["hdr"],
+                body_color=schema["body"],
+                sockets=sockets,
+                width=200,
+                has_footer=False,
+                plain_title=param_name,
+            )
+        node_def = param_node_def(param_name, self.TYPE_ID)
+        # Mark the sole output as a collapsed vector so MetaNode._generate
+        # paints the mirrored expand arrow next to it; merged/split is
+        # otherwise invisible to the generic node builder.
+        node_def.sockets[0].is_collapsed_vector = True
+        node_def.sockets[0].vector_base = "components"
+        return node_def
+
+    def _make_axis_row_widgets(self, axis: str) -> Tuple[QWidget, QLineEdit]:
+        editor = self._make_field("0.0", axis.lower(), fixed_width=False)
+        editor.setValidator(QDoubleValidator())
+        editor.textChanged.connect(self._notify_connections_changed)
+        editor.editingFinished.connect(self._on_float_editing_finished)
+
+        label = QLabel(f"{axis}:")
+        label.setStyleSheet(VECTOR_AXIS_LABEL_QSS)
+
+        cell_widget = QWidget()
+        cell_widget.setStyleSheet("background:transparent;")
+        layout = QHBoxLayout(cell_widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        layout.addWidget(label)
+        layout.addWidget(editor)
+        return cell_widget, editor
+
+    def _build_columns(self):
         rows = self.node_def.param_row_count
-
         total_w = self._widget_width()
         n_axes = len(self.AXES)
         spacing = 4
         col_w = int((total_w - spacing * (n_axes - 1)) / n_axes)
 
-        self._editors: List[QLineEdit] = []
         for i, axis in enumerate(self.AXES):
-            cell_widget = QWidget()
-            cell_widget.setStyleSheet("background:transparent;")
-            layout = QHBoxLayout(cell_widget)
-            layout.setContentsMargins(0, 0, 0, 0)
-            layout.setSpacing(2)
-
-            editor = self._make_field("0.0", axis.lower(), fixed_width=False)
-            editor.setValidator(QDoubleValidator())
-            editor.textChanged.connect(self._notify_connections_changed)
-            editor.editingFinished.connect(self._on_float_editing_finished)
-
-            label = QLabel(f"{axis}:")
-            label.setStyleSheet(VECTOR_AXIS_LABEL_QSS)
-
-            layout.addWidget(label)
-            layout.addWidget(editor)
-            self._editors.append(editor)
-
+            cell_widget, editor = self._make_axis_row_widgets(axis)
             cell_widget.setFixedWidth(col_w)
+            self._editors.append(editor)
 
             proxy = self._make_proxy(cell_widget)
             proxy.setPos(
@@ -493,8 +549,22 @@ class VectorParamNode(ParamNode):
             )
             proxy.setZValue(NODE_WIDGET_Z_BASE - rows)
             proxy._field_key = f"vector_{axis}"
-
             self._watch_field_focus(cell_widget)
+
+    def _build_split_rows(self):
+        for i, axis in enumerate(self.AXES):
+            row_widget, editor = self._make_axis_row_widgets(axis)
+            row_widget.setFixedWidth(self._widget_width())
+            self._editors.append(editor)
+
+            proxy = self._make_proxy(row_widget)
+            proxy.setPos(
+                NODE_HORIZONTAL_PAD,
+                NODE_HEADER_HEIGHT + i * NODE_ROW_HEIGHT + NODE_WIDGET_V_OFFSET,
+            )
+            proxy.setZValue(NODE_WIDGET_Z_BASE - i)
+            proxy._field_key = f"vector_{axis}"
+            self._watch_field_focus(row_widget)
 
     def get_value_state(self) -> Any:
         return [editor.text() for editor in self._editors]
@@ -519,7 +589,37 @@ class VectorParamNode(ParamNode):
         self.set_value_state(source_node.get_value_state())
 
     def get_value(self, socket_name: str = None) -> str:
+        if self._split and socket_name:
+            axis = socket_name[:-len("_out")].upper()
+            try:
+                idx = self.AXES.index(axis)
+                return self._editors[idx].text().strip() or "0.0"
+            except ValueError:
+                pass
         return " ".join(editor.text().strip() or "0.0" for editor in self._editors)
+
+    # ── Split / merge ─────────────────────────────────────────────────────────
+
+    def toggle_vector_expansion(self, base_name: str):
+        creation_data = dict(getattr(self, "creation_data", None) or {})
+        display = creation_data.get("display") or self.node_def.plain_title
+
+        new_node = type(self)(display, split=not self._split)
+        new_node.set_value_state(self.get_value_state())
+
+        creation_data.setdefault("param_type", self.TYPE_ID)
+        creation_data["display"] = display
+        creation_data["split"] = new_node._split
+        new_node.creation_data = creation_data
+
+        self._swap_node(new_node)
+
+    def _extra_context_actions(self) -> list:
+        # A right-click alternative to the small header-row arrow — same
+        # toggle, easier to hit than the tiny button.
+        label = t("ctx_merge_vector") if self._split else t("ctx_split_vector")
+        base_name = next(iter(self._vector_buttons), "components")
+        return [(label, lambda: self.toggle_vector_expansion(base_name), True)]
 
 
 class _SingleFieldParamNode(ParamNode):
@@ -760,13 +860,12 @@ class PathParamNode(ParamNode):
         file_schema   = resolve_color_schema("filepath")
         string_schema = resolve_color_schema("string")
 
-        # Outputs sit alone at row 0 — the same convention every other param
-        # node uses (output first, right after the header). Both share the
-        # same pink (filepath) socket color rather than dirpath's yellow —
-        # they already occupy the same position, so they read as one output.
-        dirpath_socket = SocketDef("dirpath_out", "output", row=0, label="path",
+        # Two distinct output rows: the folder output at row 0, the file
+        # output directly beneath it at row 1. Both share the same pink
+        # (filepath) socket color so they read as one family of outputs.
+        dirpath_socket = SocketDef("dirpath_out", "output", row=0, label="folder path",
                                    color=file_schema["socket"], param_type="dirpath")
-        filepath_socket = SocketDef("path_out", "output", row=0, label="path",
+        filepath_socket = SocketDef("path_out", "output", row=1, label="file path",
                                     color=file_schema["socket"], param_type="filepath")
         # This node always exposes both outputs, but MetaNode paints its header
         # from whichever non-exec output socket comes first in the list — order
@@ -781,16 +880,15 @@ class PathParamNode(ParamNode):
             header_color=dir_schema["hdr"],
             body_color=dir_schema["body"],
             sockets=[
-                # Row 0 shares the dir_editor row with an optional upstream
-                # folder input, mirroring how filename/filetype already sit
-                # on the same row as the widget they feed.
-                SocketDef("dirpath_in", "input", row=1, label="",
+                # Rows 2-4 shift down one slot to make room for the file path
+                # output row above them.
+                SocketDef("dirpath_in", "input", row=2, label="",
                           color=file_schema["socket"], param_type="dirpath",
                           optional=True),
-                SocketDef("filename", "input", row=2, label="",
+                SocketDef("filename", "input", row=3, label="",
                           color=string_schema["socket"], param_type="string",
                           optional=True),
-                SocketDef("filetype", "input", row=3, label="",
+                SocketDef("filetype", "input", row=4, label="",
                           color=string_schema["socket"], param_type="string",
                           optional=True),
                 *ordered_sockets,
@@ -813,8 +911,7 @@ class PathParamNode(ParamNode):
         self._dir_editor.textChanged.connect(self._notify_connections_changed)
         self._dir_editor.editingFinished.connect(self._on_widget_user_edit)
 
-        self._file_combo = self._make_combobox()
-        self._file_combo.lineEdit().setPlaceholderText(t("param_path_file_placeholder"))
+        self._file_combo = self._make_combobox(placeholder=t("param_path_file_placeholder"))
         self._file_combo.currentTextChanged.connect(self._notify_connections_changed)
         self._file_combo.activated.connect(self._on_widget_user_edit)
         if self._file_combo.lineEdit():
@@ -825,9 +922,9 @@ class PathParamNode(ParamNode):
         # otherwise a bare leaf like the combobox can lose its proxy widget reference
         # and silently skip the recolour pass.
         self._attach_widget_at_row(self._row_container(
-            [self._dir_editor, self._make_toolbtn("…", self._browse_for_folder)]), 1)
-        self._attach_widget_at_row(self._row_container([self._file_combo]), 2)
-        self._attach_widget_at_row(self._row_container([self._ext_filter]), 3)
+            [self._dir_editor, self._make_toolbtn("…", self._browse_for_folder)]), 2)
+        self._attach_widget_at_row(self._row_container([self._file_combo]), 3)
+        self._attach_widget_at_row(self._row_container([self._ext_filter]), 4)
 
     def _browse_for_folder(self):
         path = QFileDialog.getExistingDirectory(None, t("dialog_select_folder"), self._dir_editor.text())
@@ -928,20 +1025,20 @@ class Float2ParamNode(VectorParamNode):
     TYPE_ID = "float2"
     AXES = ("X", "Y")
 
-    def __init__(self, param_name=None):
+    def __init__(self, param_name=None, split: bool = False):
         if param_name is None:
             param_name = t("param_float2_title")
-        super().__init__(param_name)
+        super().__init__(param_name, split=split)
 
 
 class Float3ParamNode(VectorParamNode):
     TYPE_ID = "float3"
     AXES = ("X", "Y", "Z")
 
-    def __init__(self, param_name=None):
+    def __init__(self, param_name=None, split: bool = False):
         if param_name is None:
             param_name = t("param_float3_title")
-        super().__init__(param_name)
+        super().__init__(param_name, split=split)
 
 
 PARAM_NODE_TYPES: Dict[str, type] = {

@@ -41,6 +41,12 @@ CONNECTION_SELECTED_COLOR = "#FFFFFF"
 BUTTON_TEXT_COLOR = "#FFFFFF"
 TEXT_COLOR = "#FFFFFF"
 TEXT_MUTED_COLOR = "#A0C0E0"
+# Placeholder text ("new item...", "folder...") is set explicitly via
+# QPalette rather than left to Qt's own derivation — the first QLineEdit
+# built with any given stylesheet text in a process's lifetime can render
+# its placeholder far too dark (a Fusion-style QSS-cache cold-start quirk)
+# until a second widget with the same stylesheet primes the cache.
+FIELD_PLACEHOLDER_COLOR = "#878F9A"
 
 
 # ── External paths ─────────────────────────────────────────────────────────────
@@ -87,8 +93,13 @@ VECTOR_PARAM_TYPES: frozenset[str] = frozenset({"float2", "float3", "vector"})
 
 # ── Vector socket grouping ─────────────────────────────────────────────────────
 VECTOR_COLLAPSE_GLYPH   = "◀"        # collapse X/Y/Z sockets into one vector socket
+# Same glyph, pointing the other way — used on output rows, where the arrow
+# sits to the left of the label and should point *into* it, not away.
+VECTOR_COLLAPSE_GLYPH_MIRRORED = "▶"
 VECTOR_EXPAND_GLYPH     = "▼"        # expand a vector socket back into X/Y/Z sockets
 VECTOR_AXIS_LABEL_COLOR = "#AAAAAA"  # axis prefix ("X:", "Y:", "Z:") on vector editors
+VECTOR_TOGGLE_WIDTH     = 16         # fixed width for an output-side toggle, so its
+                                     # mirrored (left-of-label) position is deterministic
 
 # ── Editor history ─────────────────────────────────────────────────────────────
 UNDO_HISTORY_LIMIT = 100  # retained editor snapshots for undo/redo
@@ -113,11 +124,20 @@ NODE_COMBO_POPUP_PROXY_Z = 4000  # a proxy's own Z while its combobox popup is o
 # title) when selected — the single source for the entire selected appearance.
 NODE_SELECTION_OVERLAY_RGBA = (255, 255, 255, 40)
 
-# ── Windows title bar (DwmSetWindowAttribute identifiers) ──────────────────────
-# Caption/text colors mirror WINDOW_BACKGROUND_COLOR / TEXT_COLOR — single source.
-DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-DWMWA_CAPTION_COLOR           = 35
-DWMWA_TEXT_COLOR              = 36
+# ── Custom title bar (frameless window chrome) ─────────────────────────────────
+TITLE_BAR_HEIGHT       = 36   # px, hosts the tab strip + min/max/close buttons
+TITLE_BAR_BTN_WIDTH    = 46   # px, each window-control button (min/max/close)
+TITLE_BAR_RESIZE_MARGIN = 6   # px, edge hit-test band for WM_NCHITTEST resize
+TAB_HEIGHT             = 30   # px
+TAB_MIN_WIDTH          = 90
+TAB_MAX_WIDTH          = 200
+TAB_CLOSE_BTN_SIZE     = 16
+TAB_NEW_BTN_WIDTH      = 30
+
+# DwmSetWindowAttribute identifier + DWMWCP_* values (Windows 11) — restores
+# the native rounded window corners a frameless window otherwise loses.
+DWMWA_WINDOW_CORNER_PREFERENCE = 33
+DWMWCP_ROUND = 2
 
 # ── Square button footprint ────────────────────────────────────────────────────
 # Every button-like control (browse "…", combobox drop-down, +/- toolbuttons, a
@@ -149,22 +169,27 @@ AUTOSPAWN_Y_OFFSET = -40  # vertical start offset of the first created param nod
 AUTOSPAWN_V_GAP    = 14   # vertical gap between stacked created param nodes (no overlap)
 
 # ── Socket/node color schema per type ─────────────────────────────────────────
-# Matches Unreal Engine Blueprint pin colors (exec=white, bool=maroon, int=cyan,
-# float=pale green, vector/float2/float3=yellow, string=magenta, enum=olive, ...)
+# Unreal-Engine-flavoured pin colors (exec=grey, bool=red, int=cyan, float=
+# green, string=magenta, ...), each param type given its own unique hue so no
+# two node headers/sockets are ever confusable. All non-achromatic entries
+# share one tuned saturation/brightness band for a coherent look.
+# exec is grey rather than white — white is reserved for the selection/hover
+# highlight (NODE_SELECTED_COLOR / NODE_HOVER_COLOR), so an exec pin/wire
+# can't be mistaken for a selected one.
 SOCKET_COLOR_SCHEMA: dict[str, dict[str, str]] = {
-    "exec":     {"socket": "#FFFFFF"},
-    "string":   {"socket": "#FF00FF"},
-    "bool":     {"socket": "#A0021A"},
-    "integer":  {"socket": "#1EA6EC"},
-    "float":    {"socket": "#98FB98"},
-    "float2":   {"socket": "#FFC800"},
-    "float3":   {"socket": "#FFC800"},
-    "vector":   {"socket": "#FFC800"},
-    "enum":     {"socket": "#B0A44A"},
-    "enum_int": {"socket": "#B0A44A"},
-    "filepath": {"socket": "#C39BF4"},
-    "dirpath":  {"socket": "#9B7EDE"},
-    "keyvalue": {"socket": "#0099A6"},
+    "exec":     {"socket": "#9AA0A6"},
+    "bool":     {"socket": "#CC4E63"},
+    "string":   {"socket": "#E055B2"},
+    "keyvalue": {"socket": "#BB62D9"},
+    "dirpath":  {"socket": "#876CD9"},
+    "filepath": {"socket": "#6787E6"},
+    "integer":  {"socket": "#59BAEB"},
+    "float":    {"socket": "#62D99D"},
+    "float2":   {"socket": "#89D962"},
+    "float3":   {"socket": "#C9E055"},
+    "vector":   {"socket": "#EBC452"},
+    "enum":     {"socket": "#B88A49"},
+    "enum_int": {"socket": "#C76646"},
     "any":      {"socket": "#C8C8C8"},
 }
 SOCKET_HOVER_COLOR = "#FFFFFF"
@@ -291,6 +316,20 @@ WINDOW_INITIAL_Y = 100
 WINDOW_INITIAL_WIDTH = 1280
 WINDOW_INITIAL_HEIGHT = 800
 WINDOW_STYLE = "Fusion"
+# Generous enough that the title bar always has room for its own content —
+# see the nativeEvent hit-test note in editor_window.py.
+WINDOW_MIN_WIDTH = 480
+WINDOW_MIN_HEIGHT = 320
+
+# ── Autosave (core/autosave.py) ─────────────────────────────────────────────────
+APP_DATA_DIR_NAME  = "nodeRC"    # folder under %APPDATA% for autosave + prefs
+AUTOSAVE_DIR_NAME  = "autosave"
+AUTOSAVE_INTERVAL_MS = 60_000    # background snapshot cadence for dirty tabs
+PREFS_FILE_NAME    = "prefs.json"
+
+# ── Whole-session recovery (core/session.py) ────────────────────────────────────
+SESSION_DIR_NAME     = "sessions"
+SESSION_HISTORY_LIMIT = 5   # rotating history of past sessions kept on disk
 
 START_NODE_INITIAL_X = 60
 START_NODE_INITIAL_Y = 80

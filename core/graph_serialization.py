@@ -21,7 +21,10 @@ from configuration import GROUP_FRAME_DEFAULT_WIDTH, GROUP_FRAME_DEFAULT_HEIGHT
 from diagnostics import log_and_explain
 from core.graph_model import GraphModel, NodeModel, ConnectionModel, GroupModel
 from ui.graph_items import Connection, GroupFrameItem, MetaNode
-from ui.param_nodes import EnumParamNode, PARAM_NODE_TYPES, ParamNode, PathParamNode, StringParamNode
+from ui.param_nodes import (
+    EnumParamNode, Float2ParamNode, Float3ParamNode, PARAM_NODE_TYPES, ParamNode,
+    PathParamNode, StringParamNode,
+)
 from ui.command_nodes import CommandNode, StartNode
 
 
@@ -49,6 +52,10 @@ def build_param_node(creation_data: dict) -> ParamNode:
         # PathParamNode always exposes both a dirpath and a filepath output —
         # ptype tells it which one to lead with for its header/socket color.
         node = node_class(name, param_type=ptype) if name else node_class(param_type=ptype)
+    elif node_class in (Float2ParamNode, Float3ParamNode):
+        # Restores whichever split/merged shape the node was last toggled to.
+        split = bool(creation_data.get("split", False))
+        node = node_class(name, split=split) if name else node_class(split=split)
     else:
         node = node_class(name) if name else node_class()
     node.creation_data = creation_data

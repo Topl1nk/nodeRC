@@ -16,7 +16,7 @@ from configuration import (
     SEARCH_DIALOG_HEIGHT, SEARCH_RESULTS_LIMIT,
     SEARCH_DIALOG_X_OFFSET,
 )
-from ui.theme import NODE_BORDER_COLOR, SEARCH_DIALOG_STYLESHEET
+from ui.theme import NODE_BORDER_COLOR, SEARCH_DIALOG_STYLESHEET, apply_field_placeholder_palette
 from localization import t
 from ui.param_nodes import PARAM_NODE_TYPES
 from ui.command_nodes import CommandNode
@@ -87,6 +87,7 @@ class SearchMenuDialog(QDialog):
 
         self.search_bar = QLineEdit()
         self.search_bar.setPlaceholderText(t("search_placeholder"))
+        apply_field_placeholder_palette(self.search_bar)
         self.search_bar.textChanged.connect(self._filter_tree)
         self.search_bar.returnPressed.connect(self._activate_selection)
         self.search_bar.installEventFilter(self)

@@ -19,7 +19,7 @@ from core.node_blueprint import (
     PARAM_TYPE_PREFIX, command_node_def, group_xyz_params, param_spec_name,
     resolve_param_type, start_node_def,
 )
-from ui.graph_items import Connection, MetaNode, SocketItem, editor_window_of
+from ui.graph_items import MetaNode, editor_window_of
 from diagnostics import log_and_explain
 
 
@@ -96,44 +96,8 @@ class CommandNode(MetaNode):
 
     def toggle_vector_expansion(self, base_name: str):
         self.expanded_vectors.symmetric_difference_update({base_name})
-
-        scene = self.scene()
-        win = editor_window_of(self)
-        if not win or not scene:
-            return
-
-        was_selected = self.isSelected()
         new_node = CommandNode(self.cmd_def, self.expanded_vectors.copy())
-        new_node.setPos(self.pos())
-        scene.addItem(new_node)
-        new_node.setSelected(was_selected)
-
-        for old in list(win.connections):
-            if old.source.meta_node is self:
-                migrated = new_node.sockets.get(old.source.sock_def.name)
-                if migrated:
-                    self._rewire(scene, win, migrated, old.dest)
-            elif old.dest.meta_node is self:
-                migrated = new_node.sockets.get(old.dest.sock_def.name)
-                if migrated:
-                    self._rewire(scene, win, old.source, migrated)
-            else:
-                continue
-            scene.removeItem(old)
-            if old in win.connections:
-                win.connections.remove(old)
-
-        scene.removeItem(self)
-        win.push_undo_state()
-
-    @staticmethod
-    def _rewire(scene, win, out_sock: SocketItem, in_sock: SocketItem):
-        scene.enforce_connection_rules(out_sock, in_sock)
-        conn = Connection(out_sock, in_sock)
-        scene.addItem(conn)
-        win.connections.append(conn)
-        conn.source.meta_node._refresh_connections()
-        conn.dest.meta_node._refresh_connections()
+        self._swap_node(new_node)
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.LeftButton:

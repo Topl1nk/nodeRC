@@ -158,8 +158,56 @@ msgstr ""
 msgid "untitled"
 msgstr ""
 
-#. NodeRC Editor — 
+#. NodeRC Editor —
 msgid "window_title_prefix"
+msgstr ""
+
+#. Close tab
+msgid "tab_close_tooltip"
+msgstr ""
+
+#. New tab
+msgid "tab_new_tooltip"
+msgstr ""
+
+#. Minimize
+msgid "titlebar_minimize_tooltip"
+msgstr ""
+
+#. Maximize
+msgid "titlebar_maximize_tooltip"
+msgstr ""
+
+#. Restore
+msgid "titlebar_restore_tooltip"
+msgstr ""
+
+#. Close
+msgid "titlebar_close_tooltip"
+msgstr ""
+
+#. Restore previous session?
+msgid "session_restore_title"
+msgstr ""
+
+#. nodeRC found tabs left open from your last session. Restore them?
+msgid "session_restore_body"
+msgstr ""
+
+#. Yes
+msgid "session_restore_yes"
+msgstr ""
+
+#. No
+msgid "session_restore_no"
+msgstr ""
+
+#. Always Yes
+msgid "session_restore_always_yes"
+msgstr ""
+
+#. OK
+msgid "dialog_ok"
 msgstr ""
 
 #. Save Error
@@ -359,8 +407,20 @@ msgstr ""
 msgid "ctx_change_color"
 msgstr ""
 
+#. Split into X/Y/Z
+msgid "ctx_split_vector"
+msgstr ""
+
+#. Merge into one output
+msgid "ctx_merge_vector"
+msgstr ""
+
 #. Only header
 msgid "color_only_header"
+msgstr ""
+
+#. Reset
+msgid "color_reset"
 msgstr ""
 
 #. > Launch

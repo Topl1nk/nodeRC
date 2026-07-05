@@ -126,12 +126,18 @@ class GroupFrameItem(RenamableTitleMixin, QGraphicsRectItem):
                 merged = _merge_hsv_component(frame._color, c, changed_component)
                 frame.set_color(merged, record_undo=False)
 
+        def reset_all():
+            for frame in selected_frames:
+                frame.set_color(GROUP_FRAME_BORDER_COLOR, record_undo=False)
+            return GROUP_FRAME_BORDER_COLOR, False
+
         current = QColor(self._color)
         if len(self._color) < 9:
             current.setAlpha(GROUP_FRAME_FILL_ALPHA)
 
         popup = ColorPickerPopup(
             on_color_selected=apply_color_to_all,
+            on_reset=reset_all,
             initial_color=current.name(QColor.HexArgb),
             on_close=on_close,
             parent=win

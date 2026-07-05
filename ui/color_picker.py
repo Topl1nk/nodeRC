@@ -22,7 +22,7 @@ from configuration import (
     COLOR_PICKER_PRESET_COLS, COLOR_PICKER_PRESET_GAP,
     DEFAULT_HEADER_COLOR,
 )
-from ui.theme import BUTTON_BG_COLOR, NODE_BORDER_COLOR
+from ui.theme import BUTTON_BG_COLOR, NODE_BORDER_COLOR, PUSHBTN_QSS
 
 
 class GradientSlider(QWidget):
@@ -203,7 +203,8 @@ class PresetButton(QPushButton):
 
 class ColorPickerPopup(QWidget):
     def __init__(self, on_color_selected, initial_color=None, on_close=None,
-                 initial_only_header=False, on_only_header_changed=None, parent=None):
+                 initial_only_header=False, on_only_header_changed=None,
+                 on_reset=None, parent=None):
         """Custom in-app palette popup.
 
         ``on_color_selected`` is invoked as ``(hex_color, only_header)`` on every
@@ -211,10 +212,15 @@ class ColorPickerPopup(QWidget):
         ``(only_header)`` when the checkbox is toggled WITHOUT emitting a color
         change — callers use this to update scope across multi-node selections
         without forcing every node to adopt the picker's current color.
+        ``on_reset``, when provided, is called with no arguments when the Reset
+        button is clicked; it must restore the target(s) to their default
+        color and return ``(hex_color, only_header)`` so the popup can sync
+        its own controls to the new state.
         """
         super().__init__(parent, Qt.Popup | Qt.FramelessWindowHint)
         self.on_color_selected = on_color_selected
         self.on_only_header_changed = on_only_header_changed
+        self.on_reset = on_reset
         self.on_close = on_close
         self.setAttribute(Qt.WA_DeleteOnClose)
         # Object name scopes the popup-level border to the popup root — without
@@ -310,6 +316,15 @@ class ColorPickerPopup(QWidget):
         self.only_header_check.setFixedHeight(COLOR_PICKER_ROW_HEIGHT)
         self.only_header_check.toggled.connect(self._on_only_header_toggled)
         hex_row.addWidget(self.only_header_check)
+
+        # Restores whatever color this type/node would have if the user had
+        # never opened the picker — same restore target `only_header_check`
+        # ends up reflecting after the reset.
+        self.reset_button = QPushButton(t("color_reset"))
+        self.reset_button.setFixedHeight(COLOR_PICKER_ROW_HEIGHT)
+        self.reset_button.setStyleSheet(PUSHBTN_QSS)
+        self.reset_button.clicked.connect(self._on_reset_clicked)
+        hex_row.addWidget(self.reset_button)
         hex_row.addStretch()
         main_layout.addLayout(hex_row)
 
@@ -354,6 +369,20 @@ class ColorPickerPopup(QWidget):
         else:
             # Single-node path: re-emit so the node repaints with the new scope.
             self._emit_color('only_header')
+
+    def _on_reset_clicked(self):
+        if self.on_reset is None:
+            return
+        result = self.on_reset()
+        if not result:
+            return
+        hex_color, only_header = result
+        self.current_color = QColor(hex_color)
+        self._only_header = bool(only_header)
+        self.only_header_check.blockSignals(True)
+        self.only_header_check.setChecked(self._only_header)
+        self.only_header_check.blockSignals(False)
+        self._sync_to_current_color()
 
     def set_from_hex(self, hex_str):
         c = QColor(hex_str)

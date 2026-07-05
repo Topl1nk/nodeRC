@@ -21,6 +21,13 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle(WINDOW_STYLE)
 
+    # Kept alive on the QApplication instance itself — the language-cycle
+    # hotkey then works no matter which window (main or any secondary
+    # dialog) currently has focus.
+    from ui.global_hotkeys import LanguageHotkeyFilter
+    app.hotkey_filter = LanguageHotkeyFilter(app)
+    app.installEventFilter(app.hotkey_filter)
+
     try:
         from core.rc_documentation_extractor import rebuild_command_database_from_html
         rebuild_command_database_from_html(RC_HELP_HTML, COMMAND_DB_JSON)
