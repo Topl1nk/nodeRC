@@ -830,20 +830,30 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
                 conn.refresh()
         self.update_vector_buttons_visibility()
 
-    def _is_vector_connected(self, base_name: str) -> bool:
+    def _connected_vector_bases(self) -> set:
+        """vector_base names of every vector socket of this node currently
+        wired to something. One pass over win.connections regardless of how
+        many vector params this node has, instead of update_vector_buttons_
+        visibility's previous approach of rescanning the whole connection
+        list once per vector param — this runs on every _refresh_connections
+        (i.e. every frame of a node drag)."""
         win = editor_window_of(self)
+        connected = set()
         if not win:
-            return False
+            return connected
         for c in win.connections:
-            if c.source.meta_node is self and c.source.sock_def.vector_base == base_name:
-                return True
-            if c.dest.meta_node is self and c.dest.sock_def.vector_base == base_name:
-                return True
-        return False
+            if c.source.meta_node is self and c.source.sock_def.vector_base:
+                connected.add(c.source.sock_def.vector_base)
+            if c.dest.meta_node is self and c.dest.sock_def.vector_base:
+                connected.add(c.dest.sock_def.vector_base)
+        return connected
 
     def update_vector_buttons_visibility(self):
+        if not self._vector_buttons:
+            return
+        connected = self._connected_vector_bases()
         for base_name, (_, proxy) in self._vector_buttons.items():
-            proxy.setVisible(not self._is_vector_connected(base_name))
+            proxy.setVisible(base_name not in connected)
 
     def toggle_vector_expansion(self, base_name: str):
         """
