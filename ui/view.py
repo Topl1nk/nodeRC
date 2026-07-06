@@ -243,20 +243,32 @@ class GraphicsView(QGraphicsView):
             node = node.parentItem()
         if node is self._hovered_node:
             return
-        if self._hovered_node is not None:
+        old_node = self._hovered_node
+        if old_node is not None:
             try:
-                self._hovered_node._set_hovered(False)
+                old_node._set_hovered(False)
             except RuntimeError:
-                pass  # the previously-hovered node was deleted from under us
+                old_node = None  # deleted from under us — nothing left to repaint
         self._hovered_node = node
         if node is not None:
             node._set_hovered(True)
-        # Force the whole viewport to repaint rather than trusting the node's
-        # own item-level update() under SmartViewportUpdate — a hover toggle
-        # is infrequent enough that a full repaint here is not a real cost,
-        # and it removes any dependency on Qt's per-item dirty-region tracking
-        # correctly covering an embedded proxy widget's area.
-        self.viewport().update()
+        # Force a repaint of exactly the old/new node's own area rather than
+        # trusting SmartViewportUpdate's automatic dirty-region tracking (an
+        # embedded proxy widget's area isn't always covered by it) or, at the
+        # other extreme, repainting the *entire* viewport on every hover
+        # change — on a large, zoomed-out scene that turns a hover flicker
+        # between two small nodes into a full-canvas redraw every ~40ms poll
+        # tick. Explicitly updating just the two nodes' mapped rects keeps
+        # the "don't rely on automatic tracking" guarantee this replaced
+        # without paying for the untouched rest of the canvas.
+        for changed_node in (old_node, node):
+            if changed_node is None:
+                continue
+            try:
+                rect = self.mapFromScene(changed_node.sceneBoundingRect()).boundingRect()
+            except RuntimeError:
+                continue  # deleted from under us
+            self.viewport().update(rect)
 
     def _update_hovered_widget(self, widget: Optional[QWidget]):
         """Drives the ``[nodeHover="true"]`` QSS state on embedded field/

@@ -12,14 +12,20 @@ from __future__ import annotations
 import json
 import os
 import time
+from concurrent.futures import Executor, ThreadPoolExecutor
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 from configuration import APP_DATA_DIR_NAME
-from core.graph_serialization import serialize_graph
 from diagnostics import log_and_explain
 
 AUTOSAVE_VERSION = 1
+
+# A single background worker per process: snapshots for one session all
+# funnel through it, so two writes for the same tab can never race and land
+# out of order, while the disk I/O itself never blocks the UI thread that
+# queued it (see write_snapshot_async).
+_executor: Executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="autosave")
 
 
 def app_data_dir() -> Path:
@@ -32,13 +38,19 @@ def tab_snapshot_path(session_dir: Path, tab_id: str) -> Path:
 
 
 def write_snapshot(session_dir: Path, tab_id: str, project_path: Optional[str],
-                    dirty: bool, tab_index: int, scene, connections: List) -> None:
+                    dirty: bool, tab_index: int, graph: dict) -> None:
     """Write this tab's current graph into its slot in ``session_dir``.
     Never touches ``project_path`` itself — that file is only ever written
     by an explicit manual save. ``tab_index`` (the tab's position in the
     window's tab strip) is what lets restore rebuild tabs in their original
     left-to-right order — the files themselves sort by tab_id, which carries
-    no ordering information at all."""
+    no ordering information at all.
+
+    ``graph`` is a plain-data payload already produced by
+    ``core.graph_serialization.serialize_graph`` — this function never
+    touches the live scene, so it's safe to call from the background thread
+    ``write_snapshot_async`` submits it to.
+    """
     path = tab_snapshot_path(session_dir, tab_id)
     abs_path = os.path.abspath(project_path) if project_path else None
     rel_path = None
@@ -55,7 +67,7 @@ def write_snapshot(session_dir: Path, tab_id: str, project_path: Optional[str],
         "has_manual_save": project_path is not None,
         "manual_path_absolute": abs_path,
         "manual_path_relative": rel_path,
-        "graph": serialize_graph(scene, connections),
+        "graph": graph,
     }
     try:
         tmp = path.with_suffix(".tmp")
@@ -64,6 +76,28 @@ def write_snapshot(session_dir: Path, tab_id: str, project_path: Optional[str],
         os.replace(tmp, path)
     except Exception as exc:
         log_and_explain("Autosave write failed", exc)
+
+
+def write_snapshot_async(session_dir: Path, tab_id: str, project_path: Optional[str],
+                          dirty: bool, tab_index: int, graph: dict) -> None:
+    """Same as ``write_snapshot``, but the JSON encode + disk write run on a
+    background thread instead of the caller's (the UI thread on every edit
+    that dirties a tab) — ``graph`` is already a plain dict by this point, so
+    handing it to another thread is safe. Use ``flush()`` before the process
+    exits to guarantee a just-queued write actually lands on disk.
+    """
+    _executor.submit(write_snapshot, session_dir, tab_id, project_path,
+                      dirty, tab_index, graph)
+
+
+def flush() -> None:
+    """Block until every write queued via ``write_snapshot_async`` has
+    completed. Call this before the app exits — otherwise the last few
+    edits before close could still be sitting in the queue when the process
+    ends, defeating the whole point of an immediate per-edit snapshot."""
+    global _executor
+    _executor.shutdown(wait=True)
+    _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="autosave")
 
 
 def discard_snapshot(session_dir: Path, tab_id: str) -> None:

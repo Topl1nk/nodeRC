@@ -36,14 +36,17 @@ class StartNode(MetaNode):
         # Project-wide Open/Save/Save As live in the title bar's hamburger
         # menu (see TabStripWidget._show_project_menu) now — only the
         # chain-execution control belongs on the node itself.
-        btn = QPushButton(t("btn_launch"))
-        btn.setStyleSheet(PUSHBTN_QSS)
-        btn.setFixedWidth(btn_w)
-        btn.setToolTip(HOTKEY_HINTS["execute_chain"])
-        btn.clicked.connect(self._request_chain_execution)
-        proxy = self._make_proxy(btn)
+        self._launch_btn = QPushButton(t("btn_launch"))
+        self._launch_btn.setStyleSheet(PUSHBTN_QSS)
+        self._launch_btn.setFixedWidth(btn_w)
+        self._launch_btn.setToolTip(HOTKEY_HINTS["execute_chain"])
+        self._launch_btn.clicked.connect(self._request_chain_execution)
+        proxy = self._make_proxy(self._launch_btn)
         y = NODE_HEADER_HEIGHT + rows * NODE_ROW_HEIGHT + NODE_WIDGET_V_OFFSET
         proxy.setPos(NODE_HORIZONTAL_PAD, y)
+
+    def retranslate(self):
+        self._launch_btn.setText(t("btn_launch"))
 
     def _request_chain_execution(self):
         win = editor_window_of(self)
@@ -107,10 +110,10 @@ class CommandNode(MetaNode):
         return result
 
     def auto_create_required_parameters(self):
-        """Create param nodes for every required parameter, replacing any existing wires.
+        """Create param nodes for every required parameter that isn't already wired.
 
-        Always operates on the full required-param list so the result is identical
-        regardless of what was manually connected beforehand.
+        Always scans the full required-param list, but skips any input that
+        already has an incoming connection so manual wiring is never overwritten.
         """
         scene = self.scene()
         win = editor_window_of(self)

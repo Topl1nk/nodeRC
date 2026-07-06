@@ -6,7 +6,7 @@ for shipping pre-compiled catalogs: it reuses the exact PO parser and MO writer
 from ``localization`` so the output is identical to what the app loads.
 
     python tools/compile_translations.py            # compile every locale/**/*.po
-    python tools/compile_translations.py ru          # only one language
+    python tools/compile_translations.py uk          # only one language
 
 For plural-form messages or fuzzy review, GNU ``msgfmt`` or ``babel`` produce
 identical ``.mo`` output; this covers the singular-key catalogs NodeRC ships.

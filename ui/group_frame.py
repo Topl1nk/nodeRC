@@ -17,7 +17,7 @@ from PyQt5.QtGui import (
 )
 from PyQt5.QtCore import QRectF, Qt, QPointF
 
-from localization import t
+from localization import resolve_default_title, t
 from configuration import (
     NODE_SELECTED_COLOR, GRID_SIZE_SMALL,
     GROUP_FRAME_Z, GROUP_FRAME_FILL_ALPHA,
@@ -266,23 +266,31 @@ class GroupFrameItem(RenamableTitleMixin, QGraphicsRectItem):
     def _scene_rect(self) -> QRectF:
         return self.mapToScene(self.rect()).boundingRect()
 
-    def _contained_nodes(self) -> list:
+    def _contained_nodes(self, candidates: Optional[list] = None) -> list:
+        """Nodes under this frame. ``candidates``, when given, is used instead
+        of a fresh ``scene.items()`` scan — a caller committing many frames
+        at once (e.g. materialize_graph after a load) collects the scene's
+        MetaNodes once and passes the same list to every frame, instead of
+        each frame re-fetching and re-sorting the whole scene by Z-order for
+        itself (O(frames x scene size) on a graph with many group frames)."""
         from ui.graph_items import MetaNode
         scene = self.scene()
         if not scene:
             return []
+        if candidates is None:
+            candidates = [item for item in scene.items() if isinstance(item, MetaNode)]
         frame_rect = self._scene_rect()
-        return [item for item in scene.items()
-                if isinstance(item, MetaNode) and item is not self
+        return [item for item in candidates
+                if item is not self
                 and frame_rect.contains(item.sceneBoundingRect().center())]
 
-    def commit_members(self, force_all: bool = False):
+    def commit_members(self, force_all: bool = False, candidates: Optional[list] = None):
         scene = self.scene()
         if not scene:
             self._group_members = []
             return
         if force_all:
-            self._group_members = self._contained_nodes()
+            self._group_members = self._contained_nodes(candidates)
             for node in self._group_members:
                 node._group_frame = self
         else:
@@ -337,6 +345,15 @@ class GroupFrameItem(RenamableTitleMixin, QGraphicsRectItem):
     def _revert_title(self, backup: str):
         self.title_item.setHtml(self._title_html(backup))
         self._center_title()
+
+    def retranslate(self):
+        """Re-resolve the title if it's still the untouched default — same
+        detection rule as ParamNode.retranslate (see its docstring): a title
+        matching a known translation of "default_group_title" in any
+        language is treated as "never renamed"."""
+        resolved = resolve_default_title(self.title, "default_group_title")
+        if resolved != self.title:
+            self._commit_title(resolved)
 
     # ── Context menu and contained-node operations ────────────────────────────
 

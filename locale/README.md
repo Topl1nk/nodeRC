@@ -12,7 +12,7 @@ You do **not** need to touch Python to translate the app.
 locale/
 ├── nodeRC.pot                     # template: every translatable string, empty
 ├── en/LC_MESSAGES/nodeRC.po       # English (source language)
-└── ru/LC_MESSAGES/nodeRC.po       # Russian
+└── uk/LC_MESSAGES/nodeRC.po       # Ukrainian
 ```
 
 Each entry looks like this:
@@ -80,7 +80,7 @@ with standard gettext tools:
 
 ```bash
 # refresh nodeRC.pot from the catalogs, then merge into each language
-msgmerge --update locale/ru/LC_MESSAGES/nodeRC.po locale/nodeRC.pot
+msgmerge --update locale/uk/LC_MESSAGES/nodeRC.po locale/nodeRC.pot
 ```
 
 Pre-compiled `.mo` binaries are **not** committed — the app builds them in memory.
@@ -88,5 +88,5 @@ To emit `.mo` files for other gettext consumers:
 
 ```bash
 python tools/compile_translations.py        # all languages
-python tools/compile_translations.py ru     # one language
+python tools/compile_translations.py uk     # one language
 ```

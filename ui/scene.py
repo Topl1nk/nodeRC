@@ -9,7 +9,7 @@ from typing import Optional
 
 from PyQt5.QtWidgets import QGraphicsScene, QGraphicsLineItem, QGraphicsProxyWidget, QDialog, QApplication
 from PyQt5.QtCore import Qt, QPointF, QRectF, QTimer
-from PyQt5.QtGui import QPen, QColor, QPainter, QTransform
+from PyQt5.QtGui import QPen, QColor, QPainter, QPixmap, QTransform
 
 from configuration import (
     CANVAS_BACKGROUND_COLOR, GRID_SIZE_SMALL, GRID_SIZE_LARGE,
@@ -38,30 +38,51 @@ class NodeScene(QGraphicsScene):
         self.setSceneRect(SCENE_INITIAL_X, SCENE_INITIAL_Y, SCENE_INITIAL_WIDTH, SCENE_INITIAL_HEIGHT)
         self.setBackgroundBrush(QColor(CANVAS_BACKGROUND_COLOR))
         self.grid_visible = True
+        self._grid_tile: Optional[QPixmap] = None
+
+    def _build_grid_tile(self) -> QPixmap:
+        """One GRID_SIZE_LARGE-square tile carrying the whole grid pattern —
+        built once and repeated via drawTiledPixmap instead of drawLine-ing
+        every minor/major line inside the visible rect by hand on every
+        single repaint. On a zoomed-out large scene the visible rect can
+        span thousands of grid cells; a `for` loop issuing one drawLine per
+        line redid that work every frame during pan/zoom, where a tiled
+        pixmap costs one blit regardless of how much of the grid is
+        actually on screen.
+
+        Only the tile's own left/top edge carries the major (GRID_SIZE_LARGE)
+        line — tiling then reproduces the major grid at every multiple of
+        GRID_SIZE_LARGE with no doubled or missing line at the seam.
+        """
+        tile = QPixmap(GRID_SIZE_LARGE, GRID_SIZE_LARGE)
+        tile.fill(QColor(CANVAS_BACKGROUND_COLOR))
+        painter = QPainter(tile)
+        try:
+            painter.setPen(QPen(QColor(*GRID_COLOR_SMALL), 1))
+            for x in range(GRID_SIZE_SMALL, GRID_SIZE_LARGE, GRID_SIZE_SMALL):
+                painter.drawLine(x, 0, x, GRID_SIZE_LARGE)
+            for y in range(GRID_SIZE_SMALL, GRID_SIZE_LARGE, GRID_SIZE_SMALL):
+                painter.drawLine(0, y, GRID_SIZE_LARGE, y)
+
+            painter.setPen(QPen(QColor(*GRID_COLOR_LARGE), 1.5))
+            painter.drawLine(0, 0, 0, GRID_SIZE_LARGE)
+            painter.drawLine(0, 0, GRID_SIZE_LARGE, 0)
+        finally:
+            painter.end()
+        return tile
 
     def drawBackground(self, painter: QPainter, rect: QRectF):
         painter.fillRect(rect, QColor(CANVAS_BACKGROUND_COLOR))
         if not getattr(self, "grid_visible", True):
             return
 
-        left = int(rect.left()) - (int(rect.left()) % GRID_SIZE_SMALL)
-        top  = int(rect.top())  - (int(rect.top())  % GRID_SIZE_SMALL)
-
-        painter.setPen(QPen(QColor(*GRID_COLOR_SMALL), 1))
-        for x in range(left, int(rect.right()), GRID_SIZE_SMALL):
-            if x % GRID_SIZE_LARGE != 0:
-                painter.drawLine(x, int(rect.top()), x, int(rect.bottom()))
-        for y in range(top, int(rect.bottom()), GRID_SIZE_SMALL):
-            if y % GRID_SIZE_LARGE != 0:
-                painter.drawLine(int(rect.left()), y, int(rect.right()), y)
-
-        painter.setPen(QPen(QColor(*GRID_COLOR_LARGE), 1.5))
-        left = int(rect.left()) - (int(rect.left()) % GRID_SIZE_LARGE)
-        top  = int(rect.top())  - (int(rect.top())  % GRID_SIZE_LARGE)
-        for x in range(left, int(rect.right()), GRID_SIZE_LARGE):
-            painter.drawLine(x, int(rect.top()), x, int(rect.bottom()))
-        for y in range(top, int(rect.bottom()), GRID_SIZE_LARGE):
-            painter.drawLine(int(rect.left()), y, int(rect.right()), y)
+        if self._grid_tile is None:
+            self._grid_tile = self._build_grid_tile()
+        # The offset anchors the pattern to scene-space (0, 0) regardless of
+        # where the currently visible rect starts, so the grid stays put
+        # under the nodes while panning instead of sliding with the viewport.
+        offset = QPointF(rect.left() % GRID_SIZE_LARGE, rect.top() % GRID_SIZE_LARGE)
+        painter.drawTiledPixmap(rect, self._grid_tile, offset)
 
     def recalculate_scene_rect(self):
         nodes = [i for i in self.items() if isinstance(i, MetaNode)]

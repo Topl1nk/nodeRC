@@ -967,6 +967,20 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         """
         return {}
 
+    def retranslate(self):
+        """Re-resolve this node's translatable text in place for the active
+        language — no rebuild, no socket/connection churn.
+
+        Why in-place instead of the old approach (serialize + clear_graph +
+        materialize_graph on every tab): that path tore down and recreated
+        every node's embedded widgets on a language switch, which turned a
+        text-only refresh into an O(n) full graph rebuild — the actual cost
+        scales with node count, not with how much text changed. Override in
+        subclasses that own translatable defaults (title, placeholders,
+        static button text); the base no-op covers CommandNode, whose title
+        and socket labels come from the RC command database, not gettext.
+        """
+
 
 class NodeComboBox(QComboBox):
     """Note: deliberately no hand-maintained "is my popup open" flag — see

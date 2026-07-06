@@ -16,10 +16,11 @@ from typing import Dict, List, Optional, Tuple
 
 from PyQt5.QtCore import QPointF, QRectF
 
-from localization import get_all_translations, t
+from localization import resolve_default_title, t
 from configuration import GROUP_FRAME_DEFAULT_WIDTH, GROUP_FRAME_DEFAULT_HEIGHT
 from diagnostics import log_and_explain
 from core.graph_model import GraphModel, NodeModel, ConnectionModel, GroupModel
+from core.node_blueprint import PARAM_TITLE_KEY
 from ui.graph_items import Connection, GroupFrameItem, MetaNode
 from ui.param_nodes import (
     EnumParamNode, Float2ParamNode, Float3ParamNode, PARAM_NODE_TYPES, ParamNode,
@@ -37,10 +38,9 @@ def build_param_node(creation_data: dict) -> ParamNode:
     # default in ANY catalog, re-resolve it so the node follows the active UI
     # language instead of freezing in the language it was created under.
     if name:
-        title_key = ("param_path_title" if ptype in ("filepath", "dirpath", "path")
-                     else f"param_{ptype}_title")
-        if name in get_all_translations(title_key):
-            name = t(title_key)
+        resolved = resolve_default_title(name, PARAM_TITLE_KEY.get(ptype))
+        if resolved != name:
+            name = resolved
             creation_data["display"] = name
             if "name" in creation_data:
                 creation_data["name"] = name
@@ -245,8 +245,13 @@ def materialize_graph(scene, connections: List[Connection], payload: dict, *,
     for node in id_to_node.values():
         node._refresh_connections()
     scene.recalculate_scene_rect()
+    # Collect the freshly materialized nodes once and hand the same list to
+    # every frame's commit_members — otherwise each frame re-scans and
+    # re-sorts the whole scene by Z-order for itself (O(frames x node count)
+    # on a graph with many group frames).
+    all_nodes = list(id_to_node.values())
     for frame in frames:
-        frame.commit_members(force_all=True)
+        frame.commit_members(force_all=True, candidates=all_nodes)
     return id_to_node, frames
 
 

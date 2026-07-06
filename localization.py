@@ -134,7 +134,6 @@ def available_languages() -> List[str]:
     if not LOCALE_DIR.exists():
         return [DEFAULT_LANGUAGE]
     langs = sorted(p.parent.parent.name for p in LOCALE_DIR.glob(f"*/LC_MESSAGES/{DOMAIN}.po"))
-    langs = [l for l in langs if l != "ru"]
     if DEFAULT_LANGUAGE in langs:
         langs.remove(DEFAULT_LANGUAGE)
         langs.insert(0, DEFAULT_LANGUAGE)
@@ -223,6 +222,22 @@ def get_all_translations(key: str) -> List[str]:
             if val:
                 results.append(val)
     return list(set(results))
+
+
+def resolve_default_title(current: str, title_key: Optional[str]) -> str:
+    """Re-resolve a default (never-renamed) title to the active language.
+
+    ``current`` is left untouched unless it matches a known translation of
+    ``title_key`` in *any* catalog — that is the only signal available for
+    "this is still the auto-generated default", since nothing marks a title
+    as user-renamed vs. default. A real rename can happen to collide with a
+    default in another language, in which case it re-resolves too; this
+    mirrors the tradeoff the codebase already accepted for load-time title
+    resolution (see build_param_node in core/graph_serialization.py).
+    """
+    if not title_key or current not in get_all_translations(title_key):
+        return current
+    return t(title_key)
 
 
 set_language(detect_language())

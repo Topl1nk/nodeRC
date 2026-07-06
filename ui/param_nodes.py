@@ -19,7 +19,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QColor, QDoubleValidator, QPalette
 from PyQt5.QtCore import QEvent, Qt, QTimer
 
-from localization import t
+from localization import resolve_default_title, t
 from configuration import (
     NODE_HEADER_HEIGHT, NODE_ROW_HEIGHT, NODE_HORIZONTAL_PAD,
     NODE_WIDGET_V_OFFSET, NODE_WIDGET_HEIGHT, NODE_LINKED_FIELD_Z,
@@ -30,7 +30,7 @@ from ui.theme import (
     apply_field_placeholder_palette,
 )
 from core.node_blueprint import (
-    NodeDef, SocketDef, html_title, param_node_def, resolve_color_schema,
+    NodeDef, PARAM_TITLE_KEY, SocketDef, html_title, param_node_def, resolve_color_schema,
 )
 from ui.graph_items import MetaNode, NodeComboBox, editor_window_of, InsetFillCheckBox
 from diagnostics import log_and_explain
@@ -55,6 +55,26 @@ class ParamNode(MetaNode):
         creation_data.setdefault("param_type", self.TYPE_ID)
         creation_data["display"] = name
         self.creation_data = creation_data
+
+    def retranslate(self):
+        """Re-resolve the title if it's still the untouched default (see
+        localization.resolve_default_title), then let the concrete class
+        refresh any other static translated text (placeholders, button
+        labels) it owns via ``_retranslate_widgets``."""
+        creation_data = dict(getattr(self, "creation_data", None) or {})
+        current = creation_data.get("display") or self.node_def.plain_title
+        resolved = resolve_default_title(current, PARAM_TITLE_KEY.get(self.TYPE_ID))
+        if resolved != current:
+            creation_data["display"] = resolved
+            self.creation_data = creation_data
+            self._set_title_text(resolved)
+        self._retranslate_widgets()
+
+    def _retranslate_widgets(self):
+        """Hook for a concrete param class to refresh its own static
+        translated text (placeholders, button labels) — the base class has
+        none. Not folded into retranslate() itself so a subclass can extend
+        it without also having to reimplement the title-resolution above."""
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -647,6 +667,9 @@ class StringParamNode(_SingleFieldParamNode):
         self._editor.editingFinished.connect(self._on_widget_user_edit)
         self._attach_input_widget(self._editor)
 
+    def _retranslate_widgets(self):
+        self._editor.setPlaceholderText(t("param_string_placeholder"))
+
 
 class BoolParamNode(ParamNode):
     TYPE_ID = "bool"
@@ -766,6 +789,9 @@ class EnumParamNode(ParamNode):
         self._combobox.currentTextChanged.connect(self._notify_connections_changed)
         self._combobox.activated.connect(self._on_widget_user_edit)
         self._attach_widget_at_row(self._combobox, 2)
+
+    def _retranslate_widgets(self):
+        self._new_item.setPlaceholderText(t("param_enum_new_placeholder"))
 
     def _add_enum_item(self):
         text = self._new_item.text().strip()
@@ -926,6 +952,12 @@ class PathParamNode(ParamNode):
         self._attach_widget_at_row(self._row_container([self._file_combo]), 3)
         self._attach_widget_at_row(self._row_container([self._ext_filter]), 4)
 
+    def _retranslate_widgets(self):
+        self._ext_filter.setPlaceholderText(t("param_path_ext_placeholder"))
+        self._dir_editor.setPlaceholderText(t("param_path_dir_placeholder"))
+        if self._file_combo.lineEdit():
+            self._file_combo.lineEdit().setPlaceholderText(t("param_path_file_placeholder"))
+
     def _browse_for_folder(self):
         path = QFileDialog.getExistingDirectory(None, t("dialog_select_folder"), self._dir_editor.text())
         if path:
@@ -1019,6 +1051,9 @@ class KeyValueParamNode(_SingleFieldParamNode):
         self._editor.textChanged.connect(self._notify_connections_changed)
         self._editor.editingFinished.connect(self._on_widget_user_edit)
         self._attach_input_widget(self._editor)
+
+    def _retranslate_widgets(self):
+        self._editor.setPlaceholderText(t("param_keyvalue_placeholder"))
 
 
 class Float2ParamNode(VectorParamNode):

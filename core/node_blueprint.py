@@ -28,6 +28,22 @@ PARAM_TYPE_PREFIX: Dict[str, str] = {
     "filepath": "[F/D]", "dirpath": "[F/D]", "keyvalue": "[K]",
 }
 
+# The gettext key each param type's default (never-renamed) title resolves
+# through — shared by the typed ParamNode classes (ui/param_nodes.py, each
+# falls back to this key when constructed with no explicit name) and by
+# every place that re-resolves a default title on load/language change
+# (build_param_node below, ParamNode.retranslate). One mapping so the two
+# can never drift apart the way "integer" -> f"param_{ptype}_title" used to
+# silently miss the real "param_int_title" key.
+PARAM_TITLE_KEY: Dict[str, str] = {
+    "string": "param_string_title", "bool": "param_bool_title",
+    "integer": "param_int_title", "float": "param_float_title",
+    "float2": "param_float2_title", "float3": "param_float3_title",
+    "enum": "param_enum_title", "enum_int": "param_enum_title",
+    "filepath": "param_path_title", "dirpath": "param_path_title",
+    "path": "param_path_title", "keyvalue": "param_keyvalue_title",
+}
+
 
 def resolve_color_schema(socket_type: str) -> dict:
     schema = SOCKET_COLOR_SCHEMA.get(socket_type.lower(), SOCKET_COLOR_SCHEMA["any"])

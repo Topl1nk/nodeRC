@@ -152,7 +152,14 @@ class NodeEditorWindow(QMainWindow):
 
     # ── Autosave / whole-session recovery ────────────────────────────────────
 
-    def _write_tab_snapshot(self, tab: ProjectTab):
+    def _write_tab_snapshot(self, tab: ProjectTab, state: Optional[dict] = None):
+        """Queue tab's current graph for a snapshot write. ``state`` is a
+        graph payload the caller already has on hand (push_undo_state always
+        computes one for the undo history) — passing it through avoids
+        re-serializing the whole scene a second time for the same edit.
+        The actual disk write runs off the UI thread (see
+        core.autosave.write_snapshot_async) so it never stalls interaction.
+        """
         if not tab.dirty and tab.project_path is None:
             # A blank "Untitled" tab nobody has touched yet — nothing worth
             # persisting, and it shouldn't clutter (or by itself populate)
@@ -163,8 +170,9 @@ class NodeEditorWindow(QMainWindow):
             tab_index = self.tabs.index(tab)
         except ValueError:
             tab_index = len(self.tabs)
-        autosave.write_snapshot(self._session_dir, tab.tab_id, tab.project_path,
-                                 tab.dirty, tab_index, tab.scene, tab.connections)
+        graph = state if state is not None else serialize_graph(tab.scene, tab.connections)
+        autosave.write_snapshot_async(self._session_dir, tab.tab_id, tab.project_path,
+                                       tab.dirty, tab_index, graph)
 
     def _run_autosave_pass(self):
         # A periodic safety net — every edit already snapshots immediately
@@ -176,7 +184,13 @@ class NodeEditorWindow(QMainWindow):
     def closeEvent(self, event):
         # One last flush so a crash or an OS-initiated shutdown right after
         # this doesn't lose edits the periodic timer hadn't gotten to yet.
+        # autosave.flush() blocks until every write queued above (and by
+        # anything before it, e.g. the last edit's push_undo_state) has
+        # actually landed on disk — writes run on a background thread now,
+        # so without this a just-closed window's last snapshot could still
+        # be sitting in the queue when the process exits.
         self._run_autosave_pass()
+        autosave.flush()
         super().closeEvent(event)
 
     def _maybe_restore_session(self, previous_session_dir):
@@ -975,12 +989,17 @@ class NodeEditorWindow(QMainWindow):
         if len(tab.history) > UNDO_HISTORY_LIMIT:
             tab.history.pop(0)
         tab.history_index = len(tab.history) - 1
-        if had_history:
-            self._set_dirty(True)
         # Snapshot immediately rather than waiting for the periodic timer —
         # otherwise anything added/edited within the last autosave interval
-        # is lost if the app closes uncleanly before the next tick.
-        self._write_tab_snapshot(tab)
+        # is lost if the app closes uncleanly before the next tick. Passing
+        # `state` through (already computed above for the undo history)
+        # instead of letting either call re-serialize the scene: this used
+        # to run serialize_graph() twice per edit — once here, once again
+        # inside _set_dirty()'s own snapshot write.
+        if had_history:
+            self._set_dirty(True, state=state)
+        else:
+            self._write_tab_snapshot(tab, state)
 
     def undo(self):
         tab = self.active_tab
@@ -996,7 +1015,7 @@ class NodeEditorWindow(QMainWindow):
 
     # ── Window title and language ─────────────────────────────────────────────
 
-    def _set_dirty(self, dirty: bool):
+    def _set_dirty(self, dirty: bool, *, state: Optional[dict] = None):
         self.active_tab.dirty = dirty
         self._update_title()
         if hasattr(self, "title_bar"):
@@ -1006,7 +1025,9 @@ class NodeEditorWindow(QMainWindow):
             # change didn't come through push_undo_state (e.g. save_project
             # clearing dirty without pushing a new undo entry) — otherwise a
             # cleanly-saved tab could still restore marked dirty next launch.
-            self._write_tab_snapshot(self.active_tab)
+            # ``state``, when the caller already has one on hand
+            # (push_undo_state), skips re-serializing the same scene twice.
+            self._write_tab_snapshot(self.active_tab, state)
 
     def _update_title(self):
         tab = self.active_tab
@@ -1034,15 +1055,16 @@ class NodeEditorWindow(QMainWindow):
             idx = 0
         set_language(langs[(idx + direction) % len(langs)])
 
-        # Refresh every open tab in the new language: rebuilding each graph
-        # re-resolves every translatable default title and button label, not
-        # just the ones in the currently active tab.
+        # Refresh every open tab in the new language: each node/frame
+        # re-resolves its own translatable text in place (see
+        # MetaNode.retranslate) instead of the graph being serialized,
+        # torn down and rebuilt from scratch — on a large scene that used to
+        # mean recreating every embedded widget just to change some labels.
         self._update_title()
-        original_active = self.active_tab
         for tab in self.tabs:
-            self.active_tab = tab
-            self.set_project_state(self.get_project_state())
-        self.active_tab = original_active
+            for item in tab.scene.items():
+                if isinstance(item, (MetaNode, GroupFrameItem)):
+                    item.retranslate()
 
     def changeEvent(self, event):
         if event.type() == QEvent.WindowStateChange:

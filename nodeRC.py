@@ -38,7 +38,7 @@ if __name__ == "__main__":
     try:
         from core.rc_documentation_extractor import rebuild_command_database_from_html
         rebuild_command_database_from_html(RC_HELP_HTML, COMMAND_DB_JSON)
-    except Exception as exc:
+    except (Exception, SystemExit) as exc:
         _logger.warning("Documentation refresh skipped: %s", exc)
 
     from ui.editor_window import NodeEditorWindow
