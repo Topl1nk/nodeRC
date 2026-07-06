@@ -14,7 +14,15 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
 
-from PyQt5.QtCore import QPointF, QRectF
+from PyQt5.QtCore import QPointF, QRectF, Qt
+
+# Qt.SortOrder(-1) tells QGraphicsScene.items() to skip its Z-order sort and
+# return items in whatever arbitrary internal order it already has them —
+# every use of scene.items() below only builds a dict/list keyed by uid or
+# an ephemeral per-call index, so the order was never meaningful, but the
+# sort itself is real, avoidable O(n log n) work on every call, several of
+# which run on every single edit (push_undo_state -> serialize_graph).
+_UNORDERED = Qt.SortOrder(-1)
 
 from localization import resolve_default_title, t
 from configuration import GROUP_FRAME_DEFAULT_WIDTH, GROUP_FRAME_DEFAULT_HEIGHT
@@ -114,7 +122,7 @@ def serialize_graph(scene, connections: List[Connection], *,
     node_records: List[dict] = []
     group_records: List[dict] = []
 
-    for idx, item in enumerate(scene.items()):
+    for idx, item in enumerate(scene.items(_UNORDERED)):
         if isinstance(item, MetaNode):
             if only_selected and (not item.isSelected() or isinstance(item, StartNode)):
                 continue
@@ -174,7 +182,7 @@ def payload_center(payload: dict) -> Optional[QPointF]:
 
 
 def clear_graph(scene, connections: List[Connection]):
-    for item in [i for i in scene.items()
+    for item in [i for i in scene.items(_UNORDERED)
                  if isinstance(i, (MetaNode, Connection, GroupFrameItem))]:
         scene.removeItem(item)
     connections.clear()
@@ -261,7 +269,7 @@ def scene_to_graph_model(scene, connections: List[Connection]) -> GraphModel:
     nodes = []
     groups = []
 
-    for idx, item in enumerate(scene.items()):
+    for idx, item in enumerate(scene.items(_UNORDERED)):
         if isinstance(item, MetaNode):
             node_id_map[item] = idx
             pos = item.scenePos()
