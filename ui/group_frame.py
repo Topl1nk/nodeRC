@@ -10,7 +10,7 @@ from typing import Optional
 
 from PyQt5.QtWidgets import (
     QGraphicsItem, QGraphicsRectItem, QGraphicsTextItem,
-    QMenu, QStyle,
+    QMenu,
 )
 from PyQt5.QtGui import (
     QPen, QBrush, QColor, QPainter, QFont, QCursor,
@@ -34,6 +34,7 @@ from ui.title_item import (
     editor_window_of, _merge_hsv_component, selected_of_type_including,
 )
 from ui.color_picker import ColorPickerPopup
+from ui.widgets import suppress_default_selection_chrome
 
 
 class GroupFrameItem(RenamableTitleMixin, QGraphicsRectItem):
@@ -150,8 +151,7 @@ class GroupFrameItem(RenamableTitleMixin, QGraphicsRectItem):
         return super().boundingRect().adjusted(-margin, -margin, margin, margin)
 
     def paint(self, painter, option, widget):
-        if option.state & QStyle.State_Selected:
-            option.state &= ~QStyle.State_Selected
+        suppress_default_selection_chrome(option)
         painter.setRenderHint(QPainter.Antialiasing)
         super().paint(painter, option, widget)
 

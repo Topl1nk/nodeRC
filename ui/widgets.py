@@ -5,7 +5,7 @@ connections). They can be used by any graph item or dialog.
 """
 from __future__ import annotations
 
-from PyQt5.QtWidgets import QCheckBox
+from PyQt5.QtWidgets import QCheckBox, QStyle
 from PyQt5.QtGui import QPainter, QPen, QBrush, QColor
 from PyQt5.QtCore import QRect, Qt
 
@@ -14,6 +14,15 @@ from configuration import (
     CHECKBOX_FILL_INSET, CHECKBOX_INDICATOR_SIZE, CHECKBOX_LABEL_SPACING,
 )
 from ui.theme import DEFAULT_WIDGET_PALETTE, WIDGET_FONT
+
+
+def suppress_default_selection_chrome(option) -> None:
+    """Clear State_Selected on a paint() option before delegating to the base
+    class paint — every selectable graph item (nodes, connections, group
+    frames) draws its own selection outline and must not also get Qt's
+    default dashed-rectangle selection decoration doubled on top of it."""
+    if option.state & QStyle.State_Selected:
+        option.state &= ~QStyle.State_Selected
 
 
 class InsetFillCheckBox(QCheckBox):

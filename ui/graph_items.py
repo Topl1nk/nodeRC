@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (
     QGraphicsObject, QGraphicsItem, QGraphicsTextItem,
     QGraphicsProxyWidget, QLineEdit, QCheckBox,
     QSpinBox, QComboBox, QGraphicsPathItem, QWidget,
-    QToolButton, QStyle, QMenu, QPushButton,
+    QToolButton, QMenu, QPushButton,
 )
 from PyQt5.QtGui import (
     QPen, QBrush, QColor, QPainterPath, QFont, QFontMetrics, QPainter, QPolygonF,
@@ -57,7 +57,7 @@ from ui.title_item import (                                          # noqa: F40
     editor_window_of, _merge_hsv_component, selected_of_type_including,
 )
 from ui.group_frame import GroupFrameItem                            # noqa: F401
-from ui.widgets import InsetFillCheckBox                             # noqa: F401
+from ui.widgets import InsetFillCheckBox, suppress_default_selection_chrome  # noqa: F401
 
 
 class SocketItem(QGraphicsObject):
@@ -175,8 +175,7 @@ class Connection(QGraphicsPathItem):
             NODE_BOUNDS_MARGIN, NODE_BOUNDS_MARGIN)
 
     def paint(self, painter, option, widget=None):
-        if option.state & QStyle.State_Selected:
-            option.state &= ~QStyle.State_Selected
+        suppress_default_selection_chrome(option)
         self.setPen(self._pen_selected if self.isSelected() else self._pen)
         painter.setRenderHint(QPainter.Antialiasing)
         super().paint(painter, option, widget)
@@ -555,8 +554,7 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         )
 
     def paint(self, painter: QPainter, option, widget=None):
-        if option.state & QStyle.State_Selected:
-            option.state &= ~QStyle.State_Selected
+        suppress_default_selection_chrome(option)
         painter.setRenderHint(QPainter.Antialiasing)
         d = self.node_def
 

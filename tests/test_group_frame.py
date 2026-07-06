@@ -489,11 +489,23 @@ def test_title_becomes_clickable_during_rename(window):
 
 
 def test_group_frame_paint_strips_default_selection_dashes(window):
-    # GroupFrameItem.paint clears State_Selected before super().paint so Qt's
-    # default dotted selection rectangle is not drawn on top of our outline.
-    import inspect
-    src = inspect.getsource(GroupFrameItem.paint)
-    assert "State_Selected" in src and "&= ~QStyle.State_Selected" in src
+    # GroupFrameItem.paint clears State_Selected before super().paint (via the
+    # shared suppress_default_selection_chrome helper) so Qt's default dotted
+    # selection rectangle is not drawn on top of our own outline.
+    from PyQt5.QtWidgets import QStyle, QStyleOptionGraphicsItem
+    from PyQt5.QtGui import QPainter, QPixmap
+
+    frame = GroupFrameItem(QRectF(0, 0, 200, 150))
+    window.scene.addItem(frame)
+    option = QStyleOptionGraphicsItem()
+    option.state = QStyle.State_Selected
+    pixmap = QPixmap(10, 10)
+    painter = QPainter(pixmap)
+    try:
+        frame.paint(painter, option, None)
+    finally:
+        painter.end()
+    assert not (option.state & QStyle.State_Selected)
 
 
 def test_frame_dashed_outline_uses_configured_thickness_and_outset():
