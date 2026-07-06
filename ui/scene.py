@@ -313,15 +313,38 @@ class NodeScene(QGraphicsScene):
                     )
         else:
             super().mouseReleaseEvent(event)
-            if hasattr(self, "_drag_start_positions"):
-                for item, start_pos in self._drag_start_positions.items():
-                    if item.scene() and item.pos() != start_pos:
-                        moved = True
-                        break
-                self._drag_start_positions = {}
+            moved = self._reconcile_dragged_node_state()
             if moved and self.nodeEditorWindow:
                 self.nodeEditorWindow.push_undo_state()
         self._restore_dragged_z(bring_to_front=moved)
+
+    def _reconcile_dragged_node_state(self) -> bool:
+        """After a plain (non-connection) drag release: which selected nodes
+        actually moved, and re-adopt each into whichever group frame now sits
+        under it. Every selected MetaNode here, not just the one Qt actually
+        delivered the mouse events to — when several nodes are selected
+        together, dragging any one of them moves the rest of the selection
+        too via Qt's own internal group-move, but only the grabber gets its
+        own mouseReleaseEvent (which is where MetaNode._adopt_containing_frame
+        normally runs). Every other moved node's group-frame membership was
+        never re-evaluated, letting a node dragged out of (or into) a frame's
+        bounds as part of a multi-select drag keep stale membership until
+        some unrelated later action forced a full commit_members(force_all=
+        True) rebuild. Re-running it here for every node that actually moved
+        closes that gap; it's a cheap no-op for the grabber, which already
+        did this once via its own event.
+
+        Returns whether anything actually moved (for the undo-push decision).
+        """
+        moved = False
+        if not hasattr(self, "_drag_start_positions"):
+            return moved
+        for item, start_pos in self._drag_start_positions.items():
+            if item.scene() and item.pos() != start_pos:
+                moved = True
+                item._adopt_containing_frame(self)
+        self._drag_start_positions = {}
+        return moved
 
     def _find_compatible_socket(self, scene_pos: QPointF) -> Optional[SocketItem]:
         """

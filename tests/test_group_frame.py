@@ -849,3 +849,32 @@ def test_bare_g_toggles_grid_not_group(window):
 def test_start_node_is_protected_normal_nodes_are_not(window):
     assert StartNode.is_protected is True
     assert _param(window).is_protected is False
+
+
+def test_multiselect_drag_reconciles_frame_membership_for_every_moved_node(window):
+    """A frame's non-grabber members must not keep stale membership after a
+    multi-select drag. Qt moves every selected item together when the user
+    drags any one of them, but only the actual grabber item receives its own
+    mouseReleaseEvent (where MetaNode._adopt_containing_frame normally runs)
+    — NodeScene._reconcile_dragged_node_state (called from mouseReleaseEvent)
+    must reconcile every moved node in _drag_start_positions, not just rely
+    on the grabber's own event."""
+    frame = _add_frame(window, x=0, y=0, w=300, h=300, title="G")
+    grabber = _param(window, x=50, y=50)
+    passenger = _param(window, x=100, y=100)
+    frame.commit_members(force_all=True)
+    assert grabber in frame._group_members
+    assert passenger in frame._group_members
+
+    # Simulate a multi-select drag: both nodes were selected and moved far
+    # outside the frame (as Qt's internal group-move does), but only
+    # `grabber` is the item Qt actually delivered press/move/release to.
+    window.scene._drag_start_positions = {grabber: grabber.pos(), passenger: passenger.pos()}
+    grabber.setPos(1000, 1000)
+    passenger.setPos(1000, 200)
+
+    moved = window.scene._reconcile_dragged_node_state()
+
+    assert moved is True
+    assert grabber not in frame._group_members
+    assert passenger not in frame._group_members
