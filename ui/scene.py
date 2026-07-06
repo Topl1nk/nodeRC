@@ -35,6 +35,16 @@ class NodeScene(QGraphicsScene):
         # each drag hands out the next value, so the most recently moved node
         # always reads as "on top" of siblings that haven't moved since.
         self._next_node_z = 1.0
+        # Maintained alongside addItem/removeItem so hot paths (recalculate_
+        # scene_rect on every drag-release, _adopt_containing_frame on every
+        # node drop, GroupFrameItem._contained_nodes' fallback) don't each
+        # pay for their own scene.items() scan — which also re-sorts the
+        # whole scene by Z-order — just to filter down to MetaNode/
+        # GroupFrameItem. Nothing removes an item from this scene except via
+        # removeItem (clear_graph loops removeItem per item; scene.clear()
+        # is never called on a NodeScene), so these stay accurate.
+        self._meta_nodes: list = []
+        self._group_frames: list = []
         self.setSceneRect(SCENE_INITIAL_X, SCENE_INITIAL_Y, SCENE_INITIAL_WIDTH, SCENE_INITIAL_HEIGHT)
         self.setBackgroundBrush(QColor(CANVAS_BACKGROUND_COLOR))
         self.grid_visible = True
@@ -85,7 +95,7 @@ class NodeScene(QGraphicsScene):
         painter.drawTiledPixmap(rect, self._grid_tile, offset)
 
     def recalculate_scene_rect(self):
-        nodes = [i for i in self.items() if isinstance(i, MetaNode)]
+        nodes = self._meta_nodes
         if not nodes:
             return
         left   = min(n.scenePos().x() for n in nodes)
@@ -102,7 +112,23 @@ class NodeScene(QGraphicsScene):
     def addItem(self, item):
         super().addItem(item)
         if isinstance(item, MetaNode):
+            self._meta_nodes.append(item)
             self._schedule_rect_recalc()
+        elif isinstance(item, GroupFrameItem):
+            self._group_frames.append(item)
+
+    def removeItem(self, item):
+        super().removeItem(item)
+        if isinstance(item, MetaNode):
+            try:
+                self._meta_nodes.remove(item)
+            except ValueError:
+                pass
+        elif isinstance(item, GroupFrameItem):
+            try:
+                self._group_frames.remove(item)
+            except ValueError:
+                pass
 
     def _schedule_rect_recalc(self):
         # Why: Coalesces a burst of additions into a single O(N) pass to avoid O(N²) layout updates.
@@ -147,10 +173,9 @@ class NodeScene(QGraphicsScene):
         # the live drag list from the committed _group_members snapshot (refreshed
         # on every release). We no longer augment this list with newly-overlapping
         # nodes at press time, since dragging a frame over a node shouldn't add it.
-        for item in self.items():
-            if isinstance(item, GroupFrameItem):
-                committed = list(getattr(item, '_group_members', []) or [])
-                item._dragged_inner_nodes = [n for n in committed if n.scene() is self]
+        for item in self._group_frames:
+            committed = list(getattr(item, '_group_members', []) or [])
+            item._dragged_inner_nodes = [n for n in committed if n.scene() is self]
 
         # Frame header is a drag handle the user expects to always reach — like a
         # node's header. The frame paints below nodes (Z=GROUP_FRAME_Z), so once
@@ -159,9 +184,7 @@ class NodeScene(QGraphicsScene):
         # restore right after super() runs.
         self._frame_z_boost = None
         scene_pos = event.scenePos()
-        for frame in self.items():
-            if not isinstance(frame, GroupFrameItem):
-                continue
+        for frame in self._group_frames:
             local = frame.mapFromScene(scene_pos)
             rect = frame.rect()
             in_header = (rect.left() <= local.x() <= rect.right()
@@ -237,9 +260,8 @@ class NodeScene(QGraphicsScene):
             else:
                 node._set_resting_z(original_z)
         self._dragged_nodes = []
-        for item in self.items():
-            if isinstance(item, GroupFrameItem):
-                item._dragged_inner_nodes = []
+        for item in self._group_frames:
+            item._dragged_inner_nodes = []
 
     def mouseMoveEvent(self, event):
         if self._drag_active and self._drag_preview_line and self._drag_source:

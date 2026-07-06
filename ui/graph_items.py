@@ -716,7 +716,12 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         super().mouseReleaseEvent(event)
         scene = self.scene()
         if scene:
-            scene.recalculate_scene_rect()
+            # Deferred + coalesced (see _schedule_rect_recalc) rather than
+            # recalculated synchronously here: a multi-select drag fires one
+            # mouseReleaseEvent per dropped node, and each was redoing this
+            # scan immediately — scheduling collapses a batch of releases in
+            # the same tick into a single recalculation.
+            scene._schedule_rect_recalc()
             self._adopt_containing_frame(scene)
         win = editor_window_of(self)
         if win:
@@ -725,12 +730,15 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
     def _adopt_containing_frame(self, scene):
         """Commit this node to the top-most frame under its center, if any."""
         best_frame = None
-        for item in scene.items():
-            if isinstance(item, GroupFrameItem):
-                frame_rect = item.mapToScene(item.rect()).boundingRect()
-                if frame_rect.contains(self.sceneBoundingRect().center()):
-                    if best_frame is None or item.zValue() > best_frame.zValue():
-                        best_frame = item
+        if hasattr(scene, '_group_frames'):
+            frames = scene._group_frames
+        else:
+            frames = [i for i in scene.items() if isinstance(i, GroupFrameItem)]
+        for item in frames:
+            frame_rect = item.mapToScene(item.rect()).boundingRect()
+            if frame_rect.contains(self.sceneBoundingRect().center()):
+                if best_frame is None or item.zValue() > best_frame.zValue():
+                    best_frame = item
 
         old_frame = getattr(self, '_group_frame', None)
         try:

@@ -278,7 +278,10 @@ class GroupFrameItem(RenamableTitleMixin, QGraphicsRectItem):
         if not scene:
             return []
         if candidates is None:
-            candidates = [item for item in scene.items() if isinstance(item, MetaNode)]
+            if hasattr(scene, '_meta_nodes'):
+                candidates = scene._meta_nodes
+            else:
+                candidates = [item for item in scene.items() if isinstance(item, MetaNode)]
         frame_rect = self._scene_rect()
         return [item for item in candidates
                 if item is not self
