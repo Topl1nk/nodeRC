@@ -20,7 +20,7 @@ from PyQt5.QtCore import QEvent, QPoint, QPointF, Qt, QTimer
 
 from localization import available_languages, get_language, set_language, t
 from configuration import (
-    WINDOW_BACKGROUND_COLOR, UNDO_HISTORY_LIMIT, CLOSED_TABS_HISTORY_LIMIT,
+    WINDOW_BACKGROUND_COLOR, UNDO_HISTORY_LIMIT, SAVED_UNDO_HISTORY_LIMIT, CLOSED_TABS_HISTORY_LIMIT,
     WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT,
     TITLE_BAR_HEIGHT, TITLE_BAR_RESIZE_MARGIN,
     AUTOSAVE_INTERVAL_MS,
@@ -49,7 +49,7 @@ from ui.project_tab import ProjectTab
 from ui.title_bar import TitleBarWidget
 from core.graph_serialization import (
     build_param_node, clear_graph, materialize_graph, payload_center,
-    scene_to_graph_model, serialize_graph,
+    scene_to_graph_model, serialize_graph, try_apply_state_diff,
 )
 from core.chain_execution import build_exec_chain, build_launch_tokens, launch
 from core import autosave, app_prefs, session
@@ -171,8 +171,30 @@ class NodeEditorWindow(QMainWindow):
         except ValueError:
             tab_index = len(self.tabs)
         graph = state if state is not None else serialize_graph(tab.scene, tab.connections)
+        history, history_index = self._trimmed_history(tab)
         autosave.write_snapshot_async(self._session_dir, tab.tab_id, tab.project_path,
-                                       tab.dirty, tab_index, graph)
+                                       tab.dirty, tab_index, graph,
+                                       history=history, history_index=history_index)
+
+    @staticmethod
+    def _trimmed_history(tab: ProjectTab):
+        """A window of at most SAVED_UNDO_HISTORY_LIMIT entries around
+        ``tab.history_index`` — bounding what gets written to disk on every
+        autosave. The live in-memory ``tab.history`` can hold up to
+        UNDO_HISTORY_LIMIT (100) full graph snapshots; persisting all of
+        them on every single edit would mean writing up to 100x a
+        many-thousand-node graph's size each time. Centering the kept window
+        on the current position (rather than always keeping the tail)
+        guarantees the just-saved state is always inside it, so the returned
+        index is always valid.
+        """
+        history = tab.history
+        limit = SAVED_UNDO_HISTORY_LIMIT
+        total = len(history)
+        if total <= limit:
+            return history, tab.history_index
+        start = max(0, min(tab.history_index - limit // 2, total - limit))
+        return history[start:start + limit], tab.history_index - start
 
     def _run_autosave_pass(self):
         # A periodic safety net — every edit already snapshots immediately
@@ -278,9 +300,21 @@ class NodeEditorWindow(QMainWindow):
         # proper paint pass without that risk.
         tab.project_path = path
         tab.untitled_number = None if path else self._next_untitled_number()
-        tab.history = []
-        tab.history_index = -1
-        self.push_undo_state()
+        saved_history = envelope.get("history")
+        if saved_history:
+            # Crash/session recovery carries the undo history across the
+            # restart (see core.autosave.write_snapshot) — unlike a manual
+            # File > Open, which intentionally starts a fresh undo baseline
+            # (see _load_into_tab), a restored session is meant to look
+            # exactly like nothing happened, Ctrl+Z included.
+            tab.history = saved_history
+            tab.history_index = max(0, min(
+                envelope.get("history_index", len(saved_history) - 1),
+                len(saved_history) - 1))
+        else:
+            tab.history = []
+            tab.history_index = -1
+            self.push_undo_state()
         # A dirty tab keeps its unsaved-edit mark; a clean one just reflects
         # whatever was last snapshotted (in sync with disk).
         self._set_dirty(dirty)
@@ -1004,14 +1038,30 @@ class NodeEditorWindow(QMainWindow):
     def undo(self):
         tab = self.active_tab
         if tab.history_index > 0:
+            current = self.get_project_state()
             tab.history_index -= 1
-            self.set_project_state(tab.history[tab.history_index])
+            self._apply_history_state(current, tab.history[tab.history_index])
 
     def redo(self):
         tab = self.active_tab
         if tab.history_index < len(tab.history) - 1:
+            current = self.get_project_state()
             tab.history_index += 1
-            self.set_project_state(tab.history[tab.history_index])
+            self._apply_history_state(current, tab.history[tab.history_index])
+
+    def _apply_history_state(self, current_state: dict, target_state: dict):
+        """Move to ``target_state`` for an undo/redo step. Tries the in-place
+        patch first (see try_apply_state_diff) — on a scene with thousands
+        of nodes, a plain property edit (move/rename/recolor/value change)
+        would otherwise cost a full clear+rebuild of every node's widgets
+        just to reach a state that differs from the current one by a single
+        field. Falls back to the always-correct full rebuild for anything
+        structural (added/removed node or wire, vector split/merge, X/Y/Z
+        expand/collapse) that the fast path declines to touch.
+        """
+        if try_apply_state_diff(self.scene, self.connections, current_state, target_state):
+            return
+        self.set_project_state(target_state)
 
     # ── Window title and language ─────────────────────────────────────────────
 

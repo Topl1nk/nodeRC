@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (
     QMenu,
 )
 from PyQt5.QtGui import (
-    QPen, QBrush, QColor, QPainter, QFont, QCursor,
+    QPen, QBrush, QColor, QPainter, QPainterPath, QFont, QFontMetrics, QCursor,
 )
 from PyQt5.QtCore import QRectF, Qt, QPointF
 
@@ -67,6 +67,14 @@ class GroupFrameItem(RenamableTitleMixin, QGraphicsRectItem):
 
         self._dragged_inner_nodes: list = []
         self._group_members: list = []
+        # Level-of-detail (see _set_lod_far / GraphicsView._apply_lod, same
+        # NODE_LOD_DETAIL_SCALE threshold MetaNode uses): below the
+        # threshold nothing about the title changes at all — it scales down
+        # with the frame exactly like before there was any LOD handling.
+        # Only once the threshold is actually crossed does it switch, as one
+        # discrete step, to a constant screen size anchored above the whole
+        # frame — never a gradual reaction to the current zoom.
+        self._lod_far = False
 
         self.title_item = _EditableTitleItem(self)
         self.title_item.setFont(self._rename_font())
@@ -81,12 +89,92 @@ class GroupFrameItem(RenamableTitleMixin, QGraphicsRectItem):
         return (f"<font color='{GROUP_FRAME_TITLE_COLOR}'>"
                 f"<b>{_html.escape(name)}</b></font>")
 
+    def _current_view_scale(self) -> float:
+        scene = self.scene()
+        if scene is not None:
+            views = scene.views()
+            if views:
+                scale = views[0].transform().m11()
+                if scale:
+                    return scale
+        return 1.0
+
+    # Gap (device px) kept between the selection outline's top edge (see
+    # paint()'s dashed rect, offset outward from rect() by
+    # GROUP_FRAME_BORDER_INSET) and the title's own bottom edge once
+    # LOD-far — just enough that the constant-size label reads as "floating
+    # above" the outline rather than touching it.
+    _LOD_TITLE_GAP_PX = 10
+
+    def _set_lod_far(self, far: bool):
+        """Toggle the far-zoom level of detail for the title (see
+        NODE_LOD_DETAIL_SCALE, GraphicsView._apply_lod). The mode itself is
+        a single, discrete switch at the threshold, not a gradual reaction
+        to the current scale — below it the title behaves exactly as if
+        this LOD handling didn't exist (plain text, scales with the frame,
+        centered in the header); only once crossed does it switch to a
+        constant screen size anchored above the frame.
+
+        _center_title() still gets re-run on every call, though, even while
+        ``far`` stays the same as last time: in far mode its anchor is
+        deliberately calibrated against the *current* scale (see its
+        docstring) so the gap it keeps above the (still shrinking) frame
+        stays visually constant as the user keeps zooming out — without
+        this, that gap would only be right for the exact scale LOD first
+        engaged at, and drift after.
+        """
+        if self._lod_far != far:
+            self._lod_far = far
+            self.title_item.setFlag(QGraphicsItem.ItemIgnoresTransformations, far)
+        self._center_title()
+
+    def _lod_title_rect(self) -> QRectF:
+        """Where the title sits while LOD-far, in this frame's own local
+        coordinates — the single source of truth both _center_title (which
+        anchors title_item here) and boundingRect/shape (which extend this
+        item's own hit-test area to cover it, so clicking/double-clicking
+        the title still drags/renames the frame via the exact same
+        mousePressEvent/mouseDoubleClickEvent this class already has — no
+        second, parallel drag/rename path needed) read from.
+
+        Anchored off the selection outline itself (see paint()'s dashed
+        rect, offset outward from rect() by GROUP_FRAME_BORDER_INSET) —
+        left-aligned to its left edge and pinned _LOD_TITLE_GAP_PX above
+        its top edge — so the title stays in the same visual relationship
+        to the outline regardless of the current view scale.
+        """
+        scale = self._current_view_scale()
+        metrics = QFontMetrics(self._rename_font())
+        text_w_px = metrics.horizontalAdvance(self.title)
+        text_h_px = metrics.height()
+        r = self.rect()
+        left = r.left() - GROUP_FRAME_BORDER_INSET
+        right = left + text_w_px / scale
+        dashed_top = r.top() - GROUP_FRAME_BORDER_INSET
+        bottom = dashed_top - self._LOD_TITLE_GAP_PX / scale
+        top = bottom - text_h_px / scale
+        return QRectF(left, top, right - left, bottom - top)
+
     def _center_title(self):
-        if hasattr(self, 'title_item'):
-            text_h = QGraphicsTextItem.boundingRect(self.title_item).height()
+        """Position the title. Below the LOD threshold this is the original,
+        pre-LOD behavior verbatim: centered in the header, scaling normally
+        with the frame like everything else about it. Past the threshold
+        (``self._lod_far``), the title instead ignores the view's
+        transformation (see _set_lod_far) and is anchored per
+        _lod_title_rect — above the frame and its selection outline,
+        right-aligned to the frame's own edge — regardless of how small the
+        frame has shrunk to.
+        """
+        if not hasattr(self, 'title_item'):
+            return
+        if not self._lod_far:
             r = self.rect()
+            text_h = QGraphicsTextItem.boundingRect(self.title_item).height()
             y = r.top() + (GROUP_FRAME_HEADER_HEIGHT - text_h) / 2.0
             self.title_item.setPos(r.left() + GROUP_FRAME_TITLE_MARGIN, y)
+            return
+        rect = self._lod_title_rect()
+        self.title_item.setPos(rect.left(), rect.top())
 
     def title_edit_background(self) -> Optional[str]:
         return None
@@ -148,7 +236,22 @@ class GroupFrameItem(RenamableTitleMixin, QGraphicsRectItem):
 
     def boundingRect(self) -> QRectF:
         margin = GROUP_FRAME_BORDER_INSET + GROUP_FRAME_BORDER_WIDTH
-        return super().boundingRect().adjusted(-margin, -margin, margin, margin)
+        rect = super().boundingRect().adjusted(-margin, -margin, margin, margin)
+        if self._lod_far:
+            rect = rect.united(self._lod_title_rect())
+        return rect
+
+    def shape(self) -> QPainterPath:
+        # Unmodified below the LOD threshold — same hit area this item has
+        # always had. Past it, the title's own footprint (see
+        # _lod_title_rect) is unioned in so a click/double-click landing on
+        # the now-floating title is delivered to this item exactly like one
+        # on the header always was, and mousePressEvent/mouseDoubleClickEvent
+        # below handle it with no changes of their own.
+        path = super().shape()
+        if self._lod_far:
+            path.addRect(self._lod_title_rect())
+        return path
 
     def paint(self, painter, option, widget):
         suppress_default_selection_chrome(option)

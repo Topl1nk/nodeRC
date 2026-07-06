@@ -76,6 +76,11 @@ NODE_BOUNDS_MARGIN   = 3
 # ── Grid ───────────────────────────────────────────────────────────────────────
 GRID_SIZE_SMALL = 20   # minor grid lines and node snap resolution
 GRID_SIZE_LARGE = 100  # major grid lines
+# Below this on-screen spacing (px), a grid tier is escalated to the next
+# coarser step (see NodeScene._grid_steps) instead of staying put — packing
+# multiple scene-space lines into a couple of screen pixels is what made
+# lines seem to merge/vanish when zooming out.
+GRID_MIN_SPACING_PX = 6
 
 # ── Connection ─────────────────────────────────────────────────────────────────
 BEZIER_CTRL_FACTOR = 0.55  # horizontal spread relative to endpoint distance
@@ -110,6 +115,14 @@ VECTOR_TOGGLE_WIDTH     = 16         # fixed width for an output-side toggle, so
 # ── Editor history ─────────────────────────────────────────────────────────────
 UNDO_HISTORY_LIMIT = 100  # retained editor snapshots for undo/redo
 CLOSED_TABS_HISTORY_LIMIT = 20  # retained closed-tab snapshots for Ctrl+T reopen
+# How many of the live UNDO_HISTORY_LIMIT snapshots get written into the
+# save file / autosave envelope so Ctrl+Z still works after reopening —
+# deliberately smaller than UNDO_HISTORY_LIMIT: each entry is a full graph
+# snapshot, so persisting all 100 of them on every single edit would mean
+# writing up to 100x a many-thousand-node graph's size on every autosave
+# tick. 20 steps of undo surviving a reload/crash-recovery is already a
+# large safety margin without that blowup.
+SAVED_UNDO_HISTORY_LIMIT = 20
 
 # ── Node z-order ───────────────────────────────────────────────────────────────
 NODE_POPUP_Z = 100  # node z-value while its combobox popup is open — above siblings
@@ -174,6 +187,15 @@ VIEW_ZOOM_STEP = 1.20  # multiplicative zoom per wheel notch
 VIEW_ZOOM_MIN  = 0.15  # furthest zoom-out (scale factor) — keeps the graph from vanishing
 VIEW_ZOOM_MAX  = 3.0   # closest zoom-in — prevents runaway magnification
 VIEW_FRAME_MARGIN = 60  # padding (scene px) around framed content when fitting to view
+
+# ── Node level-of-detail ────────────────────────────────────────────────────────
+# Below this view scale, node text and embedded field widgets are unreadable
+# anyway — MetaNode hides them and paints a single flat color bar instead (see
+# MetaNode._set_lod_far), which is what actually makes a many-thousand-node
+# scene affordable to pan/zoom: a QGraphicsTextItem's text layout and a real
+# QWidget's style-sheet paint are each far more expensive per node than one
+# drawRect call.
+NODE_LOD_DETAIL_SCALE = 0.35
 
 # ── Auto-spawned parameter placement ───────────────────────────────────────────
 AUTOSPAWN_X_GAP    = 280  # distance left of the command node for a created param node

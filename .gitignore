@@ -7,6 +7,7 @@ saves/
 .idea/
 .claude/
 .vscode/
+.agents/
 
 # Python
 __pycache__/

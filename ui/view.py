@@ -9,12 +9,12 @@ from PyQt5.QtGui import QPainter, QColor, QRadialGradient, QBrush, QCursor
 from PyQt5.QtCore import Qt, QPoint, QRectF, QTimer
 
 from localization import t
-from ui.graph_items import MetaNode
+from ui.graph_items import MetaNode, GroupFrameItem
 from configuration import (
     CANVAS_BACKGROUND_COLOR, SCROLLBAR_TOGGLE_BG, SCROLLBAR_TOGGLE_HOVER,
     VIGNETTE_COLOR, VIGNETTE_RADIUS, SCROLLBAR_BTN_MARGIN, SCROLLBAR_BTN_OFFSET,
     SCROLLBAR_BTN_SIZE, VIEW_ZOOM_STEP, VIEW_ZOOM_MIN, VIEW_ZOOM_MAX,
-    VIEW_FRAME_MARGIN, NODE_HOVER_POLL_INTERVAL_MS,
+    VIEW_FRAME_MARGIN, NODE_HOVER_POLL_INTERVAL_MS, NODE_LOD_DETAIL_SCALE,
     SCROLLBAR_TOGGLE_SHOW_GLYPH, SCROLLBAR_TOGGLE_HIDE_GLYPH,
 )
 
@@ -110,6 +110,7 @@ class GraphicsView(QGraphicsView):
         if next_scale < VIEW_ZOOM_MIN or next_scale > VIEW_ZOOM_MAX:
             return
         self.scale(factor, factor)
+        self._apply_lod()
 
     def frame_content(self, items):
         """Fit the view to the given list of items (MetaNodes or any scene items)."""
@@ -127,6 +128,39 @@ class GraphicsView(QGraphicsView):
         scale = self.transform().m11()
         if scale > VIEW_ZOOM_MAX:
             self.scale(VIEW_ZOOM_MAX / scale, VIEW_ZOOM_MAX / scale)
+        self._apply_lod()
+
+    def setScene(self, scene):
+        super().setScene(scene)
+        # The view's scale is shared across every tab (switching tabs never
+        # touches the transform — see editor_window.switch_to_tab), but a
+        # tab's nodes only ever get told about a scale change while *it* was
+        # the active scene; catch up whichever scene just became active in
+        # case its nodes' LOD state is stale (e.g. built in the background
+        # at a different LOD than the view is currently at).
+        self._apply_lod()
+
+    def _apply_lod(self):
+        """Push the current far/near LOD state (see NODE_LOD_DETAIL_SCALE)
+        to every node and group frame in the active scene. Runs only on an
+        actual scale change or scene swap — a handful of times per user
+        zoom/tab-switch action, not per frame — so the O(item count) scan
+        this costs is negligible next to what it saves: _set_lod_far only
+        touches an item's visibility/flags (and repaints) when the far/near
+        state for that specific item actually flips.
+
+        Group frames don't get the hide-and-simplify treatment nodes do —
+        their title just switches, at this same threshold, from scaling
+        normally with the frame to a constant always-readable screen size
+        anchored above it (see GroupFrameItem._set_lod_far).
+        """
+        scene = self.scene()
+        if scene is None:
+            return
+        far = self.transform().m11() < NODE_LOD_DETAIL_SCALE
+        for item in scene.items():
+            if isinstance(item, (MetaNode, GroupFrameItem)):
+                item._set_lod_far(far)
 
     def _build_vignette_brush(self):
         w = self.viewport().width()

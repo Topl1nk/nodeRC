@@ -19,7 +19,7 @@ from PyQt5.QtGui import (
     QPen, QBrush, QColor, QPainterPath, QFont, QFontMetrics, QPainter, QPolygonF,
     QCursor,
 )
-from PyQt5.QtCore import QRectF, Qt, QPointF, QTimer
+from PyQt5.QtCore import QRectF, Qt, QPoint, QPointF, QTimer
 
 from localization import t
 from configuration import (
@@ -89,7 +89,9 @@ class SocketItem(QGraphicsObject):
     def shape(self) -> QPainterPath:
         path = QPainterPath()
         r = self._radius
-        if self.sock_def.is_exec:
+        if getattr(self.meta_node, "_lod_far", False):
+            path.addRect(QRectF(-r, -r, 2 * r, 2 * r))
+        elif self.sock_def.is_exec:
             path.addPolygon(QPolygonF([
                 QPointF(0, -r), QPointF(r, 0),
                 QPointF(0,  r), QPointF(-r, 0),
@@ -106,7 +108,13 @@ class SocketItem(QGraphicsObject):
         r = self._radius
         painter.setPen(border)
         painter.setBrush(QBrush(color))
-        if self.sock_def.is_exec:
+        if self.meta_node._lod_far:
+            # A square reads as a socket "dot" from a distance without the
+            # extra vertices a diamond/circle costs to rasterize — plenty at
+            # a zoom where the exec/param shape distinction isn't legible
+            # anyway.
+            painter.drawRect(QRectF(-r, -r, 2 * r, 2 * r))
+        elif self.sock_def.is_exec:
             painter.drawPolygon(QPolygonF([
                 QPointF(0, -r), QPointF(r, 0),
                 QPointF(0,  r), QPointF(-r, 0),
@@ -201,6 +209,46 @@ class _SelectionOverlay(QGraphicsItem):
         painter.drawRect(self.boundingRect())
 
 
+# Every embedded widget type the far-LOD primitive bars know how to stand
+# in for individually — see MetaNode._draw_lod_widget_bar. A compound row
+# (PathParamNode's [field, browse button], EnumParamNode's [new-item field,
+# "+", "-"], Int's [spinbox, stepper]) is never itself in this tuple, so it
+# gets walked for these leaves instead of being drawn as one undifferentiated
+# blob — otherwise an empty field sharing a wrapper with a button (exactly
+# EnumParamNode's new-item row) visually swallowed the button along with it.
+_LOD_LEAF_WIDGET_TYPES = (QComboBox, QLineEdit, QCheckBox, QSpinBox, QToolButton, QPushButton)
+
+
+def _lod_leaf_widgets(top: QWidget) -> list:
+    """``top`` itself if it's already one of _LOD_LEAF_WIDGET_TYPES,
+    otherwise every such descendant inside it (a compound row/wrapper)."""
+    if isinstance(top, _LOD_LEAF_WIDGET_TYPES):
+        return [top]
+    return list(top.findChildren(_LOD_LEAF_WIDGET_TYPES))
+
+
+def _lod_widget_text(widget: QWidget) -> Optional[str]:
+    """The text a single leaf widget currently shows, for the far-LOD
+    primitive bar — ``None`` means "no single length-meaningful text" (a
+    plain button/icon: draw a bar spanning its whole slot), as opposed to
+    ``""`` which means "there's a text field here, it's just empty right
+    now" (also a full-slot bar — see MetaNode._draw_lod_widget_bar — but a
+    distinct reason from "this is a button").
+    """
+    if isinstance(widget, QComboBox):
+        text = widget.currentText()
+        if not text and widget.lineEdit():
+            text = widget.lineEdit().placeholderText()
+        return text
+    if isinstance(widget, QLineEdit):
+        return widget.text() or widget.placeholderText()
+    if isinstance(widget, QCheckBox):
+        return widget.text()
+    if isinstance(widget, QSpinBox):
+        return str(widget.value())
+    return None  # QToolButton / QPushButton
+
+
 class MetaNode(RenamableTitleMixin, QGraphicsObject):
     """
     Why: BoundingRect includes shadow area to prevent trail artifacts on move.
@@ -210,8 +258,27 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
     supports_plain_rename = False  # param nodes enable the generic Rename entry
     always_on_top = False  # StartNode: never joins the drag-brings-to-front stacking order
 
+    # Hands out a stable identity per node, independent of its position in
+    # scene.items() (which serialize_graph's "id" field is, and which shifts
+    # under Z-order changes like drag-to-front). undo/redo (see
+    # graph_serialization.try_apply_state_diff) matches nodes between two
+    # history snapshots by this uid instead, so it can tell "this specific
+    # node moved" from "a node was added/removed" and patch the live object
+    # in place rather than rebuilding the whole graph for every step.
+    _next_uid = 1
+
+    @classmethod
+    def _observe_uid(cls, uid: int):
+        """Fast-forward the allocator past a uid loaded from disk, so a
+        freshly created node can never collide with one restored from a
+        save/autosave file written by an earlier run."""
+        if uid >= cls._next_uid:
+            cls._next_uid = uid + 1
+
     def __init__(self, node_def: NodeDef):
         super().__init__()
+        self.uid = MetaNode._next_uid
+        MetaNode._next_uid += 1
         self.node_def = node_def
         self.sockets: Dict[str, SocketItem] = {}
         self._vector_buttons: Dict[str, tuple] = {}
@@ -237,6 +304,11 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         # (QLineEdit/QComboBox/etc. quietly disable a QGraphicsProxyWidget's
         # own hover delivery unless the embedded widget itself requests hover).
         self._hovered = False
+        # Level-of-detail: True once this node has been told the view is
+        # zoomed out past NODE_LOD_DETAIL_SCALE (see _set_lod_far) — text and
+        # embedded field widgets are hidden and paint() draws one flat color
+        # bar in their place instead.
+        self._lod_far = False
         self.setFlags(
             QGraphicsItem.ItemIsMovable |
             QGraphicsItem.ItemIsSelectable |
@@ -614,6 +686,82 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(QRectF(0, 0, d.width, NODE_HEADER_HEIGHT))
 
+        if self._lod_far:
+            self._paint_lod_primitives(painter)
+
+    def _paint_lod_primitives(self, painter: QPainter):
+        """Stand-ins for everything _set_lod_far hid: title, socket labels
+        and embedded field content each get one flat bar sized to their own
+        actual text length (not a generic fixed-width block) — a short name
+        and a long one still read as visibly different at a glance, the way
+        a squint at the real text would, without laying out or painting any
+        of it for real.
+        """
+        painter.setPen(Qt.NoPen)
+        self._draw_lod_text_bar(painter, self.title_item, QColor(self._title_text_color()))
+        for child in self.childItems():
+            if child is self.title_item:
+                continue
+            if isinstance(child, QGraphicsTextItem):
+                self._draw_lod_text_bar(painter, child, child.defaultTextColor())
+            elif isinstance(child, QGraphicsProxyWidget) and child.widget():
+                self._draw_lod_widget_bar(painter, child)
+
+    def _draw_lod_text_bar(self, painter: QPainter, text_item, color: QColor, *, height_frac: float = 0.55):
+        """One bar standing in for ``text_item``'s real text, at the item's
+        own position and sized to its own boundingRect width (already the
+        actual laid-out text width Qt computed for it — no extra font-metrics
+        work needed here)."""
+        br = text_item.boundingRect()
+        pos = text_item.pos()
+        width = min(br.width(), self.node_def.width - pos.x() - NODE_HORIZONTAL_PAD)
+        if width <= 0:
+            return
+        bar_color = QColor(color)
+        bar_color.setAlpha(180)
+        painter.setBrush(bar_color)
+        h = br.height() * height_frac
+        painter.drawRect(QRectF(pos.x(), pos.y() + (br.height() - h) / 2.0, width, h))
+
+    def _draw_lod_widget_bar(self, painter: QPainter, proxy: QGraphicsProxyWidget, *, height_frac: float = 0.5):
+        """Bars standing in for an embedded proxy's content — one per leaf
+        widget (see _lod_leaf_widgets), each at that leaf's own position and
+        size within the proxy, not one blob covering the whole slot. A
+        compound row (EnumParamNode's new-item field plus its "+"/"-"
+        buttons, PathParamNode's field-plus-browse-button rows) is exactly
+        why: drawing it as a single bar made every button in it visually
+        disappear into (or get swallowed by) the field's own bar — a button
+        needs its own distinct mark to still read as "a button is here"
+        rather than merging into whatever field sits next to it.
+        """
+        top = proxy.widget()
+        proxy_pos = proxy.pos()
+        for leaf in _lod_leaf_widgets(top):
+            offset = QPoint(0, 0) if leaf is top else leaf.mapTo(top, leaf.rect().topLeft())
+            self._draw_lod_leaf_bar(painter, leaf, proxy_pos + QPointF(offset.x(), offset.y()),
+                                     leaf.size(), height_frac)
+
+    @staticmethod
+    def _draw_lod_leaf_bar(painter: QPainter, widget: QWidget, pos: QPointF,
+                           size, height_frac: float):
+        text = _lod_widget_text(widget)
+        if text:
+            width = min(QFontMetrics(widget.font()).horizontalAdvance(text), size.width())
+        else:
+            # No text to measure — either a plain button/icon or a
+            # genuinely empty field; either way a bar spanning the leaf's
+            # own slot reads as "a control is here", the same way a real,
+            # empty QLineEdit still shows its own box with nothing typed
+            # into it instead of vanishing.
+            width = size.width()
+        if width <= 0:
+            return
+        bar_color = QColor(TEXT_COLOR)
+        bar_color.setAlpha(140)
+        painter.setBrush(bar_color)
+        h = size.height() * height_frac
+        painter.drawRect(QRectF(pos.x(), pos.y() + (size.height() - h) / 2.0, width, h))
+
     def itemChange(self, change, value):
         if change == QGraphicsItem.ItemPositionChange and self.scene():
             new_pos = value
@@ -709,6 +857,27 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         proxy = QGraphicsProxyWidget(self)
         proxy.setWidget(widget)
         return proxy
+
+    def _set_lod_far(self, far: bool):
+        """Toggle the far-zoom level of detail (see NODE_LOD_DETAIL_SCALE):
+        hide every text label and embedded field widget and let paint() draw
+        a single flat color bar in the title's place instead. Called from
+        GraphicsView whenever its scale actually crosses the threshold (see
+        view.py) — not from paint() itself, since visibility is item state,
+        not something to mutate on every repaint.
+
+        Sockets are deliberately left alone: they're cheap primitives already
+        (one drawEllipse/drawPolygon) and stay useful as topology landmarks
+        at any zoom, so hiding them would remove information for no
+        performance gain.
+        """
+        if self._lod_far == far:
+            return
+        self._lod_far = far
+        for child in self.childItems():
+            if isinstance(child, (QGraphicsTextItem, QGraphicsProxyWidget)):
+                child.setVisible(not far)
+        self.update()
 
     def mouseReleaseEvent(self, event):
         super().mouseReleaseEvent(event)
@@ -847,6 +1016,15 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         return connected
 
     def update_vector_buttons_visibility(self):
+        # LOD always wins over the connection-based show/hide below — this
+        # runs on every _refresh_connections() (so on every move/connect,
+        # far LOD or not), and without the _lod_far check it would happily
+        # re-show a vector toggle proxy that _set_lod_far just hid, the
+        # instant anything nearby moved while still zoomed out.
+        if self._lod_far:
+            for _, proxy in self._vector_buttons.values():
+                proxy.setVisible(False)
+            return
         if not self._vector_buttons:
             return
         connected = self._connected_vector_bases()

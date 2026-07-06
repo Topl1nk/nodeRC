@@ -5,17 +5,18 @@ connection drag preview, frame-header picking, and the pre-click selection
 snapshot the linked mass-edit machinery relies on.
 """
 from __future__ import annotations
-from typing import Optional
+from typing import Optional, Tuple
 
 from PyQt5.QtWidgets import QGraphicsScene, QGraphicsLineItem, QGraphicsProxyWidget, QDialog, QApplication
 from PyQt5.QtCore import Qt, QPointF, QRectF, QTimer
-from PyQt5.QtGui import QPen, QColor, QPainter, QPixmap, QTransform
+from PyQt5.QtGui import QPen, QColor, QPainter, QTransform
 
 from configuration import (
-    CANVAS_BACKGROUND_COLOR, GRID_SIZE_SMALL, GRID_SIZE_LARGE,
+    CANVAS_BACKGROUND_COLOR, GRID_SIZE_SMALL, GRID_SIZE_LARGE, GRID_MIN_SPACING_PX,
     GRID_COLOR_SMALL, GRID_COLOR_LARGE, SCENE_PADDING,
     SCENE_INITIAL_X, SCENE_INITIAL_Y, SCENE_INITIAL_WIDTH, SCENE_INITIAL_HEIGHT,
     DRAG_PREVIEW_LINE_WIDTH, NODE_DRAG_Z, GROUP_FRAME_HEADER_HEIGHT,
+    NODE_LOD_DETAIL_SCALE,
 )
 from ui.search_menu import SearchMenuDialog
 from ui.graph_items import Connection, SocketItem, MetaNode, GroupFrameItem
@@ -48,51 +49,85 @@ class NodeScene(QGraphicsScene):
         self.setSceneRect(SCENE_INITIAL_X, SCENE_INITIAL_Y, SCENE_INITIAL_WIDTH, SCENE_INITIAL_HEIGHT)
         self.setBackgroundBrush(QColor(CANVAS_BACKGROUND_COLOR))
         self.grid_visible = True
-        self._grid_tile: Optional[QPixmap] = None
 
-    def _build_grid_tile(self) -> QPixmap:
-        """One GRID_SIZE_LARGE-square tile carrying the whole grid pattern —
-        built once and repeated via drawTiledPixmap instead of drawLine-ing
-        every minor/major line inside the visible rect by hand on every
-        single repaint. On a zoomed-out large scene the visible rect can
-        span thousands of grid cells; a `for` loop issuing one drawLine per
-        line redid that work every frame during pan/zoom, where a tiled
-        pixmap costs one blit regardless of how much of the grid is
-        actually on screen.
+    def _grid_steps(self, scale: float) -> Tuple[float, float]:
+        """(minor, major) grid step in scene units, coarsened together as
+        needed so neither tier's on-screen spacing drops below
+        GRID_MIN_SPACING_PX.
 
-        Only the tile's own left/top edge carries the major (GRID_SIZE_LARGE)
-        line — tiling then reproduces the major grid at every multiple of
-        GRID_SIZE_LARGE with no doubled or missing line at the seam.
+        Why escalate instead of just skipping the minor tier when it gets
+        too dense: escalating both steps by the same ratio (major stays
+        exactly 5x minor, same as the base 20/100 pair) reproduces the usual
+        "zoom out and the grid re-tiles to a coarser unit" behavior instead
+        of the minor grid abruptly disappearing while the major one stays
+        fixed — the visual rhythm of the grid stays consistent across the
+        whole zoom range instead of changing shape at one particular level.
         """
-        tile = QPixmap(GRID_SIZE_LARGE, GRID_SIZE_LARGE)
-        tile.fill(QColor(CANVAS_BACKGROUND_COLOR))
-        painter = QPainter(tile)
-        try:
-            painter.setPen(QPen(QColor(*GRID_COLOR_SMALL), 1))
-            for x in range(GRID_SIZE_SMALL, GRID_SIZE_LARGE, GRID_SIZE_SMALL):
-                painter.drawLine(x, 0, x, GRID_SIZE_LARGE)
-            for y in range(GRID_SIZE_SMALL, GRID_SIZE_LARGE, GRID_SIZE_SMALL):
-                painter.drawLine(0, y, GRID_SIZE_LARGE, y)
-
-            painter.setPen(QPen(QColor(*GRID_COLOR_LARGE), 1.5))
-            painter.drawLine(0, 0, 0, GRID_SIZE_LARGE)
-            painter.drawLine(0, 0, GRID_SIZE_LARGE, 0)
-        finally:
-            painter.end()
-        return tile
+        minor = float(GRID_SIZE_SMALL)
+        major = float(GRID_SIZE_LARGE)
+        ratio = major / minor
+        for _ in range(8):  # 5**8 is far beyond any zoom this app allows
+            if minor * scale >= GRID_MIN_SPACING_PX:
+                break
+            minor *= ratio
+            major *= ratio
+        return minor, major
 
     def drawBackground(self, painter: QPainter, rect: QRectF):
         painter.fillRect(rect, QColor(CANVAS_BACKGROUND_COLOR))
         if not getattr(self, "grid_visible", True):
             return
 
-        if self._grid_tile is None:
-            self._grid_tile = self._build_grid_tile()
-        # The offset anchors the pattern to scene-space (0, 0) regardless of
-        # where the currently visible rect starts, so the grid stays put
-        # under the nodes while panning instead of sliding with the viewport.
-        offset = QPointF(rect.left() % GRID_SIZE_LARGE, rect.top() % GRID_SIZE_LARGE)
-        painter.drawTiledPixmap(rect, self._grid_tile, offset)
+        # Cosmetic pens (width 0) always rasterize as exactly one device
+        # pixel regardless of the view's current zoom transform, and drawing
+        # without antialiasing snaps that pixel to a single hard row/column
+        # instead of splitting its coverage (softly) across two — together
+        # these keep every line crisp at any zoom instead of thinning into a
+        # blurred, partially-transparent smear the way a pre-rendered grid
+        # bitmap does when the view scales it away from its native size.
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        scale = painter.transform().m11()
+        minor_step, major_step = self._grid_steps(scale)
+        # An integer count of minor cells per major cell, always exact since
+        # both steps are scaled up from GRID_SIZE_SMALL/LARGE by the same
+        # factor together (see _grid_steps) — used to tell a minor line that
+        # coincides with a major one apart by integer line *index* instead of
+        # a float `x % major_step` check, which drifts by accumulated
+        # floating-point error over a wide rect and can misfire right at the
+        # seam it exists to avoid.
+        minor_per_major = round(major_step / minor_step)
+
+        painter.setPen(QPen(QColor(*GRID_COLOR_SMALL), 0))
+        i = int(rect.left() // minor_step)
+        i_end = int(rect.right() // minor_step) + 1
+        while i <= i_end:
+            if i % minor_per_major != 0:
+                x = i * minor_step
+                painter.drawLine(QPointF(x, rect.top()), QPointF(x, rect.bottom()))
+            i += 1
+        j = int(rect.top() // minor_step)
+        j_end = int(rect.bottom() // minor_step) + 1
+        while j <= j_end:
+            if j % minor_per_major != 0:
+                y = j * minor_step
+                painter.drawLine(QPointF(rect.left(), y), QPointF(rect.right(), y))
+            j += 1
+
+        painter.setPen(QPen(QColor(*GRID_COLOR_LARGE), 0))
+        mi = int(rect.left() // major_step)
+        mi_end = int(rect.right() // major_step) + 1
+        while mi <= mi_end:
+            x = mi * major_step
+            painter.drawLine(QPointF(x, rect.top()), QPointF(x, rect.bottom()))
+            mi += 1
+        mj = int(rect.top() // major_step)
+        mj_end = int(rect.bottom() // major_step) + 1
+        while mj <= mj_end:
+            y = mj * major_step
+            painter.drawLine(QPointF(rect.left(), y), QPointF(rect.right(), y))
+            mj += 1
+        painter.restore()
 
     def recalculate_scene_rect(self):
         nodes = self._meta_nodes
@@ -114,8 +149,27 @@ class NodeScene(QGraphicsScene):
         if isinstance(item, MetaNode):
             self._meta_nodes.append(item)
             self._schedule_rect_recalc()
+            # A node created while this scene is already on screen and
+            # zoomed out past the LOD threshold should start simplified
+            # too — otherwise it would paint in full detail (and cost a
+            # widget/text layout it's about to have hidden anyway) until
+            # the next zoom/tab-switch event re-applies LOD (see
+            # GraphicsView._apply_lod). No view yet (a background tab
+            # being materialized) just means there's nothing to match.
+            views = self.views()
+            if views:
+                far = views[0].transform().m11() < NODE_LOD_DETAIL_SCALE
+                item._set_lod_far(far)
         elif isinstance(item, GroupFrameItem):
             self._group_frames.append(item)
+            # Its __init__ already centered the title assuming near/1:1 LOD
+            # (there was no scene — and so no view scale — to check yet) —
+            # apply the real current state now, for a frame created directly
+            # into an already-zoomed-out scene.
+            views = self.views()
+            if views:
+                far = views[0].transform().m11() < NODE_LOD_DETAIL_SCALE
+                item._set_lod_far(far)
 
     def removeItem(self, item):
         super().removeItem(item)
