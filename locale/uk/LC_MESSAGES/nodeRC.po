@@ -171,6 +171,34 @@ msgstr "Закрити вкладку"
 msgid "tab_new_tooltip"
 msgstr "Нова вкладка"
 
+#. Project menu (Open/Save/Save As)
+msgid "titlebar_menu_tooltip"
+msgstr "Меню"
+
+#. New project (project context menu)
+msgid "tab_menu_new"
+msgstr "Новий проєкт"
+
+#. Duplicate project (project context menu)
+msgid "tab_menu_duplicate"
+msgstr "Дублювати проєкт"
+
+#. Close (project context menu)
+msgid "tab_menu_close"
+msgstr "Закрити"
+
+#. Close other projects (project context menu)
+msgid "tab_menu_close_others"
+msgstr "Закрити інші проєкти"
+
+#. Close projects to the right (project context menu)
+msgid "tab_menu_close_to_right"
+msgstr "Закрити проєкти праворуч"
+
+#. Reopen closed project (project context menu)
+msgid "tab_menu_reopen_closed"
+msgstr "Відновити закритий проєкт"
+
 #. Minimize
 msgid "titlebar_minimize_tooltip"
 msgstr "Згорнути"

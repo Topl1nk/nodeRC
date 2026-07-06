@@ -170,6 +170,34 @@ msgstr ""
 msgid "tab_new_tooltip"
 msgstr ""
 
+#. Project menu (Open/Save/Save As)
+msgid "titlebar_menu_tooltip"
+msgstr ""
+
+#. New project (project context menu)
+msgid "tab_menu_new"
+msgstr ""
+
+#. Duplicate project (project context menu)
+msgid "tab_menu_duplicate"
+msgstr ""
+
+#. Close (project context menu)
+msgid "tab_menu_close"
+msgstr ""
+
+#. Close other projects (project context menu)
+msgid "tab_menu_close_others"
+msgstr ""
+
+#. Close projects to the right (project context menu)
+msgid "tab_menu_close_to_right"
+msgstr ""
+
+#. Reopen closed project (project context menu)
+msgid "tab_menu_reopen_closed"
+msgstr ""
+
 #. Minimize
 msgid "titlebar_minimize_tooltip"
 msgstr ""
