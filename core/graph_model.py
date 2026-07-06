@@ -142,6 +142,21 @@ class GraphModel:
     connections: List[ConnectionModel] = field(default_factory=list)
     groups: List[GroupModel] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        # GraphModel is only ever built once (scene_to_graph_model / from_dict
+        # / tests construct it fully up front, nothing appends to .nodes or
+        # .connections afterward) — so indexing here is safe and turns what
+        # was a linear scan per lookup into O(1). This matters because
+        # build_launch_tokens calls node_by_uid/connections_to once per
+        # parameter of every node in the chain, which made a large chain's
+        # token build effectively O(n^2).
+        self._node_index: Dict[Any, NodeModel] = {n.uid: n for n in self.nodes}
+        self._conn_by_dst: Dict[Any, List[ConnectionModel]] = {}
+        self._conn_by_src: Dict[Any, List[ConnectionModel]] = {}
+        for c in self.connections:
+            self._conn_by_dst.setdefault((c.dst_node_uid, c.dst_socket), []).append(c)
+            self._conn_by_src.setdefault((c.src_node_uid, c.src_socket), []).append(c)
+
     def to_dict(self, *, include_selection: bool = False) -> dict:
         return {
             "version": self.version,
@@ -160,15 +175,10 @@ class GraphModel:
         )
 
     def node_by_uid(self, uid) -> Optional[NodeModel]:
-        for n in self.nodes:
-            if n.uid == uid:
-                return n
-        return None
+        return self._node_index.get(uid)
 
     def connections_to(self, node_uid, socket_name: str) -> List[ConnectionModel]:
-        return [c for c in self.connections
-                if c.dst_node_uid == node_uid and c.dst_socket == socket_name]
+        return self._conn_by_dst.get((node_uid, socket_name), [])
 
     def connections_from(self, node_uid, socket_name: str) -> List[ConnectionModel]:
-        return [c for c in self.connections
-                if c.src_node_uid == node_uid and c.src_socket == socket_name]
+        return self._conn_by_src.get((node_uid, socket_name), [])
