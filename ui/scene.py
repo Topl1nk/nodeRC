@@ -171,7 +171,13 @@ class NodeScene(QGraphicsScene):
                 frame.setZValue(NODE_DRAG_Z + 1)
                 break
 
-        clicked_item = self.itemAt(event.scenePos(), QTransform())
+        # Use the view's actual transform, not an identity one — itemAt's hit
+        # test depends on it (e.g. SocketItem/GroupFrameItem shape() changes
+        # at LOD-far scale), so an identity transform here could resolve a
+        # different item than contextMenuEvent does for the same scene_pos.
+        view = self.views()[0] if self.views() else None
+        transform = view.transform() if view else QTransform()
+        clicked_item = self.itemAt(event.scenePos(), transform)
 
         is_proxy_click = False
         curr = clicked_item
