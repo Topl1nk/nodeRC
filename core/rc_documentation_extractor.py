@@ -370,8 +370,15 @@ def _add_undocumented_commands(categories: CommandCategoryTree) -> None:
 
 def _write_json_database(categories: CommandCategoryTree, path: str) -> int:
     total = sum(len(c) for s in categories.values() for c in s.values())
-    with open(path, "w", encoding="utf-8") as fh:
+    # Write-then-replace: a crash or kill mid-write must never leave a
+    # truncated rc_commands.json on disk for the next startup's json.load to
+    # choke on (see core.command_database.load_command_database, which now
+    # falls back to builtin_command_defaults() on exactly that failure — but
+    # only if this file itself isn't the thing that's corrupt).
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(categories, fh, indent=2, ensure_ascii=False)
+    os.replace(tmp, path)
     return total
 
 

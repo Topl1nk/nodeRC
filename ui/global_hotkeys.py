@@ -10,11 +10,10 @@ from __future__ import annotations
 from PyQt5.QtCore import QEvent, QObject
 
 from configuration import (
-    KEY_PREV_LANG, KEY_NEXT_LANG,
     VK_OEM_LEFT_BRACKET, VK_OEM_RIGHT_BRACKET,
     PREV_LANG_LAYOUT_CHARS, NEXT_LANG_LAYOUT_CHARS,
-    MOD_NONE,
 )
+from ui.keymap import KEY_PREV_LANG, KEY_NEXT_LANG, MOD_NONE
 
 
 class LanguageHotkeyFilter(QObject):

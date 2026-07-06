@@ -44,6 +44,14 @@ ENV/
 # build artifacts (the app builds them in memory at runtime, see localization.py).
 *.mo
 
+# rc_commands.json is generated from a local RealityCapture/RealityScan install
+# (core/rc_documentation_extractor.py, rebuilt on every launch — see nodeRC.py)
+# and isn't reproducible from anything else in this repo, so it doesn't belong
+# in version control. Without RC installed, core/command_database.py falls
+# back to a small built-in command set instead of depending on a frozen,
+# silently stale copy of someone else's install.
+rc_commands.json
+
 # Build and Release
 build_release.ps1
 release.bat

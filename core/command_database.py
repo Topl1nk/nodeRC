@@ -12,6 +12,7 @@ from typing import Dict, List, Tuple
 
 from configuration import COMMAND_DB_JSON
 from core.rc_documentation_extractor import command_display_name, command_action_word
+from diagnostics import log_and_explain
 
 CommandCategoryTree = Dict[str, Dict[str, List[dict]]]
 
@@ -47,15 +48,24 @@ def builtin_command_defaults() -> List[dict]:
 def load_command_database() -> Tuple[CommandCategoryTree, List[dict]]:
     """The categorized catalog plus its flattened command list."""
     if os.path.exists(COMMAND_DB_JSON):
-        with open(COMMAND_DB_JSON, "r", encoding="utf-8") as f:
-            categories: CommandCategoryTree = json.load(f)
-        commands = [
-            command
-            for subsections in categories.values()
-            for section_commands in subsections.values()
-            for command in section_commands
-        ]
-        return categories, commands
+        try:
+            with open(COMMAND_DB_JSON, "r", encoding="utf-8") as f:
+                categories: CommandCategoryTree = json.load(f)
+            commands = [
+                command
+                for subsections in categories.values()
+                for section_commands in subsections.values()
+                for command in section_commands
+            ]
+            return categories, commands
+        except (OSError, json.JSONDecodeError, AttributeError) as exc:
+            # AttributeError covers a well-formed-but-wrong-shaped JSON (e.g.
+            # a list instead of the expected category dict) tripping .values()
+            # below. Either way the palette must never come up empty — see
+            # module docstring — so fall through to the built-in set instead
+            # of taking the whole app down on a corrupted or stale-shaped
+            # rc_commands.json.
+            log_and_explain(f"Ignoring unreadable {COMMAND_DB_JSON}", exc)
 
     defaults = builtin_command_defaults()
     return {"Commands": {"__root__": defaults}}, defaults

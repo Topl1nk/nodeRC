@@ -24,12 +24,6 @@ from configuration import (
     WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT,
     TITLE_BAR_HEIGHT, TITLE_BAR_RESIZE_MARGIN,
     AUTOSAVE_INTERVAL_MS,
-    KEY_SPAWN_MENU, KEY_DELETE, KEY_SAVE, KEY_OPEN, KEY_NEW_TAB,
-    KEY_NEW_TAB_ALT, KEY_CLOSE_TAB, KEY_NEXT_TAB, KEY_EXECUTE,
-    KEY_COPY, KEY_PASTE, KEY_UNDO, KEY_REDO,
-    KEY_TOGGLE_GRID, KEY_FIT_VIEW, KEY_FULLSCREEN,
-    KEY_RENAME_NODE, KEY_SELECT_ALL, KEY_GROUP, KEY_DUPLICATE,
-    MOD_NONE, MOD_CTRL, MOD_CTRL_SHIFT,
     GROUP_FRAME_PAD_LEFT, GROUP_FRAME_PAD_TOP,
     GROUP_FRAME_PAD_RIGHT, GROUP_FRAME_PAD_BOTTOM,
     WINDOW_INITIAL_X, WINDOW_INITIAL_Y, WINDOW_INITIAL_WIDTH, WINDOW_INITIAL_HEIGHT,
@@ -37,6 +31,14 @@ from configuration import (
     DUPLICATE_OFFSET_X, DUPLICATE_OFFSET_Y,
     CLIPBOARD_PAYLOAD_PREFIX,
     DWMWCP_ROUND, DWMWCP_DONOTROUND, WINDOW_CORNER_RADIUS,
+)
+from ui.keymap import (
+    KEY_SPAWN_MENU, KEY_DELETE, KEY_SAVE, KEY_OPEN, KEY_NEW_TAB,
+    KEY_NEW_TAB_ALT, KEY_CLOSE_TAB, KEY_NEXT_TAB, KEY_EXECUTE,
+    KEY_COPY, KEY_PASTE, KEY_UNDO, KEY_REDO,
+    KEY_TOGGLE_GRID, KEY_FIT_VIEW, KEY_FULLSCREEN,
+    KEY_RENAME_NODE, KEY_SELECT_ALL, KEY_GROUP, KEY_DUPLICATE,
+    MOD_NONE, MOD_CTRL, MOD_CTRL_SHIFT,
 )
 from diagnostics import log_and_explain
 from core.command_database import load_command_database
@@ -47,7 +49,7 @@ from ui.graph_items import Connection, GroupFrameItem, MetaNode
 from ui.command_nodes import CommandNode, StartNode
 from ui.project_tab import ProjectTab
 from ui.title_bar import TitleBarWidget
-from core.graph_serialization import (
+from ui.graph_serialization import (
     build_param_node, clear_graph, materialize_graph, payload_center,
     scene_to_graph_model, serialize_graph, try_apply_state_diff,
 )

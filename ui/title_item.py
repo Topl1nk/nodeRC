@@ -10,9 +10,9 @@ from PyQt5.QtGui import QColor, QPainterPath, QFont, QTextCursor
 from PyQt5.QtCore import Qt
 
 from configuration import (
-    UI_FONT_FAMILY, NODE_RENAME_FONT_SIZE, TEXT_COLOR,
-    NODE_SOCKET_Z, KEY_COMMIT_EDIT, KEY_CANCEL_EDIT,
+    UI_FONT_FAMILY, NODE_RENAME_FONT_SIZE, TEXT_COLOR, NODE_SOCKET_Z,
 )
+from ui.keymap import KEY_COMMIT_EDIT, KEY_CANCEL_EDIT
 
 
 def editor_window_of(item):

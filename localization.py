@@ -22,6 +22,8 @@ import struct
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from diagnostics import log_and_explain
+
 DOMAIN = "nodeRC"
 LOCALE_DIR = Path(__file__).resolve().parent / "locale"
 DEFAULT_LANGUAGE = "en"  # source language; the fallback for every other catalog
@@ -177,8 +179,9 @@ def _build_translation(lang: str) -> Optional[gettext.NullTranslations]:
     try:
         catalog = parse_po(po.read_text(encoding="utf-8"))
         built = gettext.GNUTranslations(io.BytesIO(generate_mo(catalog)))
-    except Exception:
+    except Exception as exc:
         # A malformed catalog must never crash the editor; fall through to English.
+        log_and_explain(f"Ignoring malformed catalog for language {lang!r}", exc)
         built = None
     _translation_cache[lang] = built
     return built
@@ -254,8 +257,8 @@ def get_all_translations(key: str) -> List[str]:
             if po.exists():
                 try:
                     _po_catalogs_cache[lang] = parse_po(po.read_text(encoding="utf-8"))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    log_and_explain(f"Ignoring malformed catalog for language {lang!r}", exc)
         catalog = _po_catalogs_cache.get(lang)
         if catalog and key in catalog:
             val = catalog[key]
@@ -273,7 +276,7 @@ def resolve_default_title(current: str, title_key: Optional[str]) -> str:
     as user-renamed vs. default. A real rename can happen to collide with a
     default in another language, in which case it re-resolves too; this
     mirrors the tradeoff the codebase already accepted for load-time title
-    resolution (see build_param_node in core/graph_serialization.py).
+    resolution (see build_param_node in ui/graph_serialization.py).
     """
     if not title_key or current not in get_all_translations(title_key):
         return current

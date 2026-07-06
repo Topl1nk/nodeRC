@@ -902,8 +902,7 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         else:
             frames = [i for i in scene.items() if isinstance(i, GroupFrameItem)]
         for item in frames:
-            frame_rect = item.mapToScene(item.rect()).boundingRect()
-            if frame_rect.contains(self.sceneBoundingRect().center()):
+            if item.contains_node(self):
                 if best_frame is None or item.zValue() > best_frame.zValue():
                     best_frame = item
 
@@ -990,20 +989,31 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
             return
         # Iterate the window's connection list (small) rather than scanning — and
         # sorting — every scene item; this runs on each frame of a node drag.
+        # Vector-base names get collected in the same pass rather than update_
+        # vector_buttons_visibility rescanning win.connections a second time
+        # right after — both used to walk the same list independently on
+        # every single drag frame.
         win = editor_window_of(self)
+        connected_vector_bases = set()
         for conn in (win.connections if win else ()):
-            if (conn.source and conn.source.meta_node is self) or \
-               (conn.dest   and conn.dest.meta_node   is self):
+            touches_self = False
+            if conn.source and conn.source.meta_node is self:
+                touches_self = True
+                if conn.source.sock_def.vector_base:
+                    connected_vector_bases.add(conn.source.sock_def.vector_base)
+            if conn.dest and conn.dest.meta_node is self:
+                touches_self = True
+                if conn.dest.sock_def.vector_base:
+                    connected_vector_bases.add(conn.dest.sock_def.vector_base)
+            if touches_self:
                 conn.refresh()
-        self.update_vector_buttons_visibility()
+        self.update_vector_buttons_visibility(connected_vector_bases)
 
     def _connected_vector_bases(self) -> set:
         """vector_base names of every vector socket of this node currently
-        wired to something. One pass over win.connections regardless of how
-        many vector params this node has, instead of update_vector_buttons_
-        visibility's previous approach of rescanning the whole connection
-        list once per vector param — this runs on every _refresh_connections
-        (i.e. every frame of a node drag)."""
+        wired to something — used only where no _refresh_connections pass
+        already collected this (e.g. right after the node's sockets are
+        first built, before any drag has happened)."""
         win = editor_window_of(self)
         connected = set()
         if not win:
@@ -1015,7 +1025,7 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
                 connected.add(c.dest.sock_def.vector_base)
         return connected
 
-    def update_vector_buttons_visibility(self):
+    def update_vector_buttons_visibility(self, connected: Optional[set] = None):
         # LOD always wins over the connection-based show/hide below — this
         # runs on every _refresh_connections() (so on every move/connect,
         # far LOD or not), and without the _lod_far check it would happily
@@ -1027,7 +1037,8 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
             return
         if not self._vector_buttons:
             return
-        connected = self._connected_vector_bases()
+        if connected is None:
+            connected = self._connected_vector_bases()
         for base_name, (_, proxy) in self._vector_buttons.items():
             proxy.setVisible(base_name not in connected)
 

@@ -64,7 +64,7 @@ def write_snapshot(session_dir: Path, tab_id: str, project_path: Optional[str],
     no ordering information at all.
 
     ``graph`` is a plain-data payload already produced by
-    ``core.graph_serialization.serialize_graph`` — this function never
+    ``ui.graph_serialization.serialize_graph`` — this function never
     touches the live scene, so it's safe to call from the background thread
     ``write_snapshot_async`` submits it to. ``history``/``history_index``
     (already a bounded window — see editor_window._trimmed_history) let

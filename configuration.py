@@ -4,6 +4,8 @@ All external dependencies, visual constants and layout dimensions live here and 
 """
 from __future__ import annotations
 
+import os
+
 # ── Custom-tint colour ramp (single source for "user picked a color X") ────────
 # A picked colour C drives every painted shade on the node/frame via these named
 # factors, so tweaking the palette here propagates to every recoloured surface.
@@ -26,6 +28,13 @@ TINT_BORDER_MIN_LUMINANCE = 70   # 0–255 — borders below this get lightened 
 TINT_BORDER_LIGHTEN_STEP  = 130  # per-iteration lighten factor when brightening borders
 
 DEFAULT_HEADER_COLOR = "#3a7cd1"
+# Pinned result of ui.theme.darker_hex(DEFAULT_HEADER_COLOR, TINT_BODY_DARKEN) —
+# node_blueprint.py needs this default body shade but must stay Qt-free (see
+# CODEX.md Ст.7), so the value is computed once and frozen here rather than
+# calling into Qt at import time. tests/test_characterization.py's
+# test_default_body_color_matches_qt_darker keeps this from silently drifting
+# if DEFAULT_HEADER_COLOR or TINT_BODY_DARKEN ever change.
+DEFAULT_BODY_COLOR = "#1a385f"
 # When True, parameter nodes use their socket colour as the header colour
 # (e.g. String → pink, Integer → blue). Exec/command nodes keep DEFAULT_HEADER_COLOR.
 PARAM_NODE_HEADER_FROM_SOCKET = True
@@ -50,8 +59,17 @@ FIELD_PLACEHOLDER_COLOR = "#878F9A"
 
 
 # ── External paths ─────────────────────────────────────────────────────────────
-RC_HELP_HTML    = r"C:\ProgramData\Epic\RealityScan\LanguagePack\help\en-US\appbasics\allcommands.htm"
-RC_EXECUTABLE   = r"C:\Program Files\Capturing Reality\RealityCapture\RealityCapture.exe"
+# RealityCapture/RealityScan's own install location varies by version, drive
+# and Epic Games library path (Capturing Reality's original install path and
+# the newer Epic/RealityScan one both still turn up in the wild) — an
+# environment variable override means a non-default install doesn't require
+# editing source, only the two hardcoded paths below stay as the common case.
+RC_HELP_HTML    = os.environ.get(
+    "NODERC_RC_HELP_HTML",
+    r"C:\ProgramData\Epic\RealityScan\LanguagePack\help\en-US\appbasics\allcommands.htm")
+RC_EXECUTABLE   = os.environ.get(
+    "NODERC_RC_EXECUTABLE",
+    r"C:\Program Files\Capturing Reality\RealityCapture\RealityCapture.exe")
 COMMAND_DB_JSON = "rc_commands.json"
 
 # ── Node layout ────────────────────────────────────────────────────────────────
@@ -230,38 +248,10 @@ SOCKET_HOVER_COLOR = "#FFFFFF"
 
 # ── UI Dimensions & Colors ─────────────────────────────────────────────────────
 
-from PyQt5.QtCore import Qt
-
-# ── Keyboard Shortcuts ─────────────────────────────────────────────────────────
-KEY_SPAWN_MENU   = Qt.Key_Space
-KEY_DELETE       = Qt.Key_Delete
-KEY_SAVE         = Qt.Key_S
-KEY_OPEN         = Qt.Key_O
-KEY_COPY         = Qt.Key_C
-KEY_PASTE        = Qt.Key_V
-KEY_UNDO         = Qt.Key_Z
-KEY_REDO         = Qt.Key_Y
-KEY_TOGGLE_GRID  = Qt.Key_G
-KEY_FIT_VIEW     = Qt.Key_F
-KEY_FULLSCREEN   = Qt.Key_F11
-KEY_COMMIT_EDIT  = [Qt.Key_Return, Qt.Key_Enter]
-KEY_CANCEL_EDIT  = Qt.Key_Escape
-KEY_RENAME_NODE  = Qt.Key_F2
-KEY_SELECT_ALL   = Qt.Key_A
-KEY_GROUP        = Qt.Key_G  # with Ctrl — frames the selection (bare G toggles the grid)
-KEY_DUPLICATE    = Qt.Key_D  # with Ctrl — clones the selection in place
-KEY_PREV_LANG    = Qt.Key_BracketLeft
-KEY_NEXT_LANG    = Qt.Key_BracketRight
-KEY_NEW_TAB      = Qt.Key_T  # with Ctrl — new tab; with Ctrl+Shift — reopen closed tab
-KEY_NEW_TAB_ALT  = Qt.Key_N  # with Ctrl — alias for new_tab(), same action as Ctrl+T
-KEY_CLOSE_TAB    = Qt.Key_W  # with Ctrl — close the active project
-KEY_NEXT_TAB     = Qt.Key_Tab  # with Ctrl / Ctrl+Shift — cycle projects
-KEY_EXECUTE      = Qt.Key_F5  # trigger execute_chain(), same as StartNode's Launch button
-
-# ── Keyboard Modifiers ────────────────────────────────────────────────────────
-MOD_NONE       = Qt.NoModifier
-MOD_CTRL       = Qt.ControlModifier
-MOD_CTRL_SHIFT = Qt.ControlModifier | Qt.ShiftModifier
+# Keyboard shortcut key codes and modifiers live in ui/keymap.py, not here — they
+# need Qt.Key_*/Qt.*Modifier, and core/ imports this module for its Qt-free
+# constants (colours, layout, paths), so a PyQt5 import at this module's top
+# level would drag Qt into every headless core import. See Ст.7 in CODEX.md.
 
 # ── Hotkey display hints ──────────────────────────────────────────────────────
 # Menu items show their keyboard shortcut as plain text (see ui/title_bar.py's

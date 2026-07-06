@@ -14,11 +14,10 @@ from typing import Dict, List, Optional, Tuple
 
 from configuration import (
     NODE_HEADER_HEIGHT, NODE_ROW_HEIGHT, NODE_FOOTER_HEIGHT, NODE_BOTTOM_PAD,
-    NODE_DEFAULT_WIDTH, DEFAULT_HEADER_COLOR,
+    NODE_DEFAULT_WIDTH, DEFAULT_HEADER_COLOR, DEFAULT_BODY_COLOR,
     SOCKET_COLOR_SCHEMA, INTEGER_PARAM_NAMES,
-    TINT_BODY_DARKEN, UI_FONT_FAMILY, NODE_RENAME_FONT_SIZE,
+    UI_FONT_FAMILY, NODE_RENAME_FONT_SIZE,
 )
-from ui.theme import darker_hex
 
 # Visual prefix per parameter type — keeps auto-created nodes consistent with the
 # titles the typed ParamNode classes assign themselves.
@@ -49,7 +48,7 @@ def resolve_color_schema(socket_type: str) -> dict:
     schema = SOCKET_COLOR_SCHEMA.get(socket_type.lower(), SOCKET_COLOR_SCHEMA["any"])
     return {
         "hdr": DEFAULT_HEADER_COLOR,
-        "body": darker_hex(DEFAULT_HEADER_COLOR, TINT_BODY_DARKEN),
+        "body": DEFAULT_BODY_COLOR,
         "socket": schema["socket"],
     }
 

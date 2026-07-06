@@ -18,7 +18,7 @@ from PyQt5.QtCore import QEvent, QObject
 from PyQt5.QtGui import QColor, QPalette
 
 from configuration import (
-    DEFAULT_HEADER_COLOR, CANVAS_BACKGROUND_COLOR, WINDOW_BACKGROUND_COLOR,
+    DEFAULT_HEADER_COLOR, DEFAULT_BODY_COLOR, CANVAS_BACKGROUND_COLOR, WINDOW_BACKGROUND_COLOR,
     TEXT_COLOR, TEXT_MUTED_COLOR, BUTTON_TEXT_COLOR, NODE_SELECTED_COLOR,
     UI_FONT_FAMILY, WIDGET_FONT_PT, BROWSE_BTN_WIDTH,
     CHECKBOX_INDICATOR_SIZE, CHECKBOX_LABEL_SPACING,
@@ -416,7 +416,7 @@ QFrame#descFrame {{
 # Same primitive a graph node paints — a colored header band over a body,
 # one outer border wrapping both (see graph_items.py's MetaNode.paint() and
 # FramelessDialogBase, which this pairs with).
-_DIALOG_BODY_COLOR = darker_hex(DEFAULT_HEADER_COLOR, TINT_BODY_DARKEN)
+_DIALOG_BODY_COLOR = DEFAULT_BODY_COLOR
 
 RESTORE_DIALOG_QSS = f"""
 #RestoreChoiceDialog {{

@@ -22,7 +22,8 @@ from ui.graph_items import GroupFrameItem
 from ui.param_nodes import StringParamNode
 from ui.command_nodes import StartNode
 from ui.theme import brightened_for_canvas, relative_luminance
-from core.graph_serialization import serialize_graph
+from ui.graph_serialization import serialize_graph
+from ui import keymap
 import configuration as cfg
 
 
@@ -827,7 +828,7 @@ def test_ctrl_g_groups_selection(window):
     b = _param(window, x=120)
     a.setSelected(True)
     b.setSelected(True)
-    _press(window, cfg.KEY_GROUP, Qt.ControlModifier)
+    _press(window, keymap.KEY_GROUP, Qt.ControlModifier)
     assert len(_frames(window)) == 1
 
 
@@ -835,13 +836,13 @@ def test_ctrl_d_duplicates_selection(window):
     node = _param(window)
     node.setSelected(True)
     before = len(_nodes(window, StringParamNode))
-    _press(window, cfg.KEY_DUPLICATE, Qt.ControlModifier)
+    _press(window, keymap.KEY_DUPLICATE, Qt.ControlModifier)
     assert len(_nodes(window, StringParamNode)) == before + 1
 
 
 def test_bare_g_toggles_grid_not_group(window):
     grid_before = window.scene.grid_visible
-    _press(window, cfg.KEY_TOGGLE_GRID, Qt.NoModifier)
+    _press(window, keymap.KEY_TOGGLE_GRID, Qt.NoModifier)
     assert window.scene.grid_visible is not grid_before
     assert len(_frames(window)) == 0  # bare G must not create a group
 

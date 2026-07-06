@@ -9,7 +9,7 @@ from PyQt5.QtGui import QPainter, QColor, QRadialGradient, QBrush, QCursor
 from PyQt5.QtCore import Qt, QPoint, QRectF, QTimer
 
 from localization import t
-from ui.graph_items import MetaNode, GroupFrameItem
+from ui.graph_items import MetaNode
 from configuration import (
     CANVAS_BACKGROUND_COLOR, SCROLLBAR_TOGGLE_BG, SCROLLBAR_TOGGLE_HOVER,
     VIGNETTE_COLOR, VIGNETTE_RADIUS, SCROLLBAR_BTN_MARGIN, SCROLLBAR_BTN_OFFSET,
@@ -158,9 +158,10 @@ class GraphicsView(QGraphicsView):
         if scene is None:
             return
         far = self.transform().m11() < NODE_LOD_DETAIL_SCALE
-        for item in scene.items():
-            if isinstance(item, (MetaNode, GroupFrameItem)):
-                item._set_lod_far(far)
+        for item in scene._meta_nodes:
+            item._set_lod_far(far)
+        for item in scene._group_frames:
+            item._set_lod_far(far)
 
     def _build_vignette_brush(self):
         w = self.viewport().width()

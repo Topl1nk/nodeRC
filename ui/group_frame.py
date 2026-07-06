@@ -369,6 +369,14 @@ class GroupFrameItem(RenamableTitleMixin, QGraphicsRectItem):
     def _scene_rect(self) -> QRectF:
         return self.mapToScene(self.rect()).boundingRect()
 
+    def contains_node(self, node) -> bool:
+        """Whether ``node``'s center currently sits inside this frame — the
+        one containment test every membership decision in this class (and
+        MetaNode._adopt_containing_frame, the reverse direction: which frame
+        is under a just-moved node) goes through, so "inside the frame" can
+        only ever mean one thing."""
+        return self._scene_rect().contains(node.sceneBoundingRect().center())
+
     def _contained_nodes(self, candidates: Optional[list] = None) -> list:
         """Nodes under this frame. ``candidates``, when given, is used instead
         of a fresh ``scene.items()`` scan — a caller committing many frames
@@ -385,10 +393,8 @@ class GroupFrameItem(RenamableTitleMixin, QGraphicsRectItem):
                 candidates = scene._meta_nodes
             else:
                 candidates = [item for item in scene.items() if isinstance(item, MetaNode)]
-        frame_rect = self._scene_rect()
         return [item for item in candidates
-                if item is not self
-                and frame_rect.contains(item.sceneBoundingRect().center())]
+                if item is not self and self.contains_node(item)]
 
     def commit_members(self, force_all: bool = False, candidates: Optional[list] = None):
         scene = self.scene()
@@ -400,10 +406,9 @@ class GroupFrameItem(RenamableTitleMixin, QGraphicsRectItem):
             for node in self._group_members:
                 node._group_frame = self
         else:
-            frame_rect = self._scene_rect()
             still_inside = []
             for node in getattr(self, '_group_members', []):
-                if node.scene() is scene and frame_rect.contains(node.sceneBoundingRect().center()):
+                if node.scene() is scene and self.contains_node(node):
                     still_inside.append(node)
                 else:
                     if getattr(node, '_group_frame', None) is self:

@@ -21,7 +21,7 @@ from ui.param_nodes import (
     ParamNode, StringParamNode, IntParamNode, EnumParamNode, PathParamNode,
 )
 from ui.command_nodes import CommandNode, StartNode
-from core.graph_serialization import serialize_graph
+from ui.graph_serialization import serialize_graph
 
 
 @pytest.fixture(scope="session")
@@ -526,15 +526,47 @@ def test_rename_cancel_restores_title(window):
 
 
 # ── import boundary: core/ must not pull in Qt or ui ───────────────────────────
+#
+# Checking sys.modules in-process (the old approach) is a false-positive trap:
+# by the time these tests run, earlier GUI-driving tests have already loaded
+# PyQt5 and ui.* into sys.modules, so a core module that secretly imports them
+# too shows up as "no new modules" and the check passes even when the
+# boundary is broken. Each of these instead imports the module in a brand new
+# interpreter process, where the only way PyQt5/ui.* end up loaded is if the
+# core module under test pulled them in itself.
+
+def _assert_importable_without_qt_or_ui(module_name: str):
+    import subprocess, sys
+    probe = (
+        "import sys, importlib;"
+        f"importlib.import_module({module_name!r});"
+        "bad = [m for m in sys.modules if m.startswith('PyQt') or m.startswith('ui.')];"
+        "print(bad, file=sys.stderr);"
+        "sys.exit(1 if bad else 0)"
+    )
+    result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)
+    assert result.returncode == 0, (
+        f"{module_name} pulled in Qt/ui: {result.stderr.strip()}"
+    )
+
 
 def test_core_graph_model_has_no_qt_or_ui_deps():
-    import importlib, sys
-    mods_before = set(sys.modules)
-    importlib.reload(importlib.import_module("core.graph_model"))
-    new_mods = set(sys.modules) - mods_before
-    for m in new_mods:
-        assert not m.startswith("PyQt"), f"core.graph_model pulled in {m}"
-        assert not m.startswith("ui."), f"core.graph_model pulled in {m}"
+    _assert_importable_without_qt_or_ui("core.graph_model")
+
+
+def test_core_node_blueprint_has_no_qt_or_ui_deps():
+    _assert_importable_without_qt_or_ui("core.node_blueprint")
+
+
+def test_default_body_color_matches_qt_darker():
+    """configuration.DEFAULT_BODY_COLOR is a frozen copy of
+    ui.theme.darker_hex(DEFAULT_HEADER_COLOR, TINT_BODY_DARKEN), kept that way
+    (instead of computed at import time) so core/node_blueprint.py doesn't need
+    Qt. If either input changes, this catches the drift instead of letting the
+    node body colour silently go stale."""
+    from configuration import DEFAULT_HEADER_COLOR, DEFAULT_BODY_COLOR, TINT_BODY_DARKEN
+    from ui.theme import darker_hex
+    assert DEFAULT_BODY_COLOR == darker_hex(DEFAULT_HEADER_COLOR, TINT_BODY_DARKEN)
 
 
 def test_graph_model_dict_roundtrip():
@@ -564,13 +596,7 @@ def test_graph_model_dict_roundtrip():
 
 
 def test_core_chain_execution_has_no_qt_or_ui_deps():
-    import importlib, sys
-    mods_before = set(sys.modules)
-    importlib.reload(importlib.import_module("core.chain_execution"))
-    new_mods = set(sys.modules) - mods_before
-    for m in new_mods:
-        assert not m.startswith("PyQt"), f"core.chain_execution pulled in {m}"
-        assert not m.startswith("ui."), f"core.chain_execution pulled in {m}"
+    _assert_importable_without_qt_or_ui("core.chain_execution")
 
 
 # ── duplicate param names: same-typed inputs a command's own docs don't

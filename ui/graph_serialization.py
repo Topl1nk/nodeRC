@@ -9,6 +9,13 @@ Payload schema:
   nodes:       [{id, x, y, type, …type-specific payload, [selected]}]
   connections: [{src_node, src_socket, dst_node, dst_socket, [selected]}]
   groups:      [{title, x, y, width, height, color, [selected]}]
+
+Lives in ui/, not core/: every function here reads/writes a live
+QGraphicsScene and concrete Qt graphics items (MetaNode, Connection,
+GroupFrameItem) — it's the scene<->payload bridge, not headless business
+logic. scene_to_graph_model() is the one function that actually produces a
+pure core.graph_model.GraphModel for chain_execution; everything else here
+needs Qt by nature and has no reason to pretend otherwise (see CODEX.md Ст.7).
 """
 from __future__ import annotations
 
