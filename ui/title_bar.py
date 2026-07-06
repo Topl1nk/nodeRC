@@ -701,3 +701,13 @@ class TitleBarWidget(QWidget):
             self._window.setGeometry(geo.left() + left_width, geo.top(), right_width, geo.height())
             self._window.set_corners_square(True)
             self._edge_snapped = True
+        elif global_pos.y() >= geo.bottom() - m:
+            # Same floor/remainder split as left/right, applied vertically —
+            # Windows itself has no native bottom-drop gesture, but dropping
+            # here should be at least as useful as doing nothing; snapping to
+            # the bottom half mirrors the left/right half-screen behavior.
+            top_height = geo.height() // 2
+            bottom_height = geo.height() - top_height
+            self._window.setGeometry(geo.left(), geo.top() + top_height, geo.width(), bottom_height)
+            self._window.set_corners_square(True)
+            self._edge_snapped = True
