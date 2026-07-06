@@ -46,6 +46,15 @@ class GraphicsView(QGraphicsView):
         self._suppress_redelivered_click = False
         self._hovered_node: Optional[MetaNode] = None
         self._hovered_widget: Optional[QWidget] = None
+        # Last poll's (cursor pos, window-active, view transform, scroll
+        # position) — lets _poll_hover skip its itemAt() hit-tests entirely
+        # when none of these changed since the previous tick, instead of
+        # re-resolving hover on every single poll even while the cursor sits
+        # motionless over a dense, zoomed-out scene. Transform/scroll are
+        # part of the key (not just cursor pos) because what's under a
+        # stationary cursor still changes when the user zooms or the view
+        # pans programmatically without the mouse itself moving.
+        self._last_hover_poll_key = None
 
         # Polling instead of relying on mouseMoveEvent: QGraphicsProxyWidget
         # does not reliably forward mouse-move to the view once a focusable/
@@ -183,7 +192,17 @@ class GraphicsView(QGraphicsView):
         # IME/text-cursor input for the embedded field, which made underMouse()
         # false-negative exactly for the fields that were never getting hover.
         pos = self.mapFromGlobal(QCursor.pos())
-        if not self.rect().contains(pos) or self.window() is None or not self.window().isActiveWindow():
+        active = self.window() is not None and self.window().isActiveWindow()
+        key = (pos, active, self.transform(),
+               self.horizontalScrollBar().value(), self.verticalScrollBar().value())
+        # Nothing that could change the hover result has changed since the
+        # last tick — skip the itemAt() hit-tests below entirely instead of
+        # redoing them every NODE_HOVER_POLL_INTERVAL_MS regardless of
+        # whether the cursor actually moved.
+        if key == self._last_hover_poll_key:
+            return
+        self._last_hover_poll_key = key
+        if not self.rect().contains(pos) or not active:
             self._update_hovered_node(None)
             self._update_hovered_widget(None)
             return
