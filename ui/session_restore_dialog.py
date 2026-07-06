@@ -8,10 +8,11 @@ next to three otherwise-equal buttons.
 """
 from __future__ import annotations
 
-from PyQt5.QtWidgets import QHBoxLayout, QLabel, QPushButton
+from functools import partial
+
+from PyQt5.QtWidgets import QLabel
 
 from localization import t
-from ui.theme import PUSHBTN_QSS
 from ui.frameless_dialog import FramelessDialogBase
 
 
@@ -28,18 +29,11 @@ class SessionRestoreDialog(FramelessDialogBase):
         body.setWordWrap(True)
         self.body_layout.addWidget(body)
 
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(8)
-        for label_key, choice in (
-            ("session_restore_yes", "yes"),
-            ("session_restore_no", "no"),
-            ("session_restore_always_yes", "always"),
-        ):
-            btn = QPushButton(t(label_key))
-            btn.setStyleSheet(PUSHBTN_QSS)
-            btn.clicked.connect(lambda _checked=False, c=choice: self._choose(c))
-            btn_row.addWidget(btn)
-        self.body_layout.addLayout(btn_row)
+        self.add_button_row([
+            (t("session_restore_yes"), partial(self._choose, "yes")),
+            (t("session_restore_no"), partial(self._choose, "no")),
+            (t("session_restore_always_yes"), partial(self._choose, "always")),
+        ], spacing=8)
 
     def _choose(self, choice: str):
         self.choice = choice

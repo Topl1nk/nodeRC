@@ -19,13 +19,15 @@ from __future__ import annotations
 
 import sys
 
-from PyQt5.QtWidgets import QDialog, QLabel, QVBoxLayout, QWidget
+from typing import Callable, Optional, Sequence, Tuple
+
+from PyQt5.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 from PyQt5.QtCore import Qt, QPoint, QTimer
 from PyQt5 import sip
 
 from configuration import NODE_HEADER_HEIGHT, DWMWCP_DONOTROUND, NODE_SELECTED_COLOR
 from diagnostics import log_and_explain
-from ui.theme import RESTORE_DIALOG_QSS
+from ui.theme import RESTORE_DIALOG_QSS, PUSHBTN_QSS
 from ui.window_chrome import apply_rounded_corners, apply_immersive_dark_mode
 
 # Same selection-highlight color a node's border uses when selected —
@@ -69,6 +71,27 @@ class FramelessDialogBase(QDialog):
         self.body_layout = QVBoxLayout(body)
         self.body_layout.setContentsMargins(16, 16, 16, 16)
         self.body_layout.setSpacing(10)
+
+    def add_button_row(self, buttons: Sequence[Tuple[str, Callable[[], None]]], *,
+                        stretch_before: bool = False, spacing: Optional[int] = None) -> QHBoxLayout:
+        """Add a themed row of push buttons to ``body_layout``. ``buttons`` is
+        (label, no-arg callback) pairs, left to right. Every dialog in this
+        app that needs an action row (MessageDialog's single OK,
+        SessionRestoreDialog's three choices) was hand-rolling this same
+        QHBoxLayout + QPushButton + PUSHBTN_QSS + connect boilerplate; a third
+        one would have repeated it a third time."""
+        btn_row = QHBoxLayout()
+        if spacing is not None:
+            btn_row.setSpacing(spacing)
+        if stretch_before:
+            btn_row.addStretch(1)
+        for label, callback in buttons:
+            btn = QPushButton(label)
+            btn.setStyleSheet(PUSHBTN_QSS)
+            btn.clicked.connect(callback)
+            btn_row.addWidget(btn)
+        self.body_layout.addLayout(btn_row)
+        return btn_row
 
     def setWindowTitle(self, title: str) -> None:
         super().setWindowTitle(title)

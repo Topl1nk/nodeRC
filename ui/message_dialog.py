@@ -7,10 +7,9 @@ message box.
 """
 from __future__ import annotations
 
-from PyQt5.QtWidgets import QHBoxLayout, QLabel, QPushButton
+from PyQt5.QtWidgets import QLabel
 
 from localization import t
-from ui.theme import PUSHBTN_QSS
 from ui.frameless_dialog import FramelessDialogBase
 
 
@@ -24,13 +23,7 @@ class MessageDialog(FramelessDialogBase):
         body.setWordWrap(True)
         self.body_layout.addWidget(body)
 
-        btn_row = QHBoxLayout()
-        btn_row.addStretch(1)
-        ok_btn = QPushButton(t("dialog_ok"))
-        ok_btn.setStyleSheet(PUSHBTN_QSS)
-        ok_btn.clicked.connect(self.accept)
-        btn_row.addWidget(ok_btn)
-        self.body_layout.addLayout(btn_row)
+        self.add_button_row([(t("dialog_ok"), self.accept)], stretch_before=True)
 
     @staticmethod
     def critical(parent, title: str, text: str):
