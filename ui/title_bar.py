@@ -250,8 +250,9 @@ class TabStripWidget(QWidget):
         else:
             target_index = self._target_index_for(btn, local_x)
         if target_index != self._drag_target_index:
+            old_index = self._drag_target_index
             self._drag_target_index = target_index
-            self._slide_others_to_open_gap_at(btn, target_index)
+            self._slide_others_to_open_gap_at(btn, target_index, old_index)
 
     def _end_drag(self, btn: TabButton, global_pos) -> None:
         if self._dragging_btn is not btn:
@@ -278,13 +279,27 @@ class TabStripWidget(QWidget):
                 return i
         return len(self._drag_others_order)
 
-    def _slide_others_to_open_gap_at(self, dragged_btn: TabButton, target_index: int) -> None:
+    def _slide_others_to_open_gap_at(self, dragged_btn: TabButton, target_index: int,
+                                      old_index: Optional[int] = None) -> None:
         """Animate every other tab into the slot it should sit in for the
         dragged tab to have a gap open at ``target_index`` — the tabs before
         the gap stay put, the ones from the gap onward slide over by the
-        dragged tab's own footprint to make room."""
+        dragged tab's own footprint to make room.
+
+        Only the tabs between ``old_index`` and ``target_index`` actually
+        change which side of the gap they're on — everyone else's offset is
+        provably the same as before, so restarting their QPropertyAnimation
+        too (on every single index crossing during the drag) was pure churn
+        on a tab strip with many open tabs."""
         gap = dragged_btn.width() + self._layout.spacing()
-        for i, (other, base_x) in enumerate(zip(self._drag_others_order, self._drag_base_slot_x)):
+        if old_index is None:
+            indices = range(len(self._drag_others_order))
+        else:
+            lo, hi = sorted((old_index, target_index))
+            indices = range(lo, hi)
+        for i in indices:
+            other = self._drag_others_order[i]
+            base_x = self._drag_base_slot_x[i]
             target_x = base_x + (gap if i >= target_index else 0)
             self._animate_to(other, target_x)
 
