@@ -856,9 +856,18 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
     def toggle_vector_expansion(self, base_name: str):
         """
         Placeholder method to handle expansion of multi-component parameters.
-        Why: Concrete node classes override this to dynamically spawn/collapse axis sockets.
+        Why: Concrete node classes override this to dynamically spawn/collapse
+        axis sockets. Raises rather than silently doing nothing: the only way
+        this gets called is via a vector-toggle button (_make_vector_toggle),
+        which a node only has if it already populated _vector_buttons — so
+        reaching this base implementation means a node class added a vector
+        toggle button without overriding the method that must handle its
+        click, which should fail loudly during development, not silently
+        no-op the button for a user.
         """
-        return
+        raise NotImplementedError(
+            f"{type(self).__name__} exposes a vector-toggle button but doesn't "
+            f"override toggle_vector_expansion({base_name!r})")
 
     def _swap_node(self, new_node: "MetaNode"):
         """Replace self with ``new_node`` in the scene, migrating any connection
