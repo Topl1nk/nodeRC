@@ -659,10 +659,22 @@ class TitleBarWidget(QWidget):
             abs(win.top() - geo.top()) <= m,
             abs(win.bottom() - geo.bottom()) <= m,
         ))
+
+        def _matches_snap_size(actual: int, full: int) -> bool:
+            # Windows' own half/quarter/full snap layouts always size a window
+            # to exactly full, half, or the complementary half of the
+            # available dimension. A window that just happens to be parked in
+            # a corner (any arbitrary size) won't match any of these.
+            half = full // 2
+            return abs(actual - full) <= m or abs(actual - half) <= m or abs(actual - (full - half)) <= m
+
+        size_matches = (_matches_snap_size(win.width(), geo.width())
+                         or _matches_snap_size(win.height(), geo.height()))
         # A half/quarter-snapped window is always flush against at least two
         # screen edges at once (e.g. left half touches left+top+bottom); a
-        # window that merely landed near one edge by coincidence isn't snapped.
-        snapped = touching_edges >= 2
+        # small window that merely landed near a corner by coincidence isn't
+        # snapped even if it also happens to touch two edges.
+        snapped = touching_edges >= 2 and size_matches
         self._window.set_corners_square(snapped)
         self._edge_snapped = snapped
 
@@ -673,14 +685,19 @@ class TitleBarWidget(QWidget):
         geo = screen.availableGeometry()
         m = self._EDGE_SNAP_MARGIN
 
+        # Split as floor/remainder (not floor/floor) so the two halves always
+        # tile the available width exactly — on an odd-width screen, using
+        # geo.width() // 2 for both sides left a 1px gap between them.
+        left_width = geo.width() // 2
+        right_width = geo.width() - left_width
+
         if global_pos.y() <= geo.top() + m:
             self._maximize()
         elif global_pos.x() <= geo.left() + m:
-            self._window.setGeometry(geo.left(), geo.top(), geo.width() // 2, geo.height())
+            self._window.setGeometry(geo.left(), geo.top(), left_width, geo.height())
             self._window.set_corners_square(True)
             self._edge_snapped = True
         elif global_pos.x() >= geo.right() - m:
-            half_width = geo.width() // 2
-            self._window.setGeometry(geo.right() - half_width + 1, geo.top(), half_width, geo.height())
+            self._window.setGeometry(geo.left() + left_width, geo.top(), right_width, geo.height())
             self._window.set_corners_square(True)
             self._edge_snapped = True
