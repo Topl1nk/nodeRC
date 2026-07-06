@@ -129,27 +129,59 @@ def _po_path(lang: str) -> Path:
     return LOCALE_DIR / lang / "LC_MESSAGES" / f"{DOMAIN}.po"
 
 
+_available_languages_cache: Optional[List[str]] = None
+
+
 def available_languages() -> List[str]:
-    """Languages with a catalog on disk, default language first."""
+    """Languages with a catalog on disk, default language first.
+
+    Cached after the first call: the catalogs on disk don't change over the
+    life of a run (nothing in this app writes to locale/), and this is
+    called once per node during graph load via get_all_translations/
+    resolve_default_title, so re-globbing the filesystem every time was real,
+    avoidable I/O on a large graph.
+    """
+    global _available_languages_cache
+    if _available_languages_cache is not None:
+        return _available_languages_cache
     if not LOCALE_DIR.exists():
-        return [DEFAULT_LANGUAGE]
+        _available_languages_cache = [DEFAULT_LANGUAGE]
+        return _available_languages_cache
     langs = sorted(p.parent.parent.name for p in LOCALE_DIR.glob(f"*/LC_MESSAGES/{DOMAIN}.po"))
     if DEFAULT_LANGUAGE in langs:
         langs.remove(DEFAULT_LANGUAGE)
         langs.insert(0, DEFAULT_LANGUAGE)
-    return langs or [DEFAULT_LANGUAGE]
+    _available_languages_cache = langs or [DEFAULT_LANGUAGE]
+    return _available_languages_cache
+
+
+_translation_cache: Dict[str, Optional[gettext.NullTranslations]] = {}
 
 
 def _build_translation(lang: str) -> Optional[gettext.NullTranslations]:
+    """Build (and cache) the fallback-less translation object for ``lang``.
+
+    Cached per language for the life of the run: catalogs are static once
+    loaded, but set_language() previously re-read and re-parsed the .po file
+    and rebuilt the in-memory .mo from scratch on every call — including the
+    English base, even when switching between two non-English languages —
+    which made the language-cycle hotkey (see editor_window.cycle_language)
+    redo that work on every keypress for catalogs that never changed.
+    """
+    if lang in _translation_cache:
+        return _translation_cache[lang]
     po = _po_path(lang)
     if not po.exists():
+        _translation_cache[lang] = None
         return None
     try:
         catalog = parse_po(po.read_text(encoding="utf-8"))
-        return gettext.GNUTranslations(io.BytesIO(generate_mo(catalog)))
+        built = gettext.GNUTranslations(io.BytesIO(generate_mo(catalog)))
     except Exception:
         # A malformed catalog must never crash the editor; fall through to English.
-        return None
+        built = None
+    _translation_cache[lang] = built
+    return built
 
 
 def detect_language() -> str:
@@ -173,6 +205,9 @@ _active: gettext.NullTranslations = gettext.NullTranslations()
 CURRENT_LANG: str = DEFAULT_LANGUAGE  # kept in sync for callers that read it
 
 
+_fallback_attached: set = set()  # languages whose cached translation already has the English fallback wired
+
+
 def set_language(lang: str) -> None:
     """Activate ``lang`` for subsequent ``t()`` lookups, English-backed."""
     global _active, CURRENT_LANG
@@ -183,8 +218,13 @@ def set_language(lang: str) -> None:
         active = _build_translation(lang)
         if active is None:
             active = base
-        else:
+        elif lang not in _fallback_attached:
+            # _build_translation caches this object, so add_fallback must run
+            # at most once per language — calling it again on every
+            # set_language(lang) would chain another duplicate fallback onto
+            # the same cached instance each time.
             active.add_fallback(base)
+            _fallback_attached.add(lang)
     _active = active
     CURRENT_LANG = lang
 
