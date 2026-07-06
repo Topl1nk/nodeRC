@@ -7,7 +7,7 @@ message box.
 """
 from __future__ import annotations
 
-from PyQt5.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout
+from PyQt5.QtWidgets import QHBoxLayout, QLabel, QPushButton
 
 from localization import t
 from ui.theme import PUSHBTN_QSS
@@ -19,16 +19,10 @@ class MessageDialog(FramelessDialogBase):
         super().__init__(parent)
         self.setWindowTitle(title)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(10)
-
-        layout.addWidget(self.make_title_label(title))
-
         body = QLabel(text)
         body.setObjectName("restoreBody")
         body.setWordWrap(True)
-        layout.addWidget(body)
+        self.body_layout.addWidget(body)
 
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
@@ -36,7 +30,7 @@ class MessageDialog(FramelessDialogBase):
         ok_btn.setStyleSheet(PUSHBTN_QSS)
         ok_btn.clicked.connect(self.accept)
         btn_row.addWidget(ok_btn)
-        layout.addLayout(btn_row)
+        self.body_layout.addLayout(btn_row)
 
     @staticmethod
     def critical(parent, title: str, text: str):

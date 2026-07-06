@@ -30,13 +30,16 @@ from configuration import (
     SOCKET_HOVER_COLOR, NODE_SELECTED_COLOR, NODE_HOVER_COLOR, NODE_HOVER_BORDER_WIDTH,
     CONNECTION_SELECTED_COLOR, TEXT_COLOR,
     BEZIER_CTRL_FACTOR, BEZIER_CTRL_MIN,
+    SOCKET_BORDER_DARKEN, SOCKET_BORDER_WIDTH,
+    CONNECTION_EXEC_WIDTH, CONNECTION_EXEC_SELECTED_WIDTH,
+    CONNECTION_PARAM_WIDTH, CONNECTION_PARAM_SELECTED_WIDTH,
     GRID_SIZE_SMALL, NODE_POPUP_Z, NODE_COMBO_POPUP_PROXY_Z,
     VECTOR_COLLAPSE_GLYPH, VECTOR_COLLAPSE_GLYPH_MIRRORED, VECTOR_EXPAND_GLYPH, VECTOR_TOGGLE_WIDTH,
     NODE_SELECTION_OVERLAY_RGBA, NODE_SELECTION_OVERLAY_Z, NODE_SOCKET_Z,
     CONNECTION_Z,
     UI_FONT_FAMILY, NODE_LABEL_FONT_SIZE, NODE_RENAME_FONT_SIZE,
     TINT_BODY_DARKEN, TINT_TITLE_LUMINANCE_THRESHOLD,
-    PARAM_NODE_HEADER_FROM_SOCKET,
+    PARAM_NODE_HEADER_FROM_SOCKET, HOTKEY_HINTS,
 )
 from ui.theme import (
     NODE_BORDER_COLOR,
@@ -99,7 +102,7 @@ class SocketItem(QGraphicsObject):
     def paint(self, painter: QPainter, option, widget=None):
         painter.setRenderHint(QPainter.Antialiasing)
         color  = QColor(SOCKET_HOVER_COLOR if self._hovered else self.sock_def.color)
-        border = QPen(color.darker(160), 1.5)
+        border = QPen(color.darker(SOCKET_BORDER_DARKEN), SOCKET_BORDER_WIDTH)
         r = self._radius
         painter.setPen(border)
         painter.setBrush(QBrush(color))
@@ -141,11 +144,11 @@ class Connection(QGraphicsPathItem):
         self.dest    = dest
         self.is_exec = source.sock_def.is_exec
         if self.is_exec:
-            self._pen     = QPen(QColor(source.sock_def.color), 3.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-            self._pen_selected = QPen(QColor(CONNECTION_SELECTED_COLOR), 3.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+            self._pen     = QPen(QColor(source.sock_def.color), CONNECTION_EXEC_WIDTH, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+            self._pen_selected = QPen(QColor(CONNECTION_SELECTED_COLOR), CONNECTION_EXEC_SELECTED_WIDTH, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
         else:
-            self._pen     = QPen(QColor(source.sock_def.color), 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-            self._pen_selected = QPen(QColor(CONNECTION_SELECTED_COLOR), 2.2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+            self._pen     = QPen(QColor(source.sock_def.color), CONNECTION_PARAM_WIDTH, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+            self._pen_selected = QPen(QColor(CONNECTION_SELECTED_COLOR), CONNECTION_PARAM_SELECTED_WIDTH, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
         self.setZValue(CONNECTION_Z)
         self.setFlag(QGraphicsItem.ItemIsSelectable, True)
         self.refresh()
@@ -901,7 +904,9 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         """Show a node context menu.
 
         Each entry in `actions` is either:
-          - ``(label, callback, enabled)`` — a normal action
+          - ``(label, callback, enabled)`` or ``(label, callback, enabled, hint)``
+            — a normal action; ``hint`` (e.g. "Ctrl+D") is shown right-aligned,
+            display-only — see HOTKEY_HINTS in configuration.py
           - ``None``                       — a visual separator
         """
         menu = QMenu()
@@ -911,8 +916,10 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
             if item is None:
                 menu.addSeparator()
                 continue
-            label, callback, enabled = item
-            entry = menu.addAction(label)
+            label, callback, enabled, *rest = item
+            hint = rest[0] if rest else None
+            text = f"{label}\t{hint}" if hint else label
+            entry = menu.addAction(text)
             entry.setEnabled(enabled and callback is not None)
             handlers[entry] = callback
         chosen = menu.exec_(event.screenPos())
@@ -941,16 +948,16 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         extra = self._extra_context_actions()
 
         self._run_context_menu(event, [
-            (t("ctx_rename"),       getattr(self, "_begin_rename", None), self.supports_plain_rename),
+            (t("ctx_rename"),       getattr(self, "_begin_rename", None), self.supports_plain_rename, HOTKEY_HINTS["rename"]),
             (t("ctx_change_color"), self._pick_color,                           True),
             *([None, *extra] if extra else []),
             None,
-            (t("ctx_duplicate"),    getattr(win, "duplicate_nodes",      None), True),
-            (t("ctx_copy"),         getattr(win, "copy_nodes",           None), True),
-            (t("ctx_paste"),        getattr(win, "paste_nodes",          None), True),
-            (t("ctx_group_frame"),  getattr(win, "group_selected_nodes", None), True),
+            (t("ctx_duplicate"),    getattr(win, "duplicate_nodes",      None), True, HOTKEY_HINTS["duplicate"]),
+            (t("ctx_copy"),         getattr(win, "copy_nodes",           None), True, HOTKEY_HINTS["copy"]),
+            (t("ctx_paste"),        getattr(win, "paste_nodes",          None), True, HOTKEY_HINTS["paste"]),
+            (t("ctx_group_frame"),  getattr(win, "group_selected_nodes", None), True, HOTKEY_HINTS["group"]),
             None,
-            (t("ctx_delete_node"),  self._delete_self,                          True),
+            (t("ctx_delete_node"),  self._delete_self,                          True, HOTKEY_HINTS["delete"]),
         ])
 
     def serialize_payload(self) -> dict:

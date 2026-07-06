@@ -80,6 +80,12 @@ GRID_SIZE_LARGE = 100  # major grid lines
 # ── Connection ─────────────────────────────────────────────────────────────────
 BEZIER_CTRL_FACTOR = 0.55  # horizontal spread relative to endpoint distance
 BEZIER_CTRL_MIN    = 60.0  # minimum control-point offset — prevents flat S-curves
+SOCKET_BORDER_DARKEN     = 160  # socket outline = darker shade of the socket's own colour
+SOCKET_BORDER_WIDTH      = 1.5
+CONNECTION_EXEC_WIDTH             = 3.0
+CONNECTION_EXEC_SELECTED_WIDTH    = 3.5
+CONNECTION_PARAM_WIDTH            = 1.8
+CONNECTION_PARAM_SELECTED_WIDTH   = 2.2
 
 # ── Parameter typing ───────────────────────────────────────────────────────────
 # Command parameters whose name marks them as whole numbers, promoted from the
@@ -103,6 +109,7 @@ VECTOR_TOGGLE_WIDTH     = 16         # fixed width for an output-side toggle, so
 
 # ── Editor history ─────────────────────────────────────────────────────────────
 UNDO_HISTORY_LIMIT = 100  # retained editor snapshots for undo/redo
+CLOSED_TABS_HISTORY_LIMIT = 20  # retained closed-tab snapshots for Ctrl+T reopen
 
 # ── Node z-order ───────────────────────────────────────────────────────────────
 NODE_POPUP_Z = 100  # node z-value while its combobox popup is open — above siblings
@@ -132,12 +139,17 @@ TAB_HEIGHT             = 30   # px
 TAB_MIN_WIDTH          = 90
 TAB_MAX_WIDTH          = 200
 TAB_CLOSE_BTN_SIZE     = 16
-TAB_NEW_BTN_WIDTH      = 30
 
 # DwmSetWindowAttribute identifier + DWMWCP_* values (Windows 11) — restores
 # the native rounded window corners a frameless window otherwise loses.
 DWMWA_WINDOW_CORNER_PREFERENCE = 33
+DWMWCP_DONOTROUND = 1
 DWMWCP_ROUND = 2
+
+# Single source of truth for the window's rounded-corner radius — shared by
+# NodeEditorWindow._update_window_rounding (central widget's bottom corners)
+# and TitleBarWidget's corner mask (top corners), so both stay in sync.
+WINDOW_CORNER_RADIUS = 8
 
 # ── Square button footprint ────────────────────────────────────────────────────
 # Every button-like control (browse "…", combobox drop-down, +/- toolbuttons, a
@@ -218,11 +230,35 @@ KEY_GROUP        = Qt.Key_G  # with Ctrl — frames the selection (bare G toggle
 KEY_DUPLICATE    = Qt.Key_D  # with Ctrl — clones the selection in place
 KEY_PREV_LANG    = Qt.Key_BracketLeft
 KEY_NEXT_LANG    = Qt.Key_BracketRight
+KEY_NEW_TAB      = Qt.Key_T  # with Ctrl — new tab; with Ctrl+Shift — reopen closed tab
+KEY_NEW_TAB_ALT  = Qt.Key_N  # with Ctrl — alias for new_tab(), same action as Ctrl+T
+KEY_CLOSE_TAB    = Qt.Key_W  # with Ctrl — close the active project
+KEY_NEXT_TAB     = Qt.Key_Tab  # with Ctrl / Ctrl+Shift — cycle projects
+KEY_EXECUTE      = Qt.Key_F5  # trigger execute_chain(), same as StartNode's Launch button
 
 # ── Keyboard Modifiers ────────────────────────────────────────────────────────
 MOD_NONE       = Qt.NoModifier
 MOD_CTRL       = Qt.ControlModifier
 MOD_CTRL_SHIFT = Qt.ControlModifier | Qt.ShiftModifier
+
+# ── Hotkey display hints ──────────────────────────────────────────────────────
+# Menu items show their keyboard shortcut as plain text (see ui/title_bar.py's
+# _add_action_with_hint, ui/graph_items.py's _run_context_menu), not a live
+# QAction.setShortcut() binding — the actual dispatch stays entirely in
+# NodeEditorWindow.keyPressEvent, which is layout-independent via a
+# nativeVirtualKey() remap; a live Qt shortcut wouldn't share that guarantee
+# and would fire in parallel with the manual dispatch above. One dict here is
+# the single place a future rebind needs to touch.
+HOTKEY_HINTS = {
+    "save": "Ctrl+S", "save_as": "Ctrl+Shift+S", "open": "Ctrl+O",
+    "new_tab": "Ctrl+T", "new_tab_alt": "Ctrl+N", "close_tab": "Ctrl+W",
+    "reopen_closed_tab": "Ctrl+Shift+T",
+    "next_tab": "Ctrl+Tab", "prev_tab": "Ctrl+Shift+Tab",
+    "execute_chain": "F5", "undo": "Ctrl+Z", "redo": "Ctrl+Y",
+    "copy": "Ctrl+C", "paste": "Ctrl+V", "select_all": "Ctrl+A",
+    "group": "Ctrl+G", "duplicate": "Ctrl+D", "fullscreen": "F11", "rename": "F2",
+    "delete": "Delete",
+}
 
 # ── Typography ─────────────────────────────────────────────────────────────────
 # Single source for the monospace UI face; every QFont and stylesheet draws from it.
@@ -254,6 +290,14 @@ COLOR_PICKER_PREVIEW_SIZE  = COLOR_PICKER_ROW_HEIGHT   # square swatch matches r
 COLOR_PICKER_PRESET_SIZE   = 22
 COLOR_PICKER_PRESET_COLS   = 8
 COLOR_PICKER_PRESET_GAP    = 4
+
+# Transparency checkerboard backdrop, shared by the alpha slider and any preview
+# swatch holding a translucent colour. Two colour pairs: the slider's is a mid
+# grey so it stays visible under every hue overlaid on top; the swatch preview's
+# is the lighter, higher-contrast pair used for a translucency indicator.
+CHECKERBOARD_CELL_SIZE            = 4
+CHECKERBOARD_ALPHA_SLIDER_COLORS  = ((100, 100, 100), (150, 150, 150))
+CHECKERBOARD_PREVIEW_COLORS       = ((255, 255, 255), (180, 180, 180))
 
 GRID_COLOR_SMALL = (255, 255, 255, 10)
 GRID_COLOR_LARGE = (255, 255, 255, 30)
@@ -295,6 +339,7 @@ GROUP_FRAME_PAD_BOTTOM       = 20
 SCENE_PADDING            = 1500
 CANVAS_BACKGROUND_COLOR  = "#04152B"
 WINDOW_BACKGROUND_COLOR  = "#04152B"
+WINDOW_BORDER_COLOR      = "#1a385f"
 
 # ── Vignette ───────────────────────────────────────────────────────────────────
 VIGNETTE_COLOR  = (4, 21, 43, 255)   # RGBA color of the vignette edges

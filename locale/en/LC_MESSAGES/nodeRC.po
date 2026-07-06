@@ -164,13 +164,41 @@ msgstr "Untitled"
 msgid "window_title_prefix"
 msgstr "NodeRC Editor — "
 
-#. Close tab
+#. Close project
 msgid "tab_close_tooltip"
-msgstr "Close tab"
+msgstr "Close project"
 
-#. New tab
+#. New project
 msgid "tab_new_tooltip"
-msgstr "New tab"
+msgstr "New project"
+
+#. Project menu (Open/Save/Save As)
+msgid "titlebar_menu_tooltip"
+msgstr "Menu"
+
+#. New project (project context menu)
+msgid "tab_menu_new"
+msgstr "New project"
+
+#. Duplicate project (project context menu)
+msgid "tab_menu_duplicate"
+msgstr "Duplicate project"
+
+#. Close (project context menu)
+msgid "tab_menu_close"
+msgstr "Close"
+
+#. Close other projects (project context menu)
+msgid "tab_menu_close_others"
+msgstr "Close other projects"
+
+#. Close projects to the right (project context menu)
+msgid "tab_menu_close_to_right"
+msgstr "Close projects to the right"
+
+#. Reopen closed project (project context menu)
+msgid "tab_menu_reopen_closed"
+msgstr "Reopen closed project"
 
 #. Minimize
 msgid "titlebar_minimize_tooltip"

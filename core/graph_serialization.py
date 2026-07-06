@@ -84,10 +84,22 @@ def _deserialize_node(scene, record: dict, pos: QPointF) -> Optional[MetaNode]:
         return None
     node.setPos(pos)
     scene.addItem(node)
+    # Unconditionally re-pin every embedded widget's QSS/palette through
+    # _update_children_colors(), not just nodes with a saved override:
+    # editable comboboxes (PathParamNode's file field) rely entirely on a
+    # QPalette pinned at construction time for their non-connected text
+    # colour, and a node built on a background tab (restored session)
+    # never gets a real on-screen paint until the user switches to it —
+    # Qt's first real style polish then silently drops that palette back
+    # to black. reset_color() re-derives the node's correct default (or
+    # per-socket-type) colour AND re-pins every widget the same way a
+    # saved override already does, closing the gap for the common case.
     if record.get("color"):
         node.set_color(record["color"],
                        only_header=bool(record.get("color_only_header")),
                        record_undo=False)
+    else:
+        node.reset_color(record_undo=False)
     if isinstance(node, ParamNode) and record.get("current_value") is not None:
         node.set_value_state(record["current_value"])
     return node

@@ -21,6 +21,13 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle(WINDOW_STYLE)
 
+    # Unifies every QToolTip in the app to the same primitive used
+    # everywhere else (dialog header/body colors) instead of the native OS
+    # tooltip style — set at the QApplication level so it applies no matter
+    # which widget triggers the tooltip.
+    from ui.theme import TOOLTIP_QSS
+    app.setStyleSheet(TOOLTIP_QSS)
+
     # Kept alive on the QApplication instance itself — the language-cycle
     # hotkey then works no matter which window (main or any secondary
     # dialog) currently has focus.

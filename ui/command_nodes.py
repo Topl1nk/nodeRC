@@ -1,20 +1,20 @@
 """command_nodes.py — Execution-Flow Nodes
 
-StartNode roots the chain and carries the Launch/Open/Save controls; CommandNode
+StartNode roots the chain and carries the Launch control; CommandNode
 represents one RealityCapture CLI command with typed parameter sockets and
 collapsible X/Y/Z vector groups.
 """
 from __future__ import annotations
 
-from PyQt5.QtWidgets import QPushButton, QWidget
+from PyQt5.QtWidgets import QPushButton
 from PyQt5.QtCore import QPointF, Qt
 
 from localization import t
 from configuration import (
     NODE_HEADER_HEIGHT, NODE_ROW_HEIGHT, NODE_HORIZONTAL_PAD, NODE_WIDGET_V_OFFSET,
-    AUTOSPAWN_X_GAP, AUTOSPAWN_Y_OFFSET, AUTOSPAWN_V_GAP, NODE_START_Z,
+    AUTOSPAWN_X_GAP, AUTOSPAWN_Y_OFFSET, AUTOSPAWN_V_GAP, NODE_START_Z, HOTKEY_HINTS,
 )
-from ui.theme import PUSHBTN_QSS, NODE_BORDER_COLOR
+from ui.theme import PUSHBTN_QSS
 from core.node_blueprint import (
     PARAM_TYPE_PREFIX, command_node_def, group_xyz_params, param_spec_name,
     resolve_param_type, start_node_def,
@@ -33,53 +33,22 @@ class StartNode(MetaNode):
         rows = self.node_def.param_row_count
         btn_w = self.node_def.width - NODE_HORIZONTAL_PAD * 2
 
-        def _add_btn(label: str, tooltip: str, callback, row_offset: float):
-            btn = QPushButton(label)
-            btn.setStyleSheet(PUSHBTN_QSS)
-            btn.setFixedWidth(btn_w)
-            btn.setToolTip(tooltip)
-            btn.clicked.connect(callback)
-            proxy = self._make_proxy(btn)
-            y = NODE_HEADER_HEIGHT + (rows + row_offset) * NODE_ROW_HEIGHT + NODE_WIDGET_V_OFFSET
-            proxy.setPos(NODE_HORIZONTAL_PAD, y)
-
-        # Why: Separates Launch button from file-management options to prevent accidental execution clicks.
-        _add_btn(t("btn_launch"), "", self._request_chain_execution, 0.0)
-
-        # Why: Visual line separating Launch execution from project file utilities.
-        sep = QWidget()
-        sep.setFixedWidth(btn_w)
-        sep.setFixedHeight(2)
-        sep.setStyleSheet(f"background-color: {NODE_BORDER_COLOR};")
-        sep_proxy = self._make_proxy(sep)
-        sep_proxy.setPos(
-            NODE_HORIZONTAL_PAD,
-            NODE_HEADER_HEIGHT + (rows + 1.35) * NODE_ROW_HEIGHT + NODE_WIDGET_V_OFFSET,
-        )
-
-        _add_btn(t("btn_open"),    "Ctrl+O",       self._request_open,    2.0)
-        _add_btn(t("btn_save"),    "Ctrl+S",       self._request_save,    3.0)
-        _add_btn(t("btn_save_as"), "Ctrl+Shift+S", self._request_save_as, 4.0)
+        # Project-wide Open/Save/Save As live in the title bar's hamburger
+        # menu (see TabStripWidget._show_project_menu) now — only the
+        # chain-execution control belongs on the node itself.
+        btn = QPushButton(t("btn_launch"))
+        btn.setStyleSheet(PUSHBTN_QSS)
+        btn.setFixedWidth(btn_w)
+        btn.setToolTip(HOTKEY_HINTS["execute_chain"])
+        btn.clicked.connect(self._request_chain_execution)
+        proxy = self._make_proxy(btn)
+        y = NODE_HEADER_HEIGHT + rows * NODE_ROW_HEIGHT + NODE_WIDGET_V_OFFSET
+        proxy.setPos(NODE_HORIZONTAL_PAD, y)
 
     def _request_chain_execution(self):
         win = editor_window_of(self)
         if win:
             win.execute_chain()
-
-    def _request_open(self):
-        win = editor_window_of(self)
-        if win:
-            win.load_project()
-
-    def _request_save(self):
-        win = editor_window_of(self)
-        if win:
-            win.save_project()
-
-    def _request_save_as(self):
-        win = editor_window_of(self)
-        if win:
-            win.save_project(save_as=True)
 
 
 class CommandNode(MetaNode):
@@ -113,18 +82,18 @@ class CommandNode(MetaNode):
             return
         has_params = bool(self.cmd_def.get("required", []) or self.cmd_def.get("optional", []))
         self._run_context_menu(event, [
-            (t("ctx_rename"),         self._begin_rename,                         True),
+            (t("ctx_rename"),         self._begin_rename,                         True, HOTKEY_HINTS["rename"]),
             (t("ctx_change_color"),   self._pick_color,                           True),
             (t("ctx_auto_create_params"),
              self.auto_create_required_parameters,
              has_params),
             None,
-            (t("ctx_duplicate"),      getattr(win, "duplicate_nodes",      None), True),
-            (t("ctx_copy"),           getattr(win, "copy_nodes",           None), True),
-            (t("ctx_paste"),          getattr(win, "paste_nodes",          None), True),
-            (t("ctx_group_frame"),    getattr(win, "group_selected_nodes", None), True),
+            (t("ctx_duplicate"),      getattr(win, "duplicate_nodes",      None), True, HOTKEY_HINTS["duplicate"]),
+            (t("ctx_copy"),           getattr(win, "copy_nodes",           None), True, HOTKEY_HINTS["copy"]),
+            (t("ctx_paste"),          getattr(win, "paste_nodes",          None), True, HOTKEY_HINTS["paste"]),
+            (t("ctx_group_frame"),    getattr(win, "group_selected_nodes", None), True, HOTKEY_HINTS["group"]),
             None,
-            (t("ctx_delete_node"),    self._delete_self,                          True),
+            (t("ctx_delete_node"),    self._delete_self,                          True, HOTKEY_HINTS["delete"]),
         ])
 
     def _all_required_params(self):

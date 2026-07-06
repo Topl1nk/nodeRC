@@ -21,8 +21,18 @@ from configuration import (
     COLOR_PICKER_PREVIEW_SIZE, COLOR_PICKER_PRESET_SIZE,
     COLOR_PICKER_PRESET_COLS, COLOR_PICKER_PRESET_GAP,
     DEFAULT_HEADER_COLOR,
+    CHECKERBOARD_CELL_SIZE, CHECKERBOARD_ALPHA_SLIDER_COLORS, CHECKERBOARD_PREVIEW_COLORS,
 )
 from ui.theme import BUTTON_BG_COLOR, NODE_BORDER_COLOR, PUSHBTN_QSS
+
+
+def _paint_checkerboard(painter, rect, color_a, color_b):
+    """Tile ``rect`` with a two-tone grid indicating a translucent background."""
+    for x in range(0, rect.width(), CHECKERBOARD_CELL_SIZE):
+        for y in range(0, rect.height(), CHECKERBOARD_CELL_SIZE):
+            even = (x // CHECKERBOARD_CELL_SIZE + y // CHECKERBOARD_CELL_SIZE) % 2 == 0
+            painter.fillRect(x, y, CHECKERBOARD_CELL_SIZE, CHECKERBOARD_CELL_SIZE,
+                              QColor(*color_a) if even else QColor(*color_b))
 
 
 class GradientSlider(QWidget):
@@ -63,11 +73,7 @@ class GradientSlider(QWidget):
             gradient.setColorAt(0.0, QColor.fromHsvF(h, s, 0.0, 1.0))
             gradient.setColorAt(1.0, QColor.fromHsvF(h, s, 1.0, 1.0))
         elif self.color_type == 'alpha':
-            ch_size = 4
-            for x in range(0, rect.width(), ch_size):
-                for y in range(0, rect.height(), ch_size):
-                    color = QColor(100, 100, 100) if (x // ch_size + y // ch_size) % 2 == 0 else QColor(150, 150, 150)
-                    painter.fillRect(x, y, ch_size, ch_size, color)
+            _paint_checkerboard(painter, rect, *CHECKERBOARD_ALPHA_SLIDER_COLORS)
             gradient.setColorAt(0.0, QColor.fromHsvF(h, s, v, 0.0))
             gradient.setColorAt(1.0, QColor.fromHsvF(h, s, v, 1.0))
 
@@ -181,18 +187,11 @@ class PresetButton(QPushButton):
         painter.setRenderHint(QPainter.Antialiasing, False)
         rect = self.rect()
 
-        # Draw checkerboard pattern if the color has any transparency
         if self.color.alpha() < 255:
-            ch_size = 4
-            for x in range(0, rect.width(), ch_size):
-                for y in range(0, rect.height(), ch_size):
-                    bg_col = QColor(255, 255, 255) if (x // ch_size + y // ch_size) % 2 == 0 else QColor(180, 180, 180)
-                    painter.fillRect(x, y, ch_size, ch_size, bg_col)
+            _paint_checkerboard(painter, rect, *CHECKERBOARD_PREVIEW_COLORS)
 
-        # Draw the solid/translucent color on top
         painter.fillRect(rect, self.color)
 
-        # Draw border
         pen_color = QColor(NODE_SELECTED_COLOR) if self.hovered else QColor(0, 0, 0)
         painter.setPen(QPen(pen_color, 1))
         painter.setBrush(Qt.NoBrush)

@@ -16,15 +16,16 @@ from PyQt5.QtWidgets import (
     QApplication, QFileDialog, QMainWindow, QVBoxLayout, QWidget,
 )
 from PyQt5.QtGui import QCursor
-from PyQt5.QtCore import QPoint, QPointF, Qt, QTimer
+from PyQt5.QtCore import QEvent, QPoint, QPointF, Qt, QTimer
 
 from localization import available_languages, get_language, set_language, t
 from configuration import (
-    WINDOW_BACKGROUND_COLOR, UNDO_HISTORY_LIMIT,
+    WINDOW_BACKGROUND_COLOR, UNDO_HISTORY_LIMIT, CLOSED_TABS_HISTORY_LIMIT,
     WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT,
     TITLE_BAR_HEIGHT, TITLE_BAR_RESIZE_MARGIN,
     AUTOSAVE_INTERVAL_MS,
-    KEY_SPAWN_MENU, KEY_DELETE, KEY_SAVE, KEY_OPEN,
+    KEY_SPAWN_MENU, KEY_DELETE, KEY_SAVE, KEY_OPEN, KEY_NEW_TAB,
+    KEY_NEW_TAB_ALT, KEY_CLOSE_TAB, KEY_NEXT_TAB, KEY_EXECUTE,
     KEY_COPY, KEY_PASTE, KEY_UNDO, KEY_REDO,
     KEY_TOGGLE_GRID, KEY_FIT_VIEW, KEY_FULLSCREEN,
     KEY_RENAME_NODE, KEY_SELECT_ALL, KEY_GROUP, KEY_DUPLICATE,
@@ -35,6 +36,7 @@ from configuration import (
     START_NODE_INITIAL_X, START_NODE_INITIAL_Y,
     DUPLICATE_OFFSET_X, DUPLICATE_OFFSET_Y,
     CLIPBOARD_PAYLOAD_PREFIX,
+    DWMWCP_ROUND, DWMWCP_DONOTROUND, WINDOW_CORNER_RADIUS,
 )
 from diagnostics import log_and_explain
 from core.command_database import load_command_database
@@ -54,7 +56,11 @@ from core import autosave, app_prefs, session
 from ui.flag_icon import language_flag_icon
 from ui.session_restore_dialog import SessionRestoreDialog
 from ui.message_dialog import MessageDialog
-from ui.window_chrome import apply_rounded_corners
+from ui.window_chrome import (
+    apply_rounded_corners, show_system_menu, apply_immersive_dark_mode,
+    extend_frame_into_client_area,
+)
+from ui.theme import TITLE_BAR_QSS
 
 # WM_NCHITTEST result codes used by NodeEditorWindow.nativeEvent to give a
 # frameless window back its native resize/move/edge-snap behavior on Windows.
@@ -69,11 +75,20 @@ class NodeEditorWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
+        # On Windows, we keep the native title bar and borders in window flags,
+        # but remove their visuals in WM_NCCALCSIZE. This enables native edge-snapping (Aero Snap),
+        # Win+Arrow keys, and native shadows/rounded corners. On other platforms, we fall back
+        # to Qt.FramelessWindowHint.
+        if sys.platform != "win32":
+            self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
         self.setGeometry(WINDOW_INITIAL_X, WINDOW_INITIAL_Y, WINDOW_INITIAL_WIDTH, WINDOW_INITIAL_HEIGHT)
         self.setMinimumSize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
-        self.setStyleSheet(f"QMainWindow{{background:{WINDOW_BACKGROUND_COLOR};}}")
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setStyleSheet("QMainWindow{background: transparent;}")
         self._apply_rounded_corners()
+        if sys.platform == "win32":
+            apply_immersive_dark_mode(self)
+            extend_frame_into_client_area(self)
 
         self.command_categories, self.command_defs = load_command_database()
 
@@ -82,6 +97,7 @@ class NodeEditorWindow(QMainWindow):
         self._focus_event_counter: int = 0            # serializes focus in/out to settle the active group
 
         central = QWidget()
+        central.setObjectName("centralWidget")
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -105,6 +121,10 @@ class NodeEditorWindow(QMainWindow):
         # active (see the properties below) so the rest of the codebase can
         # keep reaching through win.scene/win.connections unchanged.
         self.tabs: List[ProjectTab] = []
+        # (tab_id, envelope) pairs (see core/autosave.py) for recently closed
+        # tabs, most recent last — reopen_closed_tab() (Ctrl+Shift+T) pops
+        # from here.
+        self._closed_tabs: List[tuple] = []
         self.active_tab: ProjectTab = self._create_tab()
         self.active_tab.untitled_number = self._next_untitled_number()
         self.view.setScene(self.active_tab.scene)
@@ -128,6 +148,7 @@ class NodeEditorWindow(QMainWindow):
         self._autosave_timer.setInterval(AUTOSAVE_INTERVAL_MS)
         self._autosave_timer.timeout.connect(self._run_autosave_pass)
         self._autosave_timer.start()
+        self._update_window_rounding(self.isMaximized())
 
     # ── Autosave / whole-session recovery ────────────────────────────────────
 
@@ -200,53 +221,56 @@ class NodeEditorWindow(QMainWindow):
 
         restored: List[ProjectTab] = []
         for _, tab_id, envelope in entries:
-            dirty = bool(envelope.get("dirty", False))
-            path = autosave.resolve_manual_path(envelope)
-
-            tab = self._create_tab()
-            tab.tab_id = tab_id
-
-            # Attach this tab's scene to the real, on-screen view *before*
-            # rebuilding its graph — exactly what new_tab()/_load_into_tab()
-            # does for a normal File > Open (switch_to_tab(), then load).
-            # The previous version only flipped self.active_tab and left the
-            # view pointed at whatever tab was already showing, so every
-            # field widget in a background tab got constructed while its
-            # scene was never the one actually on screen. Qt only fully
-            # polishes a stylesheet-styled widget's colors the first time it
-            # becomes part of a shown window — build it "hidden" like that
-            # and it can stick with stale/black text forever after, which is
-            # exactly what a plain Open (built on an already-visible tab)
-            # never hits.
-            self.switch_to_tab(tab)
-            if "graph" in envelope:
-                self._restore(envelope["graph"], restore_selection=False)
-            # Note: deliberately NOT forcing a QApplication.processEvents()
-            # flush here. It was tried as a belt-and-suspenders complement to
-            # switch_to_tab() above, but pumping the event loop mid-restore
-            # let stray deferred callbacks (e.g. NodeComboBox's
-            # QTimer.singleShot(0, self._safe_refresh) from hidePopup) fire
-            # against a tab's widgets while a *later* tab in this same loop
-            # was still being torn down/rebuilt — crashing with "NodeComboBox
-            # object has no attribute 'node'" on next launch. switch_to_tab()
-            # alone (making each tab briefly the real, on-screen scene while
-            # its graph is restored) already gets these widgets a proper
-            # paint pass without that risk.
-            tab.project_path = path
-            tab.untitled_number = None if path else self._next_untitled_number()
-            tab.history = []
-            tab.history_index = -1
-            self.push_undo_state()
-            # A dirty tab keeps its unsaved-edit mark; a clean one just
-            # reflects whatever was last snapshotted (in sync with disk).
-            self._set_dirty(dirty)
-            restored.append(tab)
+            restored.append(self._restore_tab_from_envelope(tab_id, envelope))
 
         if not restored:
             return
         self.switch_to_tab(restored[0])
         self._update_title()
         self._refresh_tab_strip()
+
+    def _restore_tab_from_envelope(self, tab_id: str, envelope: dict) -> ProjectTab:
+        """Rebuild one tab from an autosave envelope (see core/autosave.py) —
+        shared by whole-session restore and reopen_closed_tab()."""
+        dirty = bool(envelope.get("dirty", False))
+        path = autosave.resolve_manual_path(envelope)
+
+        tab = self._create_tab()
+        tab.tab_id = tab_id
+
+        # Attach this tab's scene to the real, on-screen view *before*
+        # rebuilding its graph — exactly what new_tab()/_load_into_tab()
+        # does for a normal File > Open (switch_to_tab(), then load).
+        # Flipping self.active_tab without switching the view first leaves
+        # every field widget in a background tab constructed while its scene
+        # was never the one actually on screen — Qt only fully polishes a
+        # stylesheet-styled widget's colors the first time it becomes part of
+        # a shown window, and it can stick with stale/black text forever
+        # after, which is exactly what a plain Open (built on an
+        # already-visible tab) never hits.
+        self.switch_to_tab(tab)
+        if "graph" in envelope:
+            self._restore(envelope["graph"], restore_selection=False)
+        # Note: deliberately NOT forcing a QApplication.processEvents()
+        # flush here. It was tried as a belt-and-suspenders complement to
+        # switch_to_tab() above, but pumping the event loop mid-restore let
+        # stray deferred callbacks (e.g. NodeComboBox's
+        # QTimer.singleShot(0, self._safe_refresh) from hidePopup) fire
+        # against a tab's widgets while a *later* tab in the same restore
+        # loop was still being torn down/rebuilt — crashing with
+        # "NodeComboBox object has no attribute 'node'" on next launch.
+        # switch_to_tab() alone (making each tab briefly the real, on-screen
+        # scene while its graph is restored) already gets these widgets a
+        # proper paint pass without that risk.
+        tab.project_path = path
+        tab.untitled_number = None if path else self._next_untitled_number()
+        tab.history = []
+        tab.history_index = -1
+        self.push_undo_state()
+        # A dirty tab keeps its unsaved-edit mark; a clean one just reflects
+        # whatever was last snapshotted (in sync with disk).
+        self._set_dirty(dirty)
+        return tab
 
     # ── Tabs ──────────────────────────────────────────────────────────────────
 
@@ -288,10 +312,23 @@ class NodeEditorWindow(QMainWindow):
         self._update_title()
         self.title_bar.tab_strip.refresh_active(tab)
 
+    def switch_to_adjacent_tab(self, direction: int):
+        """Ctrl+Tab / Ctrl+Shift+Tab — cycle to the next/previous project, wrapping around."""
+        if len(self.tabs) < 2:
+            return
+        idx = self.tabs.index(self.active_tab)
+        self.switch_to_tab(self.tabs[(idx + direction) % len(self.tabs)])
+
     def close_tab(self, tab: ProjectTab):
-        # Every open tab has a snapshot file in this run's session folder
-        # (see push_undo_state) — drop it so a closed tab can't reappear on
-        # the next restore prompt.
+        # Grab the tab's own up-to-date snapshot (see push_undo_state) before
+        # dropping it, so Ctrl+Shift+T can bring it back later — same
+        # envelope shape whole-session restore already reads.
+        envelope = autosave.load_snapshot(self._session_dir, tab.tab_id)
+        if envelope is not None:
+            self._closed_tabs.append((tab.tab_id, envelope))
+            del self._closed_tabs[:-CLOSED_TABS_HISTORY_LIMIT]
+        # Every open tab has a snapshot file in this run's session folder —
+        # drop it so a closed tab can't reappear on the next restore prompt.
         autosave.discard_snapshot(self._session_dir, tab.tab_id)
         was_active = tab is self.active_tab
         self.tabs.remove(tab)
@@ -308,6 +345,40 @@ class NodeEditorWindow(QMainWindow):
             self.view.setScene(self.active_tab.scene)
         self._update_title()
         self._refresh_tab_strip()
+
+    def reopen_closed_tab(self):
+        """Ctrl+Shift+T — bring back the most recently closed tab, Chrome-
+        style. No-op if nothing's been closed this run."""
+        if not self._closed_tabs:
+            return
+        tab_id, envelope = self._closed_tabs.pop()
+        tab = self._restore_tab_from_envelope(tab_id, envelope)
+        self.switch_to_tab(tab)
+        self._update_title()
+        self._refresh_tab_strip()
+
+    def close_other_tabs(self, keep: ProjectTab):
+        for tab in [t for t in self.tabs if t is not keep]:
+            self.close_tab(tab)
+
+    def close_tabs_to_the_right(self, tab: ProjectTab):
+        if tab not in self.tabs:
+            return
+        for other in self.tabs[self.tabs.index(tab) + 1:]:
+            self.close_tab(other)
+
+    def duplicate_tab(self, tab: ProjectTab):
+        """Open a new tab with a copy of ``tab``'s current graph — an
+        in-memory clone, not tied to ``tab``'s save file (the copy starts as
+        an unsaved Untitled tab, same as a manual Save As would give you)."""
+        payload = serialize_graph(tab.scene, tab.connections)
+        new = self._create_tab()
+        new.untitled_number = self._next_untitled_number()
+        self.switch_to_tab(new)
+        self._restore(payload, restore_selection=False)
+        self.push_undo_state()
+        self._set_dirty(True)
+        self.reorder_tab(new, self.tabs.index(tab) + 1)
 
     def _refresh_tab_strip(self):
         self.title_bar.tab_strip.rebuild(self.tabs, self.active_tab)
@@ -384,16 +455,92 @@ class NodeEditorWindow(QMainWindow):
     # would gives all of that back — including Aero edge-snap — for free.
 
     def _apply_rounded_corners(self):
-        apply_rounded_corners(self)
+        # Why: on Windows, DWM would normally auto-round/auto-square this window's
+        # corners since we keep WS_CAPTION, but Qt's showMaximized() never gives
+        # it a real WS_MAXIMIZE style, so that auto-detection isn't reliable — see
+        # _update_window_rounding, which sets the DWM preference explicitly on
+        # every state change instead. On other platforms (truly frameless), we
+        # apply the initial rounding here since there's no OS default to rely on.
+        if sys.platform != "win32":
+            apply_rounded_corners(self)
 
     def nativeEvent(self, eventType, message):
         if sys.platform == "win32" and eventType == b"windows_generic_MSG":
             try:
+                import ctypes
+                from ctypes import wintypes
+
+                class _MSG(ctypes.Structure):
+                    _fields_ = [
+                        ("hwnd", wintypes.HWND), ("message", wintypes.UINT),
+                        ("wParam", wintypes.WPARAM), ("lParam", wintypes.LPARAM),
+                        ("time", wintypes.DWORD), ("pt", wintypes.POINT),
+                    ]
+
+                msg = _MSG.from_address(int(message))
+
+                # Handle WM_NCACTIVATE: on activation changes (minimize, restore,
+                # alt-tab), Windows' default handling repaints the real non-client
+                # caption — briefly flashing the native (accent-colored) title bar
+                # through our WM_NCCALCSIZE-hidden one. Passing lParam=-1 to
+                # DefWindowProc is the documented way to keep the activation-state
+                # bookkeeping but suppress that repaint.
+                if msg.message == 0x0086:  # WM_NCACTIVATE
+                    user32 = ctypes.windll.user32
+                    user32.DefWindowProcW.restype = ctypes.c_ssize_t
+                    user32.DefWindowProcW.argtypes = [
+                        wintypes.HWND, wintypes.UINT, wintypes.WPARAM, ctypes.c_ssize_t,
+                    ]
+                    result = user32.DefWindowProcW(msg.hwnd, msg.message, msg.wParam, -1)
+                    return True, result
+
+                # Handle WM_NCCALCSIZE
+                if msg.message == 0x0083:  # WM_NCCALCSIZE
+                    if msg.wParam:
+                        # If window is maximized, adjust margins to prevent client area
+                        # from spilling over the screen edges (cutoff).
+                        #
+                        # Deliberately IsZoomed(hwnd) here, not self.isMaximized():
+                        # dragging the title bar to the top edge triggers Windows'
+                        # own native Aero Snap maximize (see _native_drag_handles_this
+                        # in title_bar.py — a non-maximized window's drag is handled
+                        # entirely natively), which resizes the real HWND straight
+                        # through DefWindowProc. Qt's own isMaximized() flag only
+                        # updates reactively afterward (via WM_SIZE), so it can still
+                        # read False while THIS WM_NCCALCSIZE — fired mid-transition —
+                        # is being processed, skipping the border compensation below
+                        # and leaving the client area overhanging the screen edges
+                        # (visibly clipped). Clicking the maximize button doesn't hit
+                        # this, since showMaximized() sets Qt's flag before the native
+                        # resize happens. IsZoomed() asks Windows directly, so it's
+                        # correct regardless of which path triggered the transition.
+                        if ctypes.windll.user32.IsZoomed(msg.hwnd):
+                            class RECT(ctypes.Structure):
+                                _fields_ = [
+                                    ("left", ctypes.c_long), ("top", ctypes.c_long),
+                                    ("right", ctypes.c_long), ("bottom", ctypes.c_long),
+                                ]
+                            class NCCALCSIZE_PARAMS(ctypes.Structure):
+                                _fields_ = [
+                                    ("rgrc", RECT * 3), ("lppos", ctypes.c_void_p),
+                                ]
+                            params = NCCALCSIZE_PARAMS.from_address(msg.lParam)
+                            user32 = ctypes.windll.user32
+                            # SM_CXSIZEFRAME = 32, SM_CYSIZEFRAME = 33, SM_CXPADDEDBORDER = 92
+                            border_w = user32.GetSystemMetrics(32) + user32.GetSystemMetrics(92)
+                            border_h = user32.GetSystemMetrics(33) + user32.GetSystemMetrics(92)
+                            params.rgrc[0].top += border_h
+                            params.rgrc[0].left += border_w
+                            params.rgrc[0].right -= border_w
+                            params.rgrc[0].bottom -= border_h
+                        return True, 0
+                    return True, 0
+
                 result = self._hit_test_native_message(int(message))
                 if result is not None:
                     return True, result
             except Exception as exc:
-                log_and_explain("Native hit-test failed", exc)
+                log_and_explain("Native event handling failed", exc)
         return super().nativeEvent(eventType, message)
 
     def _hit_test_native_message(self, message_ptr: int) -> Optional[int]:
@@ -415,13 +562,7 @@ class NodeEditorWindow(QMainWindow):
         y = ctypes.c_short((msg.lParam >> 16) & 0xFFFF).value
         local = self.mapFromGlobal(QPoint(x, y))
 
-        if self.isMaximized() or self.isFullScreen():
-            # Deliberately NOT returning HTCAPTION here: a frameless window
-            # never gets the real Win32 WS_MAXIMIZE style, so Windows' own
-            # "drag the caption to restore-and-follow-the-cursor" behavior
-            # never kicks in for it — the click would just be swallowed.
-            # Returning None instead lets Qt's own mouse events reach
-            # TitleBarWidget, which restores the window and drags it itself.
+        if self.isFullScreen():
             return None
 
         # A click inside the title bar's own rect is resolved by ITS content
@@ -432,9 +573,23 @@ class NodeEditorWindow(QMainWindow):
         if 0 <= local.y() < TITLE_BAR_HEIGHT:
             tb_pos = self.title_bar.mapFrom(self, local)
             if self.title_bar.rect().contains(tb_pos):
-                if self.title_bar.is_drag_region(tb_pos):
+                # Only claim the drag region natively when NOT maximized. A
+                # maximized frameless window never gets the real Win32
+                # WS_MAXIMIZE style, so Windows' native "drag the caption to
+                # restore, tracking the cursor" gesture computes the restored
+                # window's position using its own (wrong) assumptions about
+                # nonclient/caption metrics — it visibly desyncs, snapping the
+                # window to a stale/mismatched position for a frame. Returning
+                # None here instead makes this a plain HTCLIENT click, so
+                # TitleBarWidget's own mousePressEvent/mouseMoveEvent (see
+                # _native_drag_handles_this) do the restore-and-drag manually,
+                # which is consistent everywhere.
+                if self.title_bar.is_drag_region(tb_pos) and not self.isMaximized():
                     return _HTCAPTION
                 return None
+
+        if self.isMaximized():
+            return None
 
         m = TITLE_BAR_RESIZE_MARGIN
         rect = self.rect()
@@ -524,6 +679,27 @@ class NodeEditorWindow(QMainWindow):
         elif key == KEY_OPEN and mods == MOD_CTRL:
             self.load_project()
             event.accept()
+        elif key == KEY_NEW_TAB and mods == MOD_CTRL:
+            self.new_tab()
+            event.accept()
+        elif key == KEY_NEW_TAB and mods == MOD_CTRL_SHIFT:
+            self.reopen_closed_tab()
+            event.accept()
+        elif key == KEY_NEW_TAB_ALT and mods == MOD_CTRL:
+            self.new_tab()
+            event.accept()
+        elif key == KEY_CLOSE_TAB and mods == MOD_CTRL:
+            self.close_tab(self.active_tab)
+            event.accept()
+        elif key == KEY_NEXT_TAB and mods == MOD_CTRL:
+            self.switch_to_adjacent_tab(1)
+            event.accept()
+        elif key == KEY_NEXT_TAB and mods == MOD_CTRL_SHIFT:
+            self.switch_to_adjacent_tab(-1)
+            event.accept()
+        elif key == KEY_EXECUTE and mods == MOD_NONE:
+            self.execute_chain()
+            event.accept()
         elif key == KEY_COPY and mods == MOD_CTRL:
             self.copy_nodes()
             event.accept()
@@ -572,6 +748,12 @@ class NodeEditorWindow(QMainWindow):
                 self.showNormal()
             else:
                 self.showFullScreen()
+            event.accept()
+        elif mods == Qt.AltModifier and key == Qt.Key_Space:
+            # Alt+Space is the native OS shortcut to show the system window
+            # menu. Intercepting it here shows the native Win32 system menu
+            # for this frameless window at its top-left caption corner.
+            show_system_menu(self, self.mapToGlobal(QPoint(0, TITLE_BAR_HEIGHT)))
             event.accept()
         # Language-cycle (KEY_PREV_LANG/KEY_NEXT_LANG) is handled globally by
         # ui/global_hotkeys.py's QApplication-level event filter instead of
@@ -861,6 +1043,98 @@ class NodeEditorWindow(QMainWindow):
             self.active_tab = tab
             self.set_project_state(self.get_project_state())
         self.active_tab = original_active
+
+    def changeEvent(self, event):
+        if event.type() == QEvent.WindowStateChange:
+            self._update_window_rounding(self.isMaximized())
+            was_minimized = bool(event.oldState() & Qt.WindowMinimized)
+            if was_minimized and not self.isMinimized() and sys.platform == "win32":
+                self._reassert_native_chrome()
+        super().changeEvent(event)
+
+    def _reassert_native_chrome(self):
+        # Why: after restoring from minimized, Windows can leave the non-client
+        # region stale — a sliver of the real caption, painted in our own
+        # caption color, lingers where the tab strip should be — until
+        # something forces it to recompute. SWP_FRAMECHANGED forces an
+        # immediate WM_NCCALCSIZE re-evaluation without moving or resizing
+        # the window.
+        try:
+            from ctypes import windll
+            hwnd = int(self.winId())
+            SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_NOACTIVATE, SWP_FRAMECHANGED = 0x2, 0x1, 0x4, 0x10, 0x20
+            flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
+            windll.user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, flags)
+        except Exception as exc:
+            log_and_explain("Failed to force non-client recompute after restore", exc)
+
+    def _update_window_rounding(self, square_corners: bool):
+        """square_corners is True both when the window is really maximized
+        and when TitleBarWidget wants square corners for another reason (a
+        manual half-screen edge-snap — see set_corners_square()); either way
+        the corners should look square, so this treats them identically.
+
+        Corner rounding is DWM's job on Windows, full stop: our own Qt
+        content stays a plain rectangle, and DWMWA_WINDOW_CORNER_PREFERENCE
+        clips the whole window from the outside — exactly like a real
+        native window, with exactly one rounding curve involved. Two
+        earlier attempts at ALSO rounding our own widgets on top of that
+        (a QSS radius on the title bar, then a title bar mask) each ended
+        up compounding with DWM's own curve instead of replacing it —
+        visibly squashing the corner, because DWM's clip shape and ours
+        never quite agreed. There's no DWM off Windows, so the title bar
+        mask + central widget QSS radius are the fallback there instead.
+        """
+        is_native_rounding = sys.platform == "win32"
+        radius = 0 if (square_corners or is_native_rounding) else WINDOW_CORNER_RADIUS
+
+        if is_native_rounding:
+            apply_rounded_corners(self, DWMWCP_DONOTROUND if square_corners else DWMWCP_ROUND)
+
+        if hasattr(self, "title_bar") and self.title_bar:
+            self.title_bar.setStyleSheet(TITLE_BAR_QSS)
+            self.title_bar.set_corner_radius(radius)
+
+        central = self.centralWidget()
+        if central:
+            central.setStyleSheet(
+                f"#centralWidget {{ background: {WINDOW_BACKGROUND_COLOR}; "
+                f"border-bottom-left-radius: {radius}px; border-bottom-right-radius: {radius}px; }}"
+            )
+
+    def set_corners_square(self, square: bool) -> None:
+        """Force the window's corner rounding on/off regardless of real
+        Qt window state. Used by TitleBarWidget's manual edge-snap (a plain
+        setGeometry() to a screen half, which unlike showMaximized() raises
+        no WindowStateChange for _update_window_rounding to react to on its
+        own) so a snapped window still gets flush, square corners."""
+        self._update_window_rounding(square)
+
+    def remember_normal_geometry(self) -> None:
+        """Cache the window's current geometry so a later restore-from-
+        maximized drag can use it instead of Qt's own normalGeometry().
+        Call this right before showMaximized() (see TitleBarWidget's
+        _toggle_maximize / _snap_to_edge_if_dropped_there), while the window
+        is still in its real, non-maximized geometry.
+
+        Why: diagnostic logging during a maximize->drag-restore->maximize->...
+        cycle showed Qt's normalGeometry() itself getting corrupted to a
+        near-fullscreen rect after repeated transitions on this frameless
+        window — showNormal() doesn't always finish updating the native
+        HWND's geometry synchronously, and Qt appears to cache that stale,
+        still-maximized-sized rect as if it were the legitimate "normal"
+        geometry. Keeping our own independent snapshot, taken proactively
+        before the transition even starts, sidesteps that bookkeeping.
+        """
+        if not self.isMaximized():
+            self._remembered_normal_geometry = self.geometry()
+
+    def normal_geometry_for_restore(self):
+        """The geometry to restore to for a maximized-window drag — see
+        remember_normal_geometry(). Falls back to Qt's normalGeometry() if
+        nothing was ever remembered (shouldn't happen once every showMaximized()
+        call site remembers first, but keeps this safe to call regardless)."""
+        return getattr(self, "_remembered_normal_geometry", None) or self.normalGeometry()
 
     # ── Chain execution ───────────────────────────────────────────────────────
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict
 
+from PyQt5.QtCore import QEvent, QObject
 from PyQt5.QtGui import QColor, QPalette
 
 from configuration import (
@@ -22,12 +23,44 @@ from configuration import (
     UI_FONT_FAMILY, WIDGET_FONT_PT, BROWSE_BTN_WIDTH,
     CHECKBOX_INDICATOR_SIZE, CHECKBOX_LABEL_SPACING,
     TINT_FIELD_DARKEN, TINT_BUTTON_DARKEN, TINT_HOVER_DARKEN,
-    TINT_PRESSED_DARKEN, TINT_SELECTION_LIGHTEN,
+    TINT_PRESSED_DARKEN, TINT_SELECTION_LIGHTEN, TINT_BODY_DARKEN,
     TINT_BORDER_MIN_LUMINANCE, TINT_BORDER_LIGHTEN_STEP,
     VECTOR_AXIS_LABEL_COLOR, SOCKET_COLOR_SCHEMA, FIELD_PLACEHOLDER_COLOR,
 )
 
 WIDGET_FONT = f"{WIDGET_FONT_PT}pt {UI_FONT_FAMILY}"
+
+
+class PlaceholderPaletteFilter(QObject):
+    """Event filter to ensure text and placeholder colors remain pinned when Qt polishes the widget style.
+    
+    Why: Qt's stylesheet application and widget style polishing (especially during lazy tab switching
+    or initial paint events) automatically recompute/override custom palette configurations set on QWidget
+    and QLineEdit. Intercepting these events allows us to re-apply the pinned colors right as the layout
+    engine resets them, bypassing the QSS-cache cold-start black-text bug.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._recursion_guard = False
+
+    def eventFilter(self, obj, event) -> bool:
+        if event.type() in (QEvent.Polish, QEvent.StyleChange, QEvent.PaletteChange):
+            if not self._recursion_guard:
+                self._recursion_guard = True
+                try:
+                    pal = obj.palette()
+                    expected_placeholder = QColor(FIELD_PLACEHOLDER_COLOR)
+                    expected_text = QColor(TEXT_COLOR)
+                    if (pal.color(QPalette.PlaceholderText) != expected_placeholder or
+                            pal.color(QPalette.Text) != expected_text or
+                            pal.color(QPalette.WindowText) != expected_text):
+                        pal.setColor(QPalette.Text, expected_text)
+                        pal.setColor(QPalette.WindowText, expected_text)
+                        pal.setColor(QPalette.PlaceholderText, expected_placeholder)
+                        obj.setPalette(pal)
+                finally:
+                    self._recursion_guard = False
+        return super().eventFilter(obj, event)
 
 
 def apply_field_placeholder_palette(widget) -> None:
@@ -44,6 +77,11 @@ def apply_field_placeholder_palette(widget) -> None:
     pal.setColor(QPalette.WindowText, QColor(TEXT_COLOR))
     pal.setColor(QPalette.PlaceholderText, QColor(FIELD_PLACEHOLDER_COLOR))
     widget.setPalette(pal)
+
+    if not getattr(widget, "_palette_filter_installed", False):
+        filt = PlaceholderPaletteFilter(widget)
+        widget.installEventFilter(filt)
+        widget._palette_filter_installed = True
 
     # A QComboBox's dropdown list is a separate popup widget (a QListView)
     # that Qt creates lazily — its own palette is independent of the combo
@@ -259,14 +297,20 @@ def widget_stylesheets(p: WidgetPalette) -> Dict[str, str]:
         "tool": (
             f"QToolButton{{background:{p.button_bg};color:{BUTTON_TEXT_COLOR};"
             f"border:1px solid {p.border};border-radius:0px;font:{WIDGET_FONT};}}"
-            f"QToolButton[nodeHover=\"true\"]{{background:{p.hover_bg};border-color:{p.highlight};}}"
+            # :hover covers a standalone QToolButton (e.g. in a plain
+            # QDialog), where Qt delivers Enter/Leave natively and reliably;
+            # [nodeHover="true"] additionally covers one embedded via
+            # QGraphicsProxyWidget (see the "field" note above), where it
+            # doesn't. Same rule, both hover mechanisms — nothing about this
+            # widget cares which one is driving it.
+            f"QToolButton:hover,QToolButton[nodeHover=\"true\"]{{background:{p.hover_bg};border-color:{p.highlight};}}"
             f"QToolButton:pressed{{background:{p.pressed_bg};}}"
         ),
         "push": (
             f"QPushButton{{background:{p.button_bg};color:{BUTTON_TEXT_COLOR};"
             f"border:1px solid {p.border};border-radius:0px;"
             f"padding:5px 8px;font:bold {WIDGET_FONT};}}"
-            f"QPushButton[nodeHover=\"true\"]{{background:{p.hover_bg};border-color:{p.highlight};}}"
+            f"QPushButton:hover,QPushButton[nodeHover=\"true\"]{{background:{p.hover_bg};border-color:{p.highlight};}}"
             f"QPushButton:pressed{{background:{p.pressed_bg};}}"
         ),
         "separator": p.border,
@@ -369,22 +413,51 @@ QFrame#descFrame {{
 }}
 """
 
+# Same primitive a graph node paints — a colored header band over a body,
+# one outer border wrapping both (see graph_items.py's MetaNode.paint() and
+# FramelessDialogBase, which this pairs with).
+_DIALOG_BODY_COLOR = darker_hex(DEFAULT_HEADER_COLOR, TINT_BODY_DARKEN)
+
 RESTORE_DIALOG_QSS = f"""
 #RestoreChoiceDialog {{
-    background-color: {CANVAS_BACKGROUND_COLOR};
     border: 1px solid {NODE_BORDER_COLOR};
+}}
+#RestoreChoiceDialog QLabel#dialogHeader {{
+    background-color: {DEFAULT_HEADER_COLOR};
+    color: {TEXT_COLOR};
+    font-family: {UI_FONT_FAMILY};
+    font-weight: bold;
+    font-size: 11pt;
+    padding-left: 10px;
+}}
+#RestoreChoiceDialog QWidget#dialogBody {{
+    background-color: {_DIALOG_BODY_COLOR};
 }}
 #RestoreChoiceDialog QLabel {{
     color: {TEXT_COLOR};
     font-family: {UI_FONT_FAMILY};
     background: transparent;
 }}
-#RestoreChoiceDialog QLabel#restoreTitle {{
-    font-weight: bold;
-    font-size: 11pt;
-}}
 #RestoreChoiceDialog QLabel#restoreBody {{
     color: {TEXT_MUTED_COLOR};
+}}
+"""
+
+# Every QToolTip in the app, regardless of which widget shows it — node
+# titles, title bar buttons, sockets, menu items, everything — same
+# primitive as the dialog header/body colors (CANVAS_BACKGROUND_COLOR,
+# DEFAULT_HEADER_COLOR, TEXT_COLOR), not Qt's native OS tooltip style. Set on
+# the QApplication itself (see nodeRC.py) so it applies uniformly no matter
+# where a tooltip pops up from — a per-widget stylesheet wouldn't reach a
+# tooltip triggered from a widget styled elsewhere.
+TOOLTIP_QSS = f"""
+QToolTip {{
+    background-color: {CANVAS_BACKGROUND_COLOR};
+    color: {TEXT_COLOR};
+    border: 1px solid {DEFAULT_HEADER_COLOR};
+    margin: 0px;
+    padding: 2px 4px;
+    font-family: {UI_FONT_FAMILY};
 }}
 """
 
@@ -396,8 +469,7 @@ TITLE_BAR_CLOSE_HOVER_COLOR = SOCKET_COLOR_SCHEMA["bool"]["socket"]
 
 TITLE_BAR_QSS = f"""
 #TitleBarWidget {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 {BUTTON_BG_COLOR}, stop:1 {WINDOW_BACKGROUND_COLOR});
+    background: {WINDOW_BACKGROUND_COLOR};
     border: none;
 }}
 #TitleBarWidget QLabel {{
@@ -429,25 +501,18 @@ TAB_STRIP_QSS = f"""
 #TabStripWidget {{
     background: transparent;
 }}
-QToolButton#tabNewBtn {{
-    background: transparent;
-    color: {TEXT_MUTED_COLOR};
-    border: none;
-    font-family: {UI_FONT_FAMILY};
-}}
-QToolButton#tabNewBtn:hover {{
-    background: {BUTTON_HOVER_COLOR};
-    color: {TEXT_COLOR};
-}}
 """
 
 TAB_BUTTON_QSS = f"""
 #TabButton {{
-    background: {BUTTON_BG_COLOR};
-    border: none;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #04152B, stop:1 #122337);
+    border: 1px solid {NODE_BORDER_COLOR};
+    border-top: none;
 }}
 #TabButton[active="true"] {{
-    background: {CANVAS_BACKGROUND_COLOR};
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #122337, stop:1 #04152B);
+    border: 1px solid {NODE_BORDER_COLOR};
+    border-bottom: none;
 }}
 #TabButton QLabel {{
     color: {TEXT_COLOR};

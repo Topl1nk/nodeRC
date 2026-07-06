@@ -8,7 +8,7 @@ next to three otherwise-equal buttons.
 """
 from __future__ import annotations
 
-from PyQt5.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout
+from PyQt5.QtWidgets import QHBoxLayout, QLabel, QPushButton
 
 from localization import t
 from ui.theme import PUSHBTN_QSS
@@ -23,16 +23,10 @@ class SessionRestoreDialog(FramelessDialogBase):
         # "yes" | "no" | "always" — read by the caller after exec_() returns.
         self.choice: str = "no"
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(10)
-
-        layout.addWidget(self.make_title_label(t("session_restore_title")))
-
         body = QLabel(t("session_restore_body"))
         body.setObjectName("restoreBody")
         body.setWordWrap(True)
-        layout.addWidget(body)
+        self.body_layout.addWidget(body)
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
@@ -45,7 +39,7 @@ class SessionRestoreDialog(FramelessDialogBase):
             btn.setStyleSheet(PUSHBTN_QSS)
             btn.clicked.connect(lambda _checked=False, c=choice: self._choose(c))
             btn_row.addWidget(btn)
-        layout.addLayout(btn_row)
+        self.body_layout.addLayout(btn_row)
 
     def _choose(self, choice: str):
         self.choice = choice

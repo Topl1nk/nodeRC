@@ -247,7 +247,10 @@ def start_node_def() -> NodeDef:
         )],
         width=185,
         has_footer=False,
-        extra_rows=5.5,
+        # Just enough body height for the Launch button — Open/Save/Save As
+        # (which used to take the rest) moved to the title bar's hamburger
+        # menu (see TabStripWidget._show_project_menu).
+        extra_rows=1.5,
         plain_title="> START",
     )
 
