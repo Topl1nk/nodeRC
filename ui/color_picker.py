@@ -6,12 +6,14 @@ callers repaint nodes as the user drags.
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QLabel, QLineEdit,
 )
 from PyQt5.QtGui import QPainter, QColor, QLinearGradient, QBrush, QPen, QPixmap
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, QRect, pyqtSignal
 
 from localization import t
 from configuration import (
@@ -33,6 +35,24 @@ def _paint_checkerboard(painter, rect, color_a, color_b):
             even = (x // CHECKERBOARD_CELL_SIZE + y // CHECKERBOARD_CELL_SIZE) % 2 == 0
             painter.fillRect(x, y, CHECKERBOARD_CELL_SIZE, CHECKERBOARD_CELL_SIZE,
                               QColor(*color_a) if even else QColor(*color_b))
+
+
+_preview_checkerboard_cache: Optional[QPixmap] = None
+
+
+def _preview_checkerboard() -> QPixmap:
+    """The 24x24 checkerboard tile behind the live color preview swatch —
+    always identical, so built once and reused instead of redrawing it (36
+    fillRect calls) on every _update_preview call, which fires on every
+    mouse-move tick while dragging a slider or the SV square."""
+    global _preview_checkerboard_cache
+    if _preview_checkerboard_cache is None:
+        pix = QPixmap(24, 24)
+        p = QPainter(pix)
+        _paint_checkerboard(p, QRect(0, 0, 24, 24), (150, 150, 150), (255, 255, 255))
+        p.end()
+        _preview_checkerboard_cache = pix
+    return _preview_checkerboard_cache
 
 
 class GradientSlider(QWidget):
@@ -454,13 +474,13 @@ class ColorPickerPopup(QWidget):
             self.hex_input.setText(text)
             self.hex_input.blockSignals(False)
 
-        pix = QPixmap(24, 24)
-        pix.fill(Qt.white)
+        # The checkerboard tile beneath is constant — only the color on top
+        # changes — so it's built once and reused (copy-on-write until
+        # painted on) instead of redrawing 36 fillRect calls on every single
+        # color change, which fires on every mouse-move tick while dragging
+        # a slider or the SV square.
+        pix = QPixmap(_preview_checkerboard())
         p = QPainter(pix)
-        for x in range(0, 24, 4):
-            for y in range(0, 24, 4):
-                if (x // 4 + y // 4) % 2 == 0:
-                    p.fillRect(x, y, 4, 4, QColor(150, 150, 150))
         p.fillRect(0, 0, 24, 24, self.current_color)
         p.end()
 
