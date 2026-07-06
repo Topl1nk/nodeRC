@@ -20,6 +20,7 @@ from ui.theme import NODE_BORDER_COLOR, SEARCH_DIALOG_STYLESHEET, apply_field_pl
 from localization import t
 from ui.param_nodes import PARAM_NODE_TYPES
 from ui.command_nodes import CommandNode
+from diagnostics import log_and_explain
 
 
 
@@ -157,7 +158,12 @@ class SearchMenuDialog(QDialog):
                 dummy = pclass()
                 title = re.sub('<[^<]+>', '', dummy.node_def.title).strip()
                 desc = getattr(dummy.node_def, "description", None) or f"A generic {ptype} parameter."
-            except Exception:
+            except Exception as exc:
+                # A broken param node class degrades to placeholder text here
+                # rather than crashing the search menu — but that must never
+                # happen silently, or a real construction bug in a node class
+                # stays invisible in the search results with no clue why.
+                log_and_explain(f"Search menu: {pclass.__name__}() failed while building its entry", exc)
                 title = f"[P] {ptype.capitalize()}"
                 desc = f"A {ptype} parameter."
             payload = {"param_type": ptype, "display": title, "desc": desc}
