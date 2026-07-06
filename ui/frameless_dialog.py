@@ -21,6 +21,7 @@ import sys
 
 from PyQt5.QtWidgets import QDialog, QLabel, QVBoxLayout, QWidget
 from PyQt5.QtCore import Qt, QPoint, QTimer
+from PyQt5 import sip
 
 from configuration import NODE_HEADER_HEIGHT, DWMWCP_DONOTROUND, NODE_SELECTED_COLOR
 from diagnostics import log_and_explain
@@ -135,18 +136,32 @@ class FramelessDialogBase(QDialog):
             user32.UnhookWindowsHookEx.argtypes = [ctypes.c_void_p]
 
             def hook_proc(code, wparam, lparam):
-                if code >= 0 and wparam in (_WM_LBUTTONDOWN, _WM_RBUTTONDOWN):
-                    info = ctypes.cast(lparam, ctypes.POINTER(_MSLLHOOKSTRUCT)).contents
-                    click_pos = QPoint(info.pt.x, info.pt.y)
-                    parent = self.parent()
-                    # This dialog is centered *over* the main window, so its
-                    # own rect overlaps the main window's — without excluding
-                    # it, every click on the dialog itself (its own header,
-                    # buttons, drag-move) also counted as "clicked the main
-                    # window" and flashed too.
-                    if (parent is not None and parent.frameGeometry().contains(click_pos)
-                            and not self.frameGeometry().contains(click_pos)):
-                        self.flash_attention()
+                # This is a process-wide WH_MOUSE_LL hook: it keeps firing
+                # for every click system-wide for as long as it's installed,
+                # regardless of whether the Python/C++ dialog it closes over
+                # is still alive. If teardown (deleteLater, or any path that
+                # skips hideEvent's _remove_click_outside_hook) ever races
+                # ahead of unhooking, touching `self` here would raise
+                # "wrapped C/C++ object has been deleted" inside a ctypes
+                # callback — Windows can't propagate that, so it would either
+                # crash the process or silently break input. Guard hard.
+                try:
+                    if (code >= 0 and wparam in (_WM_LBUTTONDOWN, _WM_RBUTTONDOWN)
+                            and not sip.isdeleted(self)):
+                        info = ctypes.cast(lparam, ctypes.POINTER(_MSLLHOOKSTRUCT)).contents
+                        click_pos = QPoint(info.pt.x, info.pt.y)
+                        parent = self.parent()
+                        # This dialog is centered *over* the main window, so its
+                        # own rect overlaps the main window's — without excluding
+                        # it, every click on the dialog itself (its own header,
+                        # buttons, drag-move) also counted as "clicked the main
+                        # window" and flashed too.
+                        if (parent is not None and not sip.isdeleted(parent)
+                                and parent.frameGeometry().contains(click_pos)
+                                and not self.frameGeometry().contains(click_pos)):
+                            self.flash_attention()
+                except Exception as exc:
+                    log_and_explain("Modal-attention mouse hook callback failed", exc)
                 return user32.CallNextHookEx(None, code, wparam, lparam)
 
             # Kept alive on self — ctypes doesn't hold a reference to the
