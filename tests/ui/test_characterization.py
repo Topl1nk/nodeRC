@@ -463,8 +463,10 @@ def test_exec_socket_hover_shows_ghost_on_correct_side(window):
     exec_out.hoverEnterEvent(None)
     assert exec_out._ghost is not None
     assert exec_out._ghost.isVisible()
-    ghost_rect = exec_out._ghost._local_rect()
-    assert ghost_rect.left() > 0  # sits to the right of the socket (local x=0)
+    # The ghost is a top-level scene item (GHOST_NODE_Z, so it can paint
+    # above every node including StartNode) — its own position is plain
+    # scene geometry (self.pos()), not socket-local coordinates anymore.
+    assert exec_out._ghost.pos().x() > exec_out.scene_center().x()  # sits to the right of the socket
 
     exec_out.hoverLeaveEvent(None)
     assert not exec_out._ghost.isVisible()
@@ -561,9 +563,10 @@ def test_ghost_connection_line_is_perfectly_straight(window):
     ghost = exec_out._ensure_ghost()
 
     source_y = exec_out.scene_center().y()
-    # _facing_socket_pos() is in socket-local coordinates — map it to scene
-    # space (matching source_y's own frame) before comparing.
-    ghost_socket_y = exec_out.mapToScene(ghost._facing_socket_pos()).y()
+    # _facing_socket_pos() is in the ghost's own local coordinates (it's a
+    # top-level scene item, not a socket child) — map it via the ghost
+    # itself to scene space before comparing.
+    ghost_socket_y = ghost.mapToScene(ghost._facing_socket_pos()).y()
     assert ghost_socket_y == source_y
 
 

@@ -17,7 +17,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import (
     QPen, QBrush, QColor, QPainterPath, QFont, QFontMetrics, QPainter, QPolygonF,
-    QCursor, QRadialGradient,
+    QCursor, QRadialGradient, QLinearGradient,
 )
 from PyQt5.QtCore import QRectF, Qt, QPoint, QPointF, QSizeF, QTimer
 
@@ -31,7 +31,7 @@ from configuration import (
     CONNECTION_SELECTED_COLOR, TEXT_COLOR,
     BEZIER_CTRL_FACTOR, BEZIER_CTRL_MIN,
     SOCKET_BORDER_WIDTH, SOCKET_RING_TRIM_WIDTH,
-    SOCKET_EXEC_HOVER_GROW, SOCKET_PLUS_GLYPH_SCALE, SOCKET_PLUS_GLYPH_WIDTH,
+    SOCKET_EXEC_HOVER_GROW, SOCKET_PLUS_GLYPH_SCALE, SOCKET_PLUS_GLYPH_WIDTH, SOCKET_MINUS_GLYPH_COLOR,
     GHOST_NODE_GAP_CELLS, GHOST_NODE_WIDTH, GHOST_NODE_HEIGHT, GHOST_NODE_BORDER_WIDTH,
     GHOST_NODE_FILL_RGBA, GHOST_NODE_HEADER_RGBA, GHOST_NODE_BORDER_RGBA, GHOST_SOCKET_RGBA,
     GHOST_CONNECTION_RGBA, GHOST_CONNECTION_WIDTH,
@@ -41,7 +41,7 @@ from configuration import (
     GRID_SIZE_SMALL, NODE_POPUP_Z, NODE_COMBO_POPUP_PROXY_Z,
     VECTOR_COLLAPSE_GLYPH, VECTOR_COLLAPSE_GLYPH_MIRRORED, VECTOR_EXPAND_GLYPH, VECTOR_TOGGLE_WIDTH,
     NODE_SELECTION_OVERLAY_RGBA, NODE_SELECTION_OVERLAY_Z, NODE_SOCKET_Z,
-    CONNECTION_Z,
+    CONNECTION_Z, GHOST_NODE_Z,
     UI_FONT_FAMILY, NODE_LABEL_FONT_SIZE, NODE_RENAME_FONT_SIZE, SOCKET_LABEL_OUTLINE_WIDTH,
     TINT_BODY_DARKEN, TINT_TITLE_LUMINANCE_THRESHOLD,
     PARAM_NODE_HEADER_FROM_SOCKET, HOTKEY_HINTS,
@@ -202,26 +202,62 @@ class SocketItem(QGraphicsObject):
         painter.drawPath(inner_edge)
 
         # Exec-only hover affordance: a white "+" marking "click/drag here to
-        # spawn a node" — sized off the already-grown radius so it scales
-        # with the enlarge effect instead of looking fixed against it.
+        # spawn a node" on an unconnected socket, or a "-" (its own darker
+        # SOCKET_MINUS_GLYPH_COLOR, distinct from the "+"'s white) on an
+        # already connected one — "click here to drop the wire" instead,
+        # since there is nothing left to spawn into a socket that already
+        # has its one allowed exec wire (see mousePressEvent's
+        # click-to-disconnect). Sized off the already-grown radius so it
+        # scales with the enlarge effect instead of looking fixed against it.
         if self.sock_def.is_exec and self._hovered:
             arm = r * SOCKET_PLUS_GLYPH_SCALE
-            painter.setPen(QPen(QColor(NODE_SELECTED_COLOR), SOCKET_PLUS_GLYPH_WIDTH, Qt.SolidLine, Qt.RoundCap))
+            glyph_color = SOCKET_MINUS_GLYPH_COLOR if self.is_connected() else NODE_SELECTED_COLOR
+            painter.setPen(QPen(QColor(glyph_color), SOCKET_PLUS_GLYPH_WIDTH, Qt.SolidLine, Qt.RoundCap))
             painter.drawLine(QPointF(-arm, 0), QPointF(arm, 0))
-            painter.drawLine(QPointF(0, -arm), QPointF(0, arm))
+            if not self.is_connected():
+                painter.drawLine(QPointF(0, -arm), QPointF(0, arm))
 
     def _ensure_ghost(self) -> "_SocketGhostPreview":
         if self._ghost is None:
             self._ghost = _SocketGhostPreview(self)
+            # A top-level scene item (see _SocketGhostPreview's own
+            # docstring for why), so — unlike a plain child — it must be
+            # explicitly added to whatever scene this socket's own node is
+            # already in.
+            scene = self.scene()
+            if scene is not None:
+                scene.addItem(self._ghost)
         return self._ghost
 
     def _show_ghost(self) -> None:
-        self._ensure_ghost().setVisible(True)
+        ghost = self._ensure_ghost()
+        ghost.setVisible(True)
+        # Even a plain hover (no drag yet) can already collide with a
+        # neighboring node sitting right where ghost_spawn_pos() lands —
+        # NodeScene._ghost_collision_socket is the same check
+        # _update_drag_ghost runs mid-drag, just against the ghost's fixed
+        # hover rect instead of a cursor-tracked one. A short click (no
+        # real movement) never runs that mid-drag check at all, so this is
+        # what lets such a click still connect directly into the collided
+        # node instead of opening the node-creation menu — see
+        # NodeScene.mouseReleaseEvent, which reads ghost._collision_target
+        # as the one source of truth regardless of which of the two checks
+        # actually set it.
+        scene = self.scene()
+        if scene is not None and hasattr(scene, "_ghost_collision_socket"):
+            rect = QRectF(ghost.pos(), QSizeF(ghost._width, ghost._height))
+            ghost.set_collision_target(scene._ghost_collision_socket(self, rect))
         self._force_ghost_repaint()
 
     def _hide_ghost(self) -> None:
         if self._ghost is not None:
             self._ghost.setVisible(False)
+            # Resets position/size and clears any cursor-tracked drag
+            # position, collision adoption, and splice preview, so the next
+            # plain hover starts fresh at the fixed ghost_spawn_pos formula
+            # instead of resuming wherever a previous drag left it.
+            self._ghost.reset_to_hover_position()
+            self._ghost.set_splice_target(None)
             self._force_ghost_repaint()
 
     def _force_ghost_repaint(self) -> None:
@@ -283,14 +319,33 @@ class SocketItem(QGraphicsObject):
             x = node.pos().x() - gap - GHOST_NODE_WIDTH
         return QPointF(snap_to_grid(x), node.pos().y())
 
+    def _connections_touching(self) -> list:
+        """Every Connection with this socket as either endpoint — at most a
+        handful (an exec socket is capped at one; a param output can fan
+        out). Used to repaint the wire's own hover gradient (Connection.
+        paint) when this socket's hover state flips."""
+        win = editor_window_of(self.meta_node)
+        if win is None:
+            return []
+        return [c for c in win.connections if c.source is self or c.dest is self]
+
     def hoverEnterEvent(self, event):
         self.prepareGeometryChange()  # boundingRect/shape grow for exec sockets — see _effective_radius
         self._hovered = True
         self.update()
+        # The node's own border gradient (MetaNode.paint) and this socket's
+        # connected wire's own gradient (Connection.paint) both key off
+        # SocketItem._hovered — for every socket kind, not just exec.
+        self.meta_node.update()
+        for conn in self._connections_touching():
+            conn.update()
         if self.sock_def.is_exec:
-            self.meta_node.update()  # the node's own mask must grow/shrink to match
             scene = self.scene()
-            if not (scene is not None and getattr(scene, "_drag_active", False)):
+            # A connected socket has nowhere to spawn a node — its one
+            # allowed exec wire is already taken — so hovering it shows the
+            # "-" disconnect affordance (paint()) but not the spawn-preview
+            # ghost, unlike an unconnected socket's "+".
+            if not self.is_connected() and not (scene is not None and getattr(scene, "_drag_active", False)):
                 self._show_ghost()
         super().hoverEnterEvent(event)
 
@@ -298,14 +353,16 @@ class SocketItem(QGraphicsObject):
         self.prepareGeometryChange()
         self._hovered = False
         self.update()
+        self.meta_node.update()
+        for conn in self._connections_touching():
+            conn.update()
         if self.sock_def.is_exec:
-            self.meta_node.update()
             self._hide_ghost()
         super().hoverLeaveEvent(event)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            self.scene().start_connection_drag(self)
+            self.scene().start_connection_drag(self, event.scenePos())
             event.accept()
         else:
             event.ignore()
@@ -316,62 +373,204 @@ class SocketItem(QGraphicsObject):
 
 class _SocketGhostPreview(QGraphicsItem):
     """A realistic but colorless (monochrome white, at varying opacity) node
-    silhouette + dashed wire, shown while hovering an exec socket
+    silhouette + wire, shown while hovering an exec socket
     (SocketItem.hoverEnterEvent) — previews exactly where
     SocketItem.ghost_spawn_pos() will place a node spawned from here: a
     header band, a body, and a facing socket on whichever edge points back
     at the real source socket — everything a real node has *except* a title
     or field content, since this isn't previewing any specific node type.
-    A child of the socket, so it moves for free with the node; never accepts
-    mouse input of its own (setAcceptedMouseButtons(NoButton)) since it's
-    purely an indicator, not an interactive element.
+
+    A top-level scene item (added via NodeScene.addItem in
+    SocketItem._ensure_ghost), *not* a child of the socket/node — Qt only
+    orders children within their own parent's local z-slot, so however high
+    a mere child's own zValue was, it could never win against a *different*
+    top-level node with a higher one (StartNode's NODE_START_Z, or another
+    node mid-drag at NODE_DRAG_Z). Sitting at the scene's own top level with
+    GHOST_NODE_Z lets it paint above literally every node, always. Its own
+    position/size (self.pos(), self._width/_height) is plain scene
+    geometry, set by reset_to_hover_position/set_drag_override/
+    set_collision_target rather than computed lazily from the socket's own
+    coordinate space. Never accepts mouse input of its own
+    (setAcceptedMouseButtons(NoButton)) since it's purely an indicator, not
+    an interactive element.
     """
 
     def __init__(self, socket: "SocketItem"):
-        super().__init__(socket)
+        super().__init__()
         self._socket = socket
+        self._width = GHOST_NODE_WIDTH
+        self._height = GHOST_NODE_HEIGHT
+        # Scene top-left — set by NodeScene._update_drag_ghost while an
+        # active drag has pulled the ghost off its fixed hover spot to
+        # follow the cursor to an arbitrary drop point; None means "use
+        # ghost_spawn_pos()'s fixed formula", the plain-hover (no drag)
+        # behavior — see reset_to_hover_position.
+        self._drag_override: Optional[QPointF] = None
+        # The far socket of a connection being dragged off a *connected*
+        # source (NodeScene._drag_original_dest) — set only while the drag
+        # is still within splice range (NodeScene._splice_still_attached),
+        # so the ghost's own "other" socket (opposite the one facing the
+        # real source) previews staying wired to it. None once the drag
+        # moves far/sharp enough to count as a plain detach.
+        self._splice_target: Optional["SocketItem"] = None
+        # A real socket the ghost's own rect currently "collides" with
+        # (NodeScene._ghost_collision_socket) — set, the ghost drops its own
+        # generic placeholder silhouette/size entirely and instead adopts
+        # that socket's own node's exact position and size, highlighting it
+        # as "release here to connect directly into this existing node"
+        # (see set_collision_target/paint).
+        self._collision_target: Optional["SocketItem"] = None
         self.setAcceptedMouseButtons(Qt.NoButton)
-        self.setZValue(NODE_SOCKET_Z + 1)
+        self.setZValue(GHOST_NODE_Z)
         self.setVisible(False)
+        self.setPos(socket.ghost_spawn_pos())
 
     def _direction(self) -> int:
         return 1 if self._socket.sock_def.kind == "output" else -1
 
+    def reset_to_hover_position(self) -> None:
+        """Fixed hover-only placement, at the ghost's own default size —
+        SocketItem.ghost_spawn_pos()'s 3-cell default. What a plain hover
+        (no drag) always shows, and what a click without real movement
+        still spawns at (NodeScene.mouseReleaseEvent)."""
+        self.prepareGeometryChange()
+        self._width = GHOST_NODE_WIDTH
+        self._height = GHOST_NODE_HEIGHT
+        self._drag_override = None
+        self._collision_target = None
+        self.setPos(self._socket.ghost_spawn_pos())
+
+    def set_drag_override(self, scene_top_left: Optional[QPointF]) -> None:
+        """Cursor-tracked placement during an active drag, at the ghost's
+        own default size (NodeScene._update_drag_ghost's non-collision
+        case). ``None`` resets back to the fixed hover position."""
+        if scene_top_left is None:
+            self.reset_to_hover_position()
+            return
+        self.prepareGeometryChange()
+        self._drag_override = scene_top_left
+        self._collision_target = None
+        self._width = GHOST_NODE_WIDTH
+        self._height = GHOST_NODE_HEIGHT
+        self.setPos(scene_top_left)
+
+    def set_collision_target(self, target: Optional["SocketItem"]) -> None:
+        """``target`` not None: the ghost adopts that socket's own node's
+        exact position and size verbatim, instead of its own generic
+        placeholder — see paint(), which also drops the header/body fill in
+        this mode (the real node underneath already shows that) for just a
+        highlight outline plus a wire straight to ``target``'s own actual
+        socket position."""
+        self.prepareGeometryChange()
+        self._collision_target = target
+        if target is not None:
+            node = target.meta_node
+            self._width = node.node_def.width
+            self._height = node.node_def.body_height
+            self.setPos(node.pos())
+
+    def set_splice_target(self, other: Optional["SocketItem"]) -> None:
+        self._splice_target = other
+
     def _local_rect(self) -> QRectF:
-        """The ghost's own body rect, in socket-local coordinates — derived
-        from the socket's own ghost_spawn_pos() (scene, grid-snapped)
-        mapped back into this coordinate space, so the drawn preview always
-        matches exactly where the node will actually land, on the grid."""
-        top_left = self._socket.mapFromScene(self._socket.ghost_spawn_pos())
-        return QRectF(top_left, QSizeF(GHOST_NODE_WIDTH, GHOST_NODE_HEIGHT))
+        return QRectF(0, 0, self._width, self._height)
 
     def _header_rect(self) -> QRectF:
-        r = self._local_rect()
-        return QRectF(r.left(), r.top(), r.width(), NODE_HEADER_HEIGHT)
+        return QRectF(0, 0, self._width, NODE_HEADER_HEIGHT)
 
     def _facing_socket_pos(self) -> QPointF:
         """Where the ghost's own socket sits: on whichever edge faces the
         real source socket, at header mid-height — the same position
-        convention a real exec socket uses (NodeDef.socket_y for is_exec)."""
-        r = self._local_rect()
-        x = r.left() if self._direction() > 0 else r.right()
-        return QPointF(x, r.top() + NODE_HEADER_HEIGHT / 2.0)
+        convention a real exec socket uses (NodeDef.socket_y for is_exec).
+        In collision mode this is instead the real target socket's own
+        actual position (mapped into the ghost's local coordinates) —
+        wherever that really is, not a synthetic mirror of it."""
+        if self._collision_target is not None:
+            return self.mapFromScene(self._collision_target.scene_center())
+        x = 0.0 if self._direction() > 0 else self._width
+        return QPointF(x, NODE_HEADER_HEIGHT / 2.0)
+
+    def _other_socket_pos(self) -> QPointF:
+        """The ghost's second socket, mirroring _facing_socket_pos on the
+        opposite edge — every real command node has both an input (left)
+        and an output (right) exec socket, so the ghost silhouette always
+        shows both too, not just whichever one faces the real drag source.
+        Also where a splice-preview wire to _splice_target lands. Not used
+        in collision mode (paint() returns before reaching it there)."""
+        x = self._width if self._direction() > 0 else 0.0
+        return QPointF(x, NODE_HEADER_HEIGHT / 2.0)
 
     def boundingRect(self) -> QRectF:
         return self._local_rect().adjusted(-6, -6, 6, 6)
+
+    def _draw_socket_diamond(self, painter: QPainter, pos: QPointF) -> None:
+        """A diamond matching a real exec socket's own silhouette
+        (NODE_EXEC_SOCKET_HALFSIZE) and, like any real unconnected socket
+        (SocketItem.paint), filled with the same radial gradient from
+        SOCKET_UNCONNECTED_CENTER_COLOR to CANVAS_BACKGROUND_COLOR instead
+        of left hollow — so the preview reads as "a real node's socket
+        connects here", not an arbitrary dot. Shared by both of the ghost's
+        two sockets (_facing_socket_pos/_other_socket_pos)."""
+        r = NODE_EXEC_SOCKET_HALFSIZE
+        diamond = QPolygonF([
+            pos + QPointF(0, -r), pos + QPointF(r, 0),
+            pos + QPointF(0,  r), pos + QPointF(-r, 0),
+        ])
+        gradient = QRadialGradient(pos, max(r - GHOST_NODE_BORDER_WIDTH, 1.0))
+        gradient.setColorAt(0.0, QColor(SOCKET_UNCONNECTED_CENTER_COLOR))
+        gradient.setColorAt(1.0, QColor(CANVAS_BACKGROUND_COLOR))
+        painter.setPen(QPen(QColor(*GHOST_SOCKET_RGBA), GHOST_NODE_BORDER_WIDTH))
+        painter.setBrush(QBrush(gradient))
+        painter.drawPolygon(diamond)
 
     def paint(self, painter: QPainter, option, widget=None):
         painter.setRenderHint(QPainter.Antialiasing)
         rect = self._local_rect()
         sock_pos = self._facing_socket_pos()
+        source_local = self.mapFromScene(self._socket.scene_center())
+
+        if self._collision_target is not None:
+            # Collision: the ghost has adopted the real target node's own
+            # position/size verbatim (set_collision_target) — the real node
+            # underneath already shows its own body/header, so this only
+            # adds a bright highlight outline around it plus the wire
+            # straight to its own real socket, instead of redrawing a
+            # second (redundant, muddying) copy of its body/header fill.
+            painter.setPen(QPen(QColor(*GHOST_CONNECTION_RGBA), GHOST_CONNECTION_WIDTH, Qt.SolidLine))
+            painter.drawLine(source_local, sock_pos)
+            painter.setPen(QPen(QColor(*GHOST_NODE_BORDER_RGBA), GHOST_NODE_BORDER_WIDTH * 2, Qt.SolidLine))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(rect)
+            return
+
+        other_pos = self._other_socket_pos()
 
         # Preview wire: the real source socket's center -> the ghost's own
         # facing socket, not just to the rect's edge — so it visibly lands
         # on the socket silhouette below instead of stopping short of it.
-        # Solid, like a real Connection — dashed was reserved for the live
-        # drag-preview line (NodeScene._drag_preview_line), and this isn't one.
-        painter.setPen(QPen(QColor(*GHOST_CONNECTION_RGBA), GHOST_CONNECTION_WIDTH, Qt.SolidLine))
-        painter.drawLine(QPointF(0, 0), sock_pos)
+        # Solid, like a real Connection. Only drawn in plain-hover display
+        # (no _drag_override) — once an actual drag is tracking the cursor,
+        # NodeScene's own dashed drag-preview line is the one and only line
+        # (magnetized onto this same facing socket — see
+        # NodeScene._drag_line_endpoint), so drawing this one too would just
+        # duplicate it.
+        if self._drag_override is None:
+            painter.setPen(QPen(QColor(*GHOST_CONNECTION_RGBA), GHOST_CONNECTION_WIDTH, Qt.SolidLine))
+            painter.drawLine(source_local, sock_pos)
+
+        # Splice preview: while dragging off a *connected* socket and still
+        # within splice range (NodeScene._splice_still_attached), a second
+        # solid wire from the ghost's other socket to the far node's own
+        # socket previews the node landing spliced in between both —
+        # exactly what release will create. Gone once the drag detaches.
+        if self._splice_target is not None:
+            try:
+                target_local = self.mapFromScene(self._splice_target.scene_center())
+            except RuntimeError:
+                target_local = None
+            if target_local is not None:
+                painter.setPen(QPen(QColor(*GHOST_CONNECTION_RGBA), GHOST_CONNECTION_WIDTH, Qt.SolidLine))
+                painter.drawLine(other_pos, target_local)
 
         # Body then header, same layering (and same NODE_HEADER_HEIGHT) a
         # real node's own paint() uses — just monochrome white at low alpha
@@ -386,23 +585,8 @@ class _SocketGhostPreview(QGraphicsItem):
         painter.setBrush(Qt.NoBrush)
         painter.drawRect(rect)
 
-        # The facing socket itself — a diamond matching a real exec socket's
-        # own silhouette (NODE_EXEC_SOCKET_HALFSIZE) and, like any real
-        # unconnected socket (SocketItem.paint), filled with the same radial
-        # gradient from SOCKET_UNCONNECTED_CENTER_COLOR to
-        # CANVAS_BACKGROUND_COLOR instead of left hollow — so the preview
-        # reads as "a real node's socket connects here", not an arbitrary dot.
-        r = NODE_EXEC_SOCKET_HALFSIZE
-        diamond = QPolygonF([
-            sock_pos + QPointF(0, -r), sock_pos + QPointF(r, 0),
-            sock_pos + QPointF(0,  r), sock_pos + QPointF(-r, 0),
-        ])
-        gradient = QRadialGradient(sock_pos, max(r - GHOST_NODE_BORDER_WIDTH, 1.0))
-        gradient.setColorAt(0.0, QColor(SOCKET_UNCONNECTED_CENTER_COLOR))
-        gradient.setColorAt(1.0, QColor(CANVAS_BACKGROUND_COLOR))
-        painter.setPen(QPen(QColor(*GHOST_SOCKET_RGBA), GHOST_NODE_BORDER_WIDTH))
-        painter.setBrush(QBrush(gradient))
-        painter.drawPolygon(diamond)
+        self._draw_socket_diamond(painter, sock_pos)
+        self._draw_socket_diamond(painter, other_pos)
 
 
 class Connection(QGraphicsPathItem):
@@ -446,7 +630,32 @@ class Connection(QGraphicsPathItem):
 
     def paint(self, painter, option, widget=None):
         suppress_default_selection_chrome(option)
-        self.setPen(self._pen_selected if self.isSelected() else self._pen)
+        pen = self._pen_selected if self.isSelected() else self._pen
+        # Whichever endpoint currently has its socket hovered (SocketItem.
+        # _hovered) lights the wire up white on that end, fading to fully
+        # transparent at the far end — the wire's own counterpart to
+        # MetaNode.paint's border gradient, so hovering a connected socket
+        # highlights the exact wire it owns instead of just the socket dot.
+        # Selection's own solid highlight color takes priority over this.
+        if not self.isSelected():
+            hovered_end = self.source if self.source._hovered else (
+                self.dest if self.dest._hovered else None)
+            if hovered_end is not None:
+                pen = QPen(pen)
+                p1 = self.source.scene_center()
+                p2 = self.dest.scene_center()
+                gradient = QLinearGradient(p1, p2)
+                white = QColor(NODE_SELECTED_COLOR)
+                transparent = QColor(NODE_SELECTED_COLOR)
+                transparent.setAlpha(0)
+                if hovered_end is self.source:
+                    gradient.setColorAt(0.0, white)
+                    gradient.setColorAt(1.0, transparent)
+                else:
+                    gradient.setColorAt(0.0, transparent)
+                    gradient.setColorAt(1.0, white)
+                pen.setBrush(QBrush(gradient))
+        self.setPen(pen)
         painter.setRenderHint(QPainter.Antialiasing)
         super().paint(painter, option, widget)
 
@@ -993,9 +1202,14 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         is_linked = win is not None and self in getattr(win, '_linked_group', [])
         visually_selected = self.isSelected() or is_linked
 
-        # A picked color tints the header; in full-scope mode the body and outer
-        # border take the same tint family, in only-header mode body and outer
-        # border stay on the default scheme and only the header gets the pick.
+        # A picked color tints the header; in full-scope mode the body takes
+        # the same tint family too, in only-header mode the body fill and
+        # embedded widgets (MetaNode._update_children_colors) stay on the
+        # default scheme and only the header gets the pick — but the node's
+        # one overall border always follows the header's own tint either
+        # way, never the plain default NODE_BORDER_COLOR, so a picked color
+        # (full- or header-only-scoped) always reads as "this node's own
+        # color" from its silhouette alone, not just its header band.
         only_header = bool(self._color_override) and self._color_only_header
         if self._color_override:
             header_color = QColor(self._color_override)
@@ -1003,9 +1217,8 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
             if only_header:
                 body_color = QColor(d.body_color)
                 body_color.setAlpha(header_color.alpha())
-                body_border_color = QColor(NODE_BORDER_COLOR)
-                body_border_color.setAlpha(header_color.alpha())
                 header_edge.setAlpha(header_color.alpha())
+                body_border_color = header_edge
             else:
                 body_color = header_color.darker(TINT_BODY_DARKEN)
                 body_border_color = header_edge
@@ -1015,8 +1228,25 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
             body_color = QColor(d.body_color)
             body_border_color = QColor(NODE_BORDER_COLOR)
 
+        hovered_socket = next((s for s in self.sockets.values() if s._hovered), None)
+
         if visually_selected:
             border_pen = QPen(QColor(NODE_SELECTED_COLOR), 2.0)
+        elif hovered_socket is not None:
+            # A hovered socket's own edge (input=left/x=0, output=right/
+            # x=width — NodeDef.socket_x puts every socket kind on that same
+            # edge) lights up the whole border white, fading to fully
+            # transparent at the opposite edge — a directional cue pointing
+            # at exactly which socket is under the cursor, distinct from the
+            # flat NODE_HOVER_COLOR outline a plain node-body hover gets.
+            gradient = QLinearGradient(0, 0, d.width, 0)
+            white = QColor(NODE_SELECTED_COLOR)
+            transparent = QColor(NODE_SELECTED_COLOR)
+            transparent.setAlpha(0)
+            near, far = (0.0, 1.0) if hovered_socket.sock_def.kind == "input" else (1.0, 0.0)
+            gradient.setColorAt(near, white)
+            gradient.setColorAt(far, transparent)
+            border_pen = QPen(QBrush(gradient), NODE_HOVER_BORDER_WIDTH)
         elif self._hovered:
             # This one rect spans the whole node (header included — the header
             # fill just paints over its top portion), so a single hover pen
@@ -1030,27 +1260,37 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         header_rect = QRectF(0, 0, d.width, NODE_HEADER_HEIGHT)
         # Sockets no longer need a hole punched under them — an unconnected
         # socket fakes the "canvas shows through" look itself via a radial
-        # gradient (SocketItem.paint), so the body/header/border just draw
-        # their plain rects, same as any other node.
-        painter.setPen(border_pen)
+        # gradient (SocketItem.paint), so the body/header just draw their
+        # plain rects, same as any other node.
+        #
+        # Fills first, border stroke last — not fill+stroke body_rect then
+        # fill header_rect over it. A stroke on drawRect straddles the path
+        # (half in, half out), so stroking body_rect first and then filling
+        # header_rect (no pen of its own) on top overwrites that stroke's
+        # inner half only where the header sits, leaving the border visibly
+        # thinner/offset along the header edge than along the body edge
+        # right below it — the same silhouette, two different apparent
+        # widths. Filling both rects first and stroking the outline once,
+        # last, over both keeps the border identical the entire height.
+        painter.setPen(Qt.NoPen)
         painter.setBrush(QBrush(body_color))
         painter.drawRect(body_rect)
-
-        painter.setPen(Qt.NoPen)
         painter.setBrush(QBrush(header_color))
         painter.drawRect(header_rect)
 
-        # Header outline: in only-header mode the picked colour traces the entire
-        # header rectangle (top, sides, bottom) so the band reads as a self-
-        # contained region. In full-tint mode the outer body border already
-        # carries the tint, so no extra line is needed at the header/body seam
-        # — one used to be drawn there, but for the common (uncustomized)
-        # case it matched the header colour exactly and just looked like a
-        # stray line for no reason.
-        if only_header and not visually_selected:
-            painter.setPen(QPen(header_edge, 1))
-            painter.setBrush(Qt.NoBrush)
-            painter.drawRect(header_rect)
+        painter.setPen(border_pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(body_rect)
+
+        # An only-header-mode node used to get a second outline here, traced
+        # around just header_rect in header_edge (a brightened header_color)
+        # — on top of the border_pen stroke above, which already runs the
+        # entire node's height including the header. Every param node is
+        # only-header by default (PARAM_NODE_HEADER_FROM_SOCKET), so for the
+        # overwhelmingly common uncustomized case this second outline came
+        # out nearly the same colour as the header itself: a redundant,
+        # barely-distinguishable ring around every param node's header,
+        # doubled up with the real border right underneath it. Removed.
 
         if self._lod_far:
             self._paint_lod_primitives(painter)

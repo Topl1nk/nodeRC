@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Optional, Tuple
 
 from PyQt5.QtWidgets import QGraphicsScene, QGraphicsLineItem, QGraphicsProxyWidget, QDialog, QApplication
-from PyQt5.QtCore import Qt, QPointF, QRectF, QTimer
+from PyQt5.QtCore import Qt, QPointF, QRectF, QSizeF, QTimer
 from PyQt5.QtGui import QPen, QColor, QPainter, QTransform
 
 from configuration import (
@@ -16,10 +16,11 @@ from configuration import (
     GRID_COLOR_SMALL, GRID_COLOR_LARGE, SCENE_PADDING,
     SCENE_INITIAL_X, SCENE_INITIAL_Y, SCENE_INITIAL_WIDTH, SCENE_INITIAL_HEIGHT,
     DRAG_PREVIEW_LINE_WIDTH, NODE_DRAG_Z, GROUP_FRAME_HEADER_HEIGHT,
-    NODE_LOD_DETAIL_SCALE,
+    NODE_LOD_DETAIL_SCALE, GHOST_NODE_WIDTH, GHOST_NODE_HEIGHT, NODE_HEADER_HEIGHT,
+    GHOST_SPLICE_DETACH_DISTANCE,
 )
 from ui.search_menu import SearchMenuDialog
-from ui.graph_items import Connection, SocketItem, MetaNode, GroupFrameItem
+from ui.graph_items import Connection, SocketItem, MetaNode, GroupFrameItem, snap_to_grid
 
 
 class NodeScene(QGraphicsScene):
@@ -31,6 +32,13 @@ class NodeScene(QGraphicsScene):
         self._drag_preview_line: Optional[QGraphicsLineItem] = None
         self._drag_active = False
         self._drag_original_dest: Optional[SocketItem] = None
+        self._drag_press_scene_pos: Optional[QPointF] = None
+        # The real Connection to original_dest, hidden for as long as the
+        # splice preview (ghost wired to both nodes) is showing in its
+        # place — see _update_drag_ghost/_cancel_connection_drag. Prevents
+        # the real wire and the ghost's own preview wire from both being on
+        # screen, overlapping, at once.
+        self._drag_hidden_connection: Optional[Connection] = None
         self._rect_recalc_pending = False
         # Bring-to-front counter for nodes just dragged (see _restore_dragged_z):
         # each drag hands out the next value, so the most recently moved node
@@ -214,14 +222,18 @@ class NodeScene(QGraphicsScene):
         self._rect_recalc_pending = False
         self.recalculate_scene_rect()
 
-    def start_connection_drag(self, source: SocketItem):
+    def start_connection_drag(self, source: SocketItem, press_scene_pos: QPointF):
         self._drag_active = True
         self._drag_source = source
         self._drag_original_dest = None
-        # The ghost preview (hover-only affordance) would otherwise keep
-        # showing its own dashed wire alongside the live drag preview line
-        # below — redundant and visually competing with it.
-        source._hide_ghost()
+        self._drag_press_scene_pos = press_scene_pos
+        # An unconnected exec socket's ghost stays visible through the drag
+        # instead of being hidden — see _update_drag_ghost, called from
+        # mouseMoveEvent, which lets it track the cursor to an arbitrary
+        # drop spot once the drag moves past a plain click. A connected
+        # socket (mid-rewire/splice) or a param socket never had a ghost to
+        # begin with (SocketItem.hoverEnterEvent), so there is nothing to
+        # hide for those.
         win = self.nodeEditorWindow
         if win:
             if source.sock_def.kind == "output":
@@ -344,8 +356,158 @@ class NodeScene(QGraphicsScene):
         if self._drag_active and self._drag_preview_line and self._drag_source:
             origin = self._drag_source.scene_center()
             cursor = event.scenePos()
-            self._drag_preview_line.setLine(origin.x(), origin.y(), cursor.x(), cursor.y())
+            self._update_drag_ghost(cursor)
+            endpoint = self._drag_line_endpoint(cursor)
+            self._drag_preview_line.setLine(origin.x(), origin.y(), endpoint.x(), endpoint.y())
         super().mouseMoveEvent(event)
+
+    def _drag_line_endpoint(self, cursor_scene_pos: QPointF) -> QPointF:
+        """The one dashed drag-preview line's own endpoint: magnetized onto
+        the ghost's own facing socket (in scene coords) whenever the ghost
+        is actually showing, instead of the raw cursor position — so there
+        is exactly one line, already snapped to where the spawned node's
+        socket will land, not a second cursor-following line competing with
+        the ghost's own (see _SocketGhostPreview.paint, which now only ever
+        draws its wire in plain-hover display, never mid-drag). Falls back
+        to the raw cursor whenever there is no ghost to lock onto — hovering
+        a compatible target socket, or a param source, which never gets one.
+        """
+        source = self._drag_source
+        ghost = source._ghost if source is not None else None
+        if ghost is not None and ghost.isVisible():
+            return ghost.mapToScene(ghost._facing_socket_pos())
+        return cursor_scene_pos
+
+    def _update_drag_ghost(self, cursor_scene_pos: QPointF) -> None:
+        """Dragging a connection out of an exec socket to empty canvas is
+        what pulls the ghost node preview off its fixed hover spot and has
+        it follow the cursor instead — to an arbitrary place, snapped to
+        the grid the same way ghost_spawn_pos() already is, previewing
+        exactly where mouseReleaseEvent will actually spawn the node. Left
+        at its fixed hover position until the drag moves past a plain click
+        (SocketItem.ghost_spawn_pos's own 3-cell default still applies to
+        that case — see mouseReleaseEvent). Hidden outright while hovering
+        a compatible target socket, since dropping there connects to that
+        existing node instead of spawning a new one. A param source never
+        had a ghost to move in the first place (SocketItem.hoverEnterEvent).
+
+        Dragging off an *already-connected* socket additionally previews
+        the splice: the ghost's other socket wires to the original far
+        socket (_drag_original_dest) as long as the cursor stays within
+        splice range of the original straight line between the two real
+        sockets (_splice_still_attached) — see set_splice_target.
+
+        If the ghost's own rect at that grid-snapped spot collides with an
+        existing node's footprint (_ghost_collision_socket), the ghost
+        drops its own placeholder entirely and adopts that node's exact
+        position/size instead — release then connects directly into it
+        (mouseReleaseEvent), same as landing precisely on one of its
+        sockets, just with a much larger, more forgiving target area.
+        Collision takes priority over the splice preview: only one "this is
+        what happens on release" story is shown at a time.
+        """
+        source = self._drag_source
+        if source is None or not source.sock_def.is_exec:
+            return
+        if self._drag_press_scene_pos is None:
+            return
+        moved = (cursor_scene_pos - self._drag_press_scene_pos).manhattanLength() > QApplication.startDragDistance()
+        if not moved:
+            return
+        if self._find_compatible_socket(cursor_scene_pos):
+            source._hide_ghost()
+            self._set_splice_hidden(None)
+            return
+        top_left = self._drag_ghost_top_left(source, cursor_scene_pos)
+        ghost = source._ensure_ghost()
+        ghost_rect = QRectF(top_left, QSizeF(GHOST_NODE_WIDTH, GHOST_NODE_HEIGHT))
+        collision_socket = self._ghost_collision_socket(source, ghost_rect)
+        if collision_socket is not None:
+            ghost.set_collision_target(collision_socket)
+            ghost.set_splice_target(None)
+            self._set_splice_hidden(None)
+        else:
+            ghost.set_drag_override(top_left)
+            original_dest = self._drag_original_dest
+            if original_dest is not None:
+                spliced = self._splice_still_attached(source, original_dest, cursor_scene_pos)
+                ghost.set_splice_target(original_dest if spliced else None)
+                self._set_splice_hidden(self._find_connection_between(source, original_dest) if spliced else None)
+        if ghost.isVisible():
+            source._force_ghost_repaint()
+        else:
+            source._show_ghost()
+
+    def _ghost_collision_socket(self, source: SocketItem, ghost_rect: QRectF) -> Optional[SocketItem]:
+        """The first compatible socket on a node whose own footprint
+        ``ghost_rect`` overlaps — a "collision" between the ghost preview
+        and a real existing node. Compatibility mirrors
+        _find_compatible_socket's own node-body fallback (opposite kind,
+        same is_exec), just tested against the ghost's whole rect instead
+        of the exact cursor point."""
+        for node in self._meta_nodes:
+            if node is source.meta_node:
+                continue
+            node_rect = QRectF(node.pos(), QSizeF(node.node_def.width, node.node_def.body_height))
+            if not node_rect.intersects(ghost_rect):
+                continue
+            for s in node.sockets.values():
+                if s.sock_def.kind != source.sock_def.kind and s.sock_def.is_exec == source.sock_def.is_exec:
+                    return s
+        return None
+
+    def _set_splice_hidden(self, conn: Optional["Connection"]) -> None:
+        """Keeps at most one real Connection hidden at a time — whichever
+        one the splice preview (_SocketGhostPreview's own wire to
+        set_splice_target) is currently standing in for, so the real wire
+        and the ghost's preview of it are never both on screen, overlapping,
+        at once. Restores visibility of whatever was hidden before switching
+        to a new one (or to none) — always called with ``None`` once the
+        drag ends (_cancel_connection_drag), so nothing stays hidden past
+        the drag regardless of how it finished."""
+        if self._drag_hidden_connection is conn:
+            return
+        if self._drag_hidden_connection is not None:
+            try:
+                self._drag_hidden_connection.setVisible(True)
+            except RuntimeError:
+                pass  # the connection (or an endpoint) was deleted mid-drag
+        self._drag_hidden_connection = conn
+        if conn is not None:
+            conn.setVisible(False)
+
+    @staticmethod
+    def _splice_still_attached(source: SocketItem, original_dest: SocketItem,
+                                cursor_scene_pos: QPointF) -> bool:
+        """Whether the cursor is still close enough to the original
+        straight source->original_dest line (perpendicular distance,
+        clamped to the segment) to keep previewing — and, on release,
+        actually create — the splice connection to that far socket. Beyond
+        GHOST_SPLICE_DETACH_DISTANCE (dragged far away, or off at a sharp
+        angle/"kink" from that original line) it returns False, meaning the
+        ghost is wired only to the socket it was dragged from."""
+        p1 = source.scene_center()
+        p2 = original_dest.scene_center()
+        seg_x, seg_y = p2.x() - p1.x(), p2.y() - p1.y()
+        seg_len2 = seg_x * seg_x + seg_y * seg_y
+        if seg_len2 == 0:
+            return False
+        t = ((cursor_scene_pos.x() - p1.x()) * seg_x + (cursor_scene_pos.y() - p1.y()) * seg_y) / seg_len2
+        t = max(0.0, min(1.0, t))
+        closest_x, closest_y = p1.x() + seg_x * t, p1.y() + seg_y * t
+        dx, dy = cursor_scene_pos.x() - closest_x, cursor_scene_pos.y() - closest_y
+        return (dx * dx + dy * dy) ** 0.5 <= GHOST_SPLICE_DETACH_DISTANCE
+
+    @staticmethod
+    def _drag_ghost_top_left(source: SocketItem, cursor_scene_pos: QPointF) -> QPointF:
+        """Where the ghost's own top-left lands for a given cursor position:
+        the cursor marks the ghost's own facing socket (same convention as
+        _SocketGhostPreview._facing_socket_pos — left edge/header-mid-height
+        for an output ghost, right edge for an input one), grid-snapped via
+        snap_to_grid exactly like every other node position."""
+        x = cursor_scene_pos.x() if source.sock_def.kind == "output" else cursor_scene_pos.x() - GHOST_NODE_WIDTH
+        y = cursor_scene_pos.y() - NODE_HEADER_HEIGHT / 2.0
+        return QPointF(snap_to_grid(x), snap_to_grid(y))
 
     def enforce_connection_rules(self, out_sock, in_sock):
         """One wire per input; one exec wire out of an exec output."""
@@ -367,10 +529,27 @@ class NodeScene(QGraphicsScene):
     def mouseReleaseEvent(self, event):
         moved = False
         if self._drag_active:
-            target        = self._find_compatible_socket(event.scenePos())
             source_socket = self._drag_source
+            # A collision (the ghost's own rect overlapping a compatible
+            # node's footprint — _ghost_collision_socket) is a fallback
+            # target exactly like landing precisely on a socket, just with
+            # a much larger hit area. Read straight off the ghost itself
+            # (the one source of truth for it — set either by a plain hover
+            # already sitting on a collision, SocketItem._show_ghost, or by
+            # _update_drag_ghost once the drag has actually moved) rather
+            # than a separately tracked flag, so a short click with no
+            # movement — which never runs _update_drag_ghost's own check —
+            # still honors a collision that was already there from hover.
+            ghost = source_socket._ghost if source_socket is not None else None
+            collision_target = ghost._collision_target if ghost is not None else None
+            target        = self._find_compatible_socket(event.scenePos()) or collision_target
             original_dest = self._drag_original_dest
+            press_pos     = self._drag_press_scene_pos
             self._cancel_connection_drag()
+            click_in_place = (
+                press_pos is not None
+                and (event.scenePos() - press_pos).manhattanLength() <= QApplication.startDragDistance()
+            )
             if target:
                 out_sock = source_socket if source_socket.sock_def.kind == "output" else target
                 in_sock  = target if source_socket.sock_def.kind == "output" else source_socket
@@ -381,20 +560,44 @@ class NodeScene(QGraphicsScene):
                     self.nodeEditorWindow.connections.append(conn)
                     in_sock.meta_node._refresh_connections()
                     self.nodeEditorWindow.push_undo_state()
+            elif click_in_place and original_dest is not None and source_socket.sock_def.is_exec:
+                # The "-" affordance (SocketItem.paint/hoverEnterEvent): a
+                # plain click (no drag) on an already-connected exec socket
+                # just drops its one existing wire — no search menu, unlike
+                # the same click on an unconnected socket ("+"), which offers
+                # to spawn one.
+                self._disconnect_exec_socket(source_socket, original_dest)
             else:
                 if self.nodeEditorWindow:
-                    # An exec source spawns exactly where its hover ghost
-                    # promised (SocketItem.ghost_spawn_pos) — automatically
-                    # right of an output / left of an input — rather than
-                    # wherever the drag happened to end; the ghost is a
-                    # direct instruction for the spawn, not just a preview.
-                    # A param source keeps the previous drop-position behavior.
-                    spawn_pos = (source_socket.ghost_spawn_pos() if source_socket.sock_def.is_exec
-                                 else event.scenePos())
+                    # A plain click on an exec socket (no real drag) spawns
+                    # at its fixed ghost_spawn_pos default. An actual drag to
+                    # empty canvas — connected source or not — spawns
+                    # wherever the drag ghost was last tracking the cursor
+                    # (_update_drag_ghost/_drag_ghost_top_left) — an
+                    # arbitrary, grid-snapped spot, not the fixed default. A
+                    # param source keeps the previous drop-position behavior.
+                    final_original_dest = original_dest
+                    if source_socket.sock_def.is_exec and not click_in_place:
+                        spawn_pos = self._drag_ghost_top_left(source_socket, event.scenePos())
+                        # A connected source's far socket only comes along
+                        # for the ride (splice) if the drag is still within
+                        # splice range at release — see
+                        # _splice_still_attached/_SocketGhostPreview's
+                        # matching splice-preview wire. Dragged too far/
+                        # sharply away, and it's a plain detach: the far
+                        # node loses its connection instead of being spliced
+                        # into the new one.
+                        if (original_dest is not None
+                                and not self._splice_still_attached(source_socket, original_dest, event.scenePos())):
+                            final_original_dest = None
+                    elif source_socket.sock_def.is_exec:
+                        spawn_pos = source_socket.ghost_spawn_pos()
+                    else:
+                        spawn_pos = event.scenePos()
                     self.show_node_creation_menu(
                         spawn_pos, event.screenPos(),
                         source_socket=source_socket,
-                        original_dest=original_dest
+                        original_dest=final_original_dest
                     )
         else:
             super().mouseReleaseEvent(event)
@@ -457,20 +660,60 @@ class NodeScene(QGraphicsScene):
 
         return None
 
+    def _find_connection_between(self, a: SocketItem, b: SocketItem) -> Optional[Connection]:
+        """The single Connection wiring ``a`` to ``b`` — both an exec input
+        and an exec output are capped at one wire (enforce_connection_rules),
+        so this pair identifies at most one Connection regardless of which
+        end is "source" vs "dest" on it. Shared by _disconnect_exec_socket
+        and _update_drag_ghost's real-time splice hide/reveal."""
+        win = self.nodeEditorWindow
+        if not win:
+            return None
+        for c in win.connections:
+            if {c.source, c.dest} == {a, b}:
+                return c
+        return None
+
+    def _disconnect_exec_socket(self, source_socket: SocketItem, other: SocketItem) -> None:
+        """Removes the single Connection between ``source_socket`` and
+        ``other``."""
+        win = self.nodeEditorWindow
+        if not win:
+            return
+        conn = self._find_connection_between(source_socket, other)
+        if conn is not None:
+            if conn.scene():
+                self.removeItem(conn)
+            win.connections.remove(conn)
+            win.push_undo_state()
+
     def _cancel_connection_drag(self):
         if self._drag_preview_line:
             self.removeItem(self._drag_preview_line)
             self._drag_preview_line = None
+        # Whatever real Connection the splice preview stood in for gets its
+        # visibility back regardless of how the drag ends — if it's actually
+        # being replaced (splice succeeded), mouseReleaseEvent's own
+        # enforce_connection_rules call removes it properly right after this;
+        # otherwise (detached, cancelled) it simply stays exactly as it was.
+        self._set_splice_hidden(None)
+        # _update_drag_ghost may have pulled the source's ghost off its
+        # fixed hover spot to follow the cursor — always drop that override
+        # first (via _hide_ghost) so a re-show below (or the next plain
+        # hover) starts fresh at the fixed ghost_spawn_pos formula, not
+        # wherever this drag happened to leave it.
+        if self._drag_source is not None:
+            self._drag_source._hide_ghost()
         # The cursor is very likely still resting on the source socket right
         # after a release (no hoverEnterEvent fires again to tell us that —
-        # Qt already considers it "entered"), so re-show the ghost we hid in
-        # start_connection_drag instead of leaving it gone until the cursor
-        # happens to leave and re-enter.
+        # Qt already considers it "entered"), so re-show the ghost instead
+        # of leaving it gone until the cursor happens to leave and re-enter.
         if (self._drag_source is not None and self._drag_source.sock_def.is_exec
-                and self._drag_source._hovered):
+                and self._drag_source._hovered and not self._drag_source.is_connected()):
             self._drag_source._show_ghost()
         self._drag_active = False
         self._drag_source = None
+        self._drag_press_scene_pos = None
 
     def contextMenuEvent(self, event):
         view      = self.views()[0] if self.views() else None

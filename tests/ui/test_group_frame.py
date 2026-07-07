@@ -420,7 +420,7 @@ def test_color_picker_preset_swatches_have_white_hover_border():
     popup.hide()
 
 
-def test_only_header_does_not_paint_outer_border(window):
+def test_only_header_still_tints_the_outer_border(window):
     from PyQt5.QtWidgets import QStyleOptionGraphicsItem
     from PyQt5.QtGui import QImage, QPainter
     node = _param(window)
@@ -428,15 +428,14 @@ def test_only_header_does_not_paint_outer_border(window):
     img = QImage(260, 140, QImage.Format_ARGB32); img.fill(0)
     p = QPainter(img); opt = QStyleOptionGraphicsItem()
     node.paint(p, opt, None); p.end()
-    # Sample a pixel on the body's left edge (below the header) — should be the
-    # default border colour, not the picked red. Antialiasing blends the 1px
-    # border line with the canvas background; checking "not red" is enough to
-    # prove the body keeps the default scheme in only-header mode.
+    # Sample a pixel on the body's left edge (below the header) — the node's
+    # one overall border always follows the picked color's own tint
+    # (brightened_for_canvas), even in only-header scope, so the node still
+    # reads as "this color" from its silhouette alone. Only the body FILL
+    # and embedded widgets stay on the default scheme in this mode — the
+    # border itself is not "the body", it belongs to the whole node.
     edge_px = img.pixelColor(0, 60)
-    assert (edge_px.red(), edge_px.green(), edge_px.blue()) != (255, 0, 0)
-    # Red dominance would suggest the tint leaked onto the body border. The default
-    # border family is bluish, so blue > red is the property we lock in.
-    assert edge_px.blue() > edge_px.red()
+    assert edge_px.red() > edge_px.blue()
 
 
 def test_color_picker_only_header_toggle_re_emits_with_scope():

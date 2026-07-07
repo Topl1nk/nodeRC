@@ -4,6 +4,7 @@ All external dependencies, visual constants and layout dimensions live here and 
 """
 from __future__ import annotations
 
+import math
 import os
 
 # ── Custom-tint colour ramp (single source for "user picked a color X") ────────
@@ -132,10 +133,11 @@ CONNECTION_EXEC_SELECTED_WIDTH    = 3.5
 CONNECTION_PARAM_WIDTH            = 1.8
 CONNECTION_PARAM_SELECTED_WIDTH   = 2.2
 
-# ── Exec socket hover: grow + "+" glyph + ghost node preview ────────────────────
+# ── Exec socket hover: grow + "+"/"-" glyph + ghost node preview ────────────────
 SOCKET_EXEC_HOVER_GROW   = 3     # px added to an exec socket's radius while hovered
-SOCKET_PLUS_GLYPH_SCALE  = 0.55  # "+" arm half-length, as a fraction of the (grown) radius
-SOCKET_PLUS_GLYPH_WIDTH  = 1.6   # "+" stroke width
+SOCKET_PLUS_GLYPH_SCALE  = 0.55  # "+"/"-" arm half-length, as a fraction of the (grown) radius
+SOCKET_PLUS_GLYPH_WIDTH  = 1.6   # "+"/"-" stroke width
+SOCKET_MINUS_GLYPH_COLOR = "#04152B"  # "-" (disconnect) glyph color — "+" (spawn) keeps NODE_SELECTED_COLOR
 
 # _SocketGhostPreview (ui/graph_items.py) — a colorless (monochrome white)
 # node silhouette + wire, shown while hovering an exec socket, previewing
@@ -148,8 +150,13 @@ GHOST_NODE_GAP_CELLS     = 3     # gap between the source node's own edge and th
                                   # ghost's near edge, in grid cells (GRID_SIZE_SMALL
                                   # each) — computed at runtime, not baked in px, so
                                   # it stays correct if the grid size ever changes
-GHOST_NODE_WIDTH         = 160   # ghost placeholder width
-GHOST_NODE_HEIGHT        = NODE_HEADER_HEIGHT + NODE_ROW_HEIGHT  # header + one row
+# Both dimensions are snapped UP to the nearest grid-cell multiple, same as a
+# real node's own width/height (core/node_blueprint.py's _snap_dimension) —
+# the ghost is a preview of where a real (always grid-quantized) node will
+# land, so its own silhouette must obey that same rule instead of showing an
+# off-grid placeholder size.
+GHOST_NODE_WIDTH         = math.ceil(160 / GRID_SIZE_SMALL) * GRID_SIZE_SMALL   # ghost placeholder width
+GHOST_NODE_HEIGHT        = math.ceil((NODE_HEADER_HEIGHT + NODE_ROW_HEIGHT) / GRID_SIZE_SMALL) * GRID_SIZE_SMALL  # header + one row, grid-snapped
 GHOST_NODE_BORDER_WIDTH  = 1.5
 GHOST_NODE_FILL_RGBA     = (255, 255, 255, 18)   # body — near-invisible, a hint not a solid node
 GHOST_NODE_HEADER_RGBA   = (255, 255, 255, 45)   # header band — a little brighter than the body
@@ -157,6 +164,14 @@ GHOST_NODE_BORDER_RGBA   = (255, 255, 255, 90)
 GHOST_SOCKET_RGBA        = (255, 255, 255, 140)  # the facing socket's own outline — brightest of all
 GHOST_CONNECTION_RGBA    = (255, 255, 255, 90)
 GHOST_CONNECTION_WIDTH   = 1.8
+# Dragging a connection off an already-connected socket previews the ghost
+# node spliced in between both existing nodes (a wire to each) as long as
+# the cursor stays within this many px of the original straight source->far-
+# socket line (NodeScene._splice_still_attached) — beyond it (dragged far
+# away, or off at a sharp angle/"kink"), the splice preview — and the actual
+# far connection made on release — drops, leaving the ghost wired only to
+# the socket it was dragged from.
+GHOST_SPLICE_DETACH_DISTANCE = 40
 
 # ── Parameter typing ───────────────────────────────────────────────────────────
 # Command parameters whose name marks them as whole numbers, promoted from the
@@ -196,6 +211,13 @@ NODE_POPUP_Z = 100  # node z-value while its combobox popup is open — above si
 # brought to front by a drag (see NodeScene._next_node_z) — a drag-front counter
 # would need ~100k moves in one session to ever reach this.
 NODE_START_Z = 100_000.0
+# _SocketGhostPreview (ui/graph_items.py) is a top-level scene item (not a
+# node's child — Qt only orders children within their own parent's z-slot,
+# so a merely-high local z would still lose to a *different* top-level node
+# with a higher one, e.g. StartNode). This is always above every node,
+# including StartNode and a node mid-drag (NODE_DRAG_Z), so the ghost is
+# never hidden behind whatever it's hovering over or colliding with.
+GHOST_NODE_Z = NODE_START_Z + 1000.0
 
 # Child stacking inside a node, ascending. The selection wash sits above every
 # embedded widget yet below the sockets so connectors stay vivid when selected.
