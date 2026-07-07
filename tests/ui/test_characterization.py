@@ -15,23 +15,14 @@ from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QPointF, QEvent
 from PyQt5.QtGui import QFocusEvent
 
-from ui.editor_window import NodeEditorWindow
 from ui.graph_items import MetaNode, Connection
 from ui.param_nodes import (
-    ParamNode, StringParamNode, IntParamNode, EnumParamNode, PathParamNode,
+    ParamNode, StringParamNode, IntParamNode, EnumParamNode, FileParamNode,
 )
 from ui.command_nodes import CommandNode, StartNode
 from ui.graph_serialization import serialize_graph
 
-
-@pytest.fixture(scope="session")
-def app():
-    return QApplication.instance() or QApplication([])
-
-
-@pytest.fixture
-def window(app):
-    return NodeEditorWindow()
+# app/window fixtures moved to tests/ui/conftest.py (shared across the Qt suite)
 
 
 def _param(window, param_type, x=0, y=0, **extra):
@@ -75,14 +66,14 @@ def test_enum_custom_items_survive_state_roundtrip(window):
 
 def test_path_ext_filter_survives_state_roundtrip(window):
     path = _param(window, "filepath")
-    path._dir_editor.setText("C:/tmp")
+    path._dir_path_cache = "C:/tmp"
     path._ext_filter.setText("*.jpg")
 
     window.set_project_state(window.get_project_state())
 
-    restored = _nodes_of(window, PathParamNode)[0]
+    restored = _nodes_of(window, FileParamNode)[0]
     assert restored._ext_filter.text() == "*.jpg"
-    assert restored._dir_editor.text() == "C:/tmp"
+    assert restored._dir_path_cache == "C:/tmp"
 
 
 def test_enum_legacy_string_state_still_loads(window):
@@ -595,8 +586,8 @@ def test_graph_model_dict_roundtrip():
     assert d == restored.to_dict(include_selection=True)
 
 
-def test_core_chain_execution_has_no_qt_or_ui_deps():
-    _assert_importable_without_qt_or_ui("core.chain_execution")
+def test_core_graph_executor_has_no_qt_or_ui_deps():
+    _assert_importable_without_qt_or_ui("core.graph_executor")
 
 
 # ── duplicate param names: same-typed inputs a command's own docs don't
@@ -627,42 +618,16 @@ def test_command_node_def_gives_duplicate_named_params_unique_sockets():
     assert len(names) == len(set(names))
 
 
-def test_build_launch_tokens_resolves_duplicate_named_inputs_independently():
-    from core.graph_model import GraphModel, NodeModel, ConnectionModel
-    from core.chain_execution import build_exec_chain, build_launch_tokens
-    cmd_def = {
-        "command": "-exportModel", "display": "Export Model",
-        "required": [{"name": "filepath", "type": "filepath", "values": []},
-                     {"name": "filepath", "type": "filepath", "values": []}],
-        "optional": [],
-    }
-    graph = GraphModel(
-        nodes=[
-            NodeModel(uid="start", node_type="StartNode", x=0, y=0),
-            NodeModel(uid="cmd", node_type="CommandNode", x=100, y=0, cmd_def=cmd_def),
-            NodeModel(uid="a", node_type="StringParamNode", x=-100, y=0,
-                      socket_values={"value_out": "C:/first.obj"}),
-            NodeModel(uid="b", node_type="StringParamNode", x=-100, y=100,
-                      socket_values={"value_out": "C:/second.obj"}),
-        ],
-        connections=[
-            ConnectionModel(src_node_uid="start", src_socket="exec_out",
-                             dst_node_uid="cmd", dst_socket="__exec_in__"),
-            ConnectionModel(src_node_uid="a", src_socket="value_out",
-                             dst_node_uid="cmd", dst_socket="filepath"),
-            ConnectionModel(src_node_uid="b", src_socket="value_out",
-                             dst_node_uid="cmd", dst_socket="filepath_2"),
-        ],
-    )
-    chain = build_exec_chain(graph)
-    tokens = build_launch_tokens(chain, graph)
-    assert tokens[-2:] == ["C:/first.obj", "C:/second.obj"]
+# Chain-to-tokens resolution for duplicate-named inputs now lives in
+# tests/core/test_graph_executor.py (test_resolved_params_for_node_handles_
+# duplicate_named_inputs_independently) — core.chain_execution.build_launch_tokens
+# was replaced by core.graph_executor's segmented executor in Phase 5.
 
 
 # ── param type inference: axis suffix vs. lookalike words ──────────────────────
 
 def test_infer_param_type_distinguishes_real_axis_from_lookalike_words():
-    from core.rc_documentation_extractor import _infer_param_type
+    from packs.realitycapture.rc_documentation_extractor import _infer_param_type
     assert _infer_param_type("x") == "float"
     assert _infer_param_type("offsetX") == "float"
     assert _infer_param_type("rotateX") == "float"

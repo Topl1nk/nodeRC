@@ -2,8 +2,8 @@
 
 The interaction shell: keyboard routing, selection-wide commands, the undo
 stack, project dialogs and the dirty-state title. Graph snapshots live in
-graph_serialization, chain launching in chain_execution — the window only
-orchestrates them.
+graph_serialization, chain launching in core.graph_executor — the window
+only orchestrates them.
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (
     QApplication, QFileDialog, QMainWindow, QVBoxLayout, QWidget,
 )
 from PyQt5.QtGui import QCursor
-from PyQt5.QtCore import QEvent, QPoint, QPointF, Qt, QTimer
+from PyQt5.QtCore import QEvent, QPoint, QPointF, Qt, QThread, QTimer
 
 from localization import available_languages, get_language, set_language, t
 from configuration import (
@@ -33,15 +33,30 @@ from configuration import (
     DWMWCP_ROUND, DWMWCP_DONOTROUND, WINDOW_CORNER_RADIUS,
 )
 from ui.keymap import (
-    KEY_SPAWN_MENU, KEY_DELETE, KEY_SAVE, KEY_OPEN, KEY_NEW_TAB,
-    KEY_NEW_TAB_ALT, KEY_CLOSE_TAB, KEY_NEXT_TAB, KEY_EXECUTE,
+    KEY_SPAWN_MENU, KEY_DELETE, KEY_SAVE, KEY_OPEN, KEY_NEW_TAB, KEY_NEW_TAB_ALT,
+    KEY_DUPLICATE_TAB, KEY_CLOSE_TAB, KEY_CLOSE_OTHERS, KEY_CLOSE_RIGHT, KEY_CLOSE_LEFT,
+    KEY_REOPEN_TAB, KEY_NEXT_TAB, KEY_EXECUTE,
     KEY_COPY, KEY_PASTE, KEY_UNDO, KEY_REDO,
     KEY_TOGGLE_GRID, KEY_FIT_VIEW, KEY_FULLSCREEN,
     KEY_RENAME_NODE, KEY_SELECT_ALL, KEY_GROUP, KEY_DUPLICATE,
+    KEY_TOGGLE_PROJECT_INPUTS_PANEL, KEY_TOGGLE_PROJECT_INPUTS_PANEL_ALT,
     MOD_NONE, MOD_CTRL, MOD_CTRL_SHIFT,
 )
 from diagnostics import log_and_explain
-from core.command_database import load_command_database
+
+try:
+    # The realitycapture pack is optional like any other discovered pack
+    # (Доктрина III.1) — a system without it installed must still launch,
+    # not crash on this import, so the command palette just starts empty
+    # instead (still fully usable: any other installed pack still merges in
+    # below, and RC's own nodes simply aren't offered).
+    from packs.realitycapture.command_database import load_command_database
+except ImportError as _rc_import_error:
+    log_and_explain("RealityCapture pack not installed — command palette starts empty",
+                    _rc_import_error)
+
+    def load_command_database():
+        return {}, []
 
 from ui.view import GraphicsView
 from ui.scene import NodeScene
@@ -53,7 +68,12 @@ from ui.graph_serialization import (
     build_param_node, clear_graph, materialize_graph, payload_center,
     scene_to_graph_model, serialize_graph, try_apply_state_diff,
 )
-from core.chain_execution import build_exec_chain, build_launch_tokens, launch
+from ui.project_inputs_panel import ProjectInputsPanel
+from core.graph_executor import GraphExecutor, build_exec_chain
+from core.pack_catalog import flatten_commands, load_pack_catalog, merge_catalogs
+from core.pack_executor import build_executor_factory, pack_cacheable_lookup, pack_version_lookup
+from core.pack_registry import default_pack_search_dirs, discover_packs
+from ui.graph_execution_worker import GraphExecutionWorker
 from core import autosave, app_prefs, session
 from ui.flag_icon import language_flag_icon
 from ui.session_restore_dialog import SessionRestoreDialog
@@ -71,6 +91,18 @@ _HTCLIENT = 1
 _HTCAPTION = 2
 _HTLEFT, _HTRIGHT, _HTTOP, _HTBOTTOM = 10, 11, 12, 15
 _HTTOPLEFT, _HTTOPRIGHT, _HTBOTTOMLEFT, _HTBOTTOMRIGHT = 13, 14, 16, 17
+# Reported for the maximize button's own rect: this is the one hit-test
+# value that makes Windows 11 show its native Snap Layouts flyout on hover —
+# entirely DWM-driven once WM_NCHITTEST answers this consistently, nothing
+# else to draw. WM_NCLBUTTONDOWN/UP carry it back as wParam once we do.
+_HTMAXBUTTON = 9
+_WM_NCLBUTTONDOWN = 0x00A1
+_WM_NCLBUTTONUP = 0x00A2
+# Windows' native caption-drag modal loop starts on WM_NCLBUTTONDOWN(HTCAPTION)
+# and ends on WM_EXITSIZEMOVE — the only two messages left for us to see
+# either side of it, since DefWindowProc owns everything in between (see
+# NodeEditorWindow._native_caption_drag_active).
+_WM_EXITSIZEMOVE = 0x0232
 
 
 class NodeEditorWindow(QMainWindow):
@@ -92,11 +124,47 @@ class NodeEditorWindow(QMainWindow):
             apply_immersive_dark_mode(self)
             extend_frame_into_client_area(self)
 
+        installed_packs = discover_packs(default_pack_search_dirs())
+
+        # RealityCapture keeps its own richer loader (falls back to a small
+        # built-in command set when no local RC docs were parsed — see
+        # packs/realitycapture/command_database.py). Any other installed
+        # pack contributes only what its own commands_source JSON declares
+        # (core/pack_catalog.py) — no pack Python code runs to build the
+        # palette (Доктрина III.1: only core/pack_executor.py ever runs a
+        # pack's code, and only in its own process).
         self.command_categories, self.command_defs = load_command_database()
+        other_packs = [p for p in installed_packs if p.manifest.pack_id != "realitycapture"]
+        if other_packs:
+            extra_categories = merge_catalogs(*(load_pack_catalog(p) for p in other_packs))
+            self.command_categories = merge_catalogs(self.command_categories, extra_categories)
+            self.command_defs = self.command_defs + flatten_commands(extra_categories)
+
+        # Segment-by-pack incremental execution (Доктрина V) — one
+        # GraphExecutor per window, its cache lives for the process lifetime
+        # (see core/graph_executor.py's own docstring on why not on disk yet).
+        self._graph_executor = GraphExecutor(
+            executor_factory=build_executor_factory(installed_packs),
+            pack_version_for=pack_version_lookup(installed_packs),
+            is_pack_cacheable=pack_cacheable_lookup(installed_packs),
+        )
+        # Set only while execute_chain()'s worker/thread are alive — see
+        # _on_execution_finished/_on_execution_failed, which both clear it.
+        self._execution_thread: Optional[QThread] = None
+        self._execution_worker: Optional[GraphExecutionWorker] = None
 
         self._linked_group: List[MetaNode] = []      # selected same-type nodes under linked editing
         self._active_field_key: Optional[str] = None  # which field key the linked group mirrors
         self._focus_event_counter: int = 0            # serializes focus in/out to settle the active group
+        # True from a native caption drag's WM_NCLBUTTONDOWN(HTCAPTION) to
+        # its WM_EXITSIZEMOVE — see nativeEvent's handling of both. Windows
+        # drives the entire drag itself in that window (DefWindowProc's own
+        # modal move loop; our own mouseMoveEvent/mouseReleaseEvent in
+        # title_bar.py never run), so this is the only way to notice the
+        # drag ended and still offer the custom bottom-of-screen snap zone
+        # (_snap_to_edge_if_dropped_there) — a resize's own WM_EXITSIZEMOVE
+        # must NOT trigger it, hence tracking specifically a caption drag.
+        self._native_caption_drag_active: bool = False
 
         central = QWidget()
         central.setObjectName("centralWidget")
@@ -109,7 +177,15 @@ class NodeEditorWindow(QMainWindow):
         layout.addWidget(self.title_bar)
 
         self.view = GraphicsView()
-        layout.addWidget(self.view)
+        layout.addWidget(self.view, 1)
+
+        # Floats above the view instead of sharing a layout row with it — see
+        # ProjectInputsPanel's docstring for why (dock-area/title-bar
+        # collision, and a layout-managed panel resizing the view — and
+        # re-tiling the whole visible scene — on every show/hide).
+        self.project_inputs_panel = ProjectInputsPanel(self, central)
+        self.project_inputs_panel.raise_()
+        self._reposition_project_inputs_panel()
 
         # A session is a folder of per-tab autosave snapshots (core/session.py
         # + core/autosave.py) — this run gets its own fresh folder to write
@@ -320,6 +396,8 @@ class NodeEditorWindow(QMainWindow):
         # A dirty tab keeps its unsaved-edit mark; a clean one just reflects
         # whatever was last snapshotted (in sync with disk).
         self._set_dirty(dirty)
+        if tab is self.active_tab:
+            self.project_inputs_panel.reload()
         return tab
 
     # ── Tabs ──────────────────────────────────────────────────────────────────
@@ -361,6 +439,7 @@ class NodeEditorWindow(QMainWindow):
         self.view.setScene(tab.scene)
         self._update_title()
         self.title_bar.tab_strip.refresh_active(tab)
+        self.project_inputs_panel.reload()
 
     def switch_to_adjacent_tab(self, direction: int):
         """Ctrl+Tab / Ctrl+Shift+Tab — cycle to the next/previous project, wrapping around."""
@@ -393,6 +472,7 @@ class NodeEditorWindow(QMainWindow):
         elif was_active:
             self.active_tab = self.tabs[-1]
             self.view.setScene(self.active_tab.scene)
+            self.project_inputs_panel.reload()
         self._update_title()
         self._refresh_tab_strip()
 
@@ -415,6 +495,13 @@ class NodeEditorWindow(QMainWindow):
         if tab not in self.tabs:
             return
         for other in self.tabs[self.tabs.index(tab) + 1:]:
+            self.close_tab(other)
+
+    def close_tabs_to_the_left(self, tab: ProjectTab):
+        if tab not in self.tabs:
+            return
+        # Copy the slice because closing a tab removes it from self.tabs
+        for other in self.tabs[:self.tabs.index(tab)][:]:
             self.close_tab(other)
 
     def duplicate_tab(self, tab: ProjectTab):
@@ -586,6 +673,41 @@ class NodeEditorWindow(QMainWindow):
                         return True, 0
                     return True, 0
 
+                # Once WM_NCHITTEST reports HTMAXBUTTON for the maximize
+                # button's rect (see _hit_test_native_message), Windows
+                # treats clicks there as non-client messages instead of
+                # ordinary ones — the button's own Qt click handler never
+                # fires for them, so the actual toggle has to happen here.
+                if msg.message == _WM_NCLBUTTONUP and msg.wParam == _HTMAXBUTTON:
+                    self.title_bar._toggle_maximize()
+                    return True, 0
+                if msg.message == _WM_NCLBUTTONDOWN and msg.wParam == _HTMAXBUTTON:
+                    return True, 0  # consumed; the actual toggle happens on button-up, like a normal click
+
+                # Observe only — must NOT consume this one, or Windows never
+                # starts its own native caption-drag loop at all (see
+                # _native_caption_drag_active's docstring in __init__). Also
+                # the one point to catch "picked a bottom-snapped window back
+                # up to drag it": that click hits HTCAPTION and goes straight
+                # to DefWindowProc's native loop, bypassing TitleBarWidget's
+                # own mousePressEvent entirely (same reason WM_EXITSIZEMOVE
+                # was needed for the bottom-drop zone itself).
+                if msg.message == _WM_NCLBUTTONDOWN and msg.wParam == _HTCAPTION:
+                    self._native_caption_drag_active = True
+                    x = ctypes.c_short(msg.lParam & 0xFFFF).value
+                    y = ctypes.c_short((msg.lParam >> 16) & 0xFFFF).value
+                    self.title_bar._begin_drag_unsnapping_bottom(QPoint(x, y))
+
+                if msg.message == _WM_EXITSIZEMOVE and self._native_caption_drag_active:
+                    self._native_caption_drag_active = False
+                    # Only the bottom zone, not the full
+                    # _snap_to_edge_if_dropped_there: Aero Snap already
+                    # handled top/left/right natively for this drag before
+                    # WM_EXITSIZEMOVE ever fired, so re-running those would
+                    # double-apply on top of what Windows just did — bottom
+                    # is the one zone with no native equivalent.
+                    self.title_bar._snap_to_bottom_if_dropped_there(QCursor.pos())
+
                 result = self._hit_test_native_message(int(message))
                 if result is not None:
                     return True, result
@@ -612,6 +734,14 @@ class NodeEditorWindow(QMainWindow):
         y = ctypes.c_short((msg.lParam >> 16) & 0xFFFF).value
         local = self.mapFromGlobal(QPoint(x, y))
 
+        # Cleared by default — the one branch below that finds the cursor
+        # genuinely over the maximize button sets it back to True before
+        # returning HTMAXBUTTON. Every early return past this point (full
+        # screen, below the title bar, elsewhere in the title bar) means
+        # "not hovering it" just as much as an explicit miss would, so this
+        # covers all of them from one place instead of every return site.
+        self.title_bar.set_max_button_native_hover(False)
+
         if self.isFullScreen():
             return None
 
@@ -623,6 +753,22 @@ class NodeEditorWindow(QMainWindow):
         if 0 <= local.y() < TITLE_BAR_HEIGHT:
             tb_pos = self.title_bar.mapFrom(self, local)
             if self.title_bar.rect().contains(tb_pos):
+                # Reporting HTMAXBUTTON for the maximize button's own rect —
+                # not just letting it fall through to a plain HTCLIENT click
+                # like every other title bar control — is what makes Windows
+                # 11 show its native Snap Layouts flyout on hover; DWM does
+                # the rest, nothing else to draw for that part. But it also
+                # means Windows stops delivering ordinary mouse-move/click
+                # there as client-area messages, so the button's own Qt
+                # :hover paint state has to be kept in sync by hand (see
+                # set_max_button_native_hover) and the actual toggle has to
+                # be wired to WM_NCLBUTTONUP instead of the button's click
+                # signal (see nativeEvent).
+                max_btn = self.title_bar.max_btn
+                over_max_btn = max_btn.rect().contains(max_btn.mapFrom(self.title_bar, tb_pos))
+                if over_max_btn:
+                    self.title_bar.set_max_button_native_hover(True)
+                    return _HTMAXBUTTON
                 # Only claim the drag region natively when NOT maximized. A
                 # maximized frameless window never gets the real Win32
                 # WS_MAXIMIZE style, so Windows' native "drag the caption to
@@ -729,17 +875,29 @@ class NodeEditorWindow(QMainWindow):
         elif key == KEY_OPEN and mods == MOD_CTRL:
             self.load_project()
             event.accept()
-        elif key == KEY_NEW_TAB and mods == MOD_CTRL:
-            self.new_tab()
-            event.accept()
-        elif key == KEY_NEW_TAB and mods == MOD_CTRL_SHIFT:
-            self.reopen_closed_tab()
-            event.accept()
         elif key == KEY_NEW_TAB_ALT and mods == MOD_CTRL:
             self.new_tab()
             event.accept()
-        elif key == KEY_CLOSE_TAB and mods == MOD_CTRL:
+        elif key == KEY_NEW_TAB and mods == MOD_CTRL_SHIFT:
+            self.new_tab()
+            event.accept()
+        elif key == KEY_DUPLICATE_TAB and mods == MOD_CTRL_SHIFT:
+            self.duplicate_tab(self.active_tab)
+            event.accept()
+        elif key == KEY_CLOSE_TAB and mods == MOD_CTRL_SHIFT:
             self.close_tab(self.active_tab)
+            event.accept()
+        elif key == KEY_CLOSE_OTHERS and mods == MOD_CTRL_SHIFT:
+            self.close_other_tabs(self.active_tab)
+            event.accept()
+        elif key == KEY_CLOSE_RIGHT and mods == MOD_CTRL_SHIFT:
+            self.close_tabs_to_the_right(self.active_tab)
+            event.accept()
+        elif key == KEY_CLOSE_LEFT and mods == MOD_CTRL_SHIFT:
+            self.close_tabs_to_the_left(self.active_tab)
+            event.accept()
+        elif key == KEY_REOPEN_TAB and mods == MOD_CTRL_SHIFT:
+            self.reopen_closed_tab()
             event.accept()
         elif key == KEY_NEXT_TAB and mods == MOD_CTRL:
             self.switch_to_adjacent_tab(1)
@@ -792,6 +950,14 @@ class NodeEditorWindow(QMainWindow):
             event.accept()
         elif key == KEY_DUPLICATE and mods == MOD_CTRL:
             self.duplicate_nodes()
+            event.accept()
+        elif key == KEY_TOGGLE_PROJECT_INPUTS_PANEL and mods == MOD_CTRL:
+            panel = self.project_inputs_panel
+            panel.setVisible(not panel.isVisibleTo(self))
+            event.accept()
+        elif key == KEY_TOGGLE_PROJECT_INPUTS_PANEL_ALT and mods == MOD_NONE:
+            panel = self.project_inputs_panel
+            panel.setVisible(not panel.isVisibleTo(self))
             event.accept()
         elif key == KEY_FULLSCREEN:
             if self.isFullScreen():
@@ -1036,6 +1202,7 @@ class NodeEditorWindow(QMainWindow):
             self._set_dirty(True, state=state)
         else:
             self._write_tab_snapshot(tab, state)
+        self.project_inputs_panel.reload()
 
     def undo(self):
         tab = self.active_tab
@@ -1062,8 +1229,10 @@ class NodeEditorWindow(QMainWindow):
         expand/collapse) that the fast path declines to touch.
         """
         if try_apply_state_diff(self.scene, self.connections, current_state, target_state):
+            self.project_inputs_panel.reload()
             return
         self.set_project_state(target_state)
+        self.project_inputs_panel.reload()
 
     # ── Window title and language ─────────────────────────────────────────────
 
@@ -1117,6 +1286,30 @@ class NodeEditorWindow(QMainWindow):
             for item in tab.scene.items():
                 if isinstance(item, (MetaNode, GroupFrameItem)):
                     item.retranslate()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reposition_project_inputs_panel()
+
+    def leaveEvent(self, event):
+        # Safety net for the maximize button's native-hover flag (see
+        # _hit_test_native_message): once the cursor leaves the window
+        # entirely, WM_NCHITTEST stops arriving for it altogether, so the
+        # "cleared by default on every hit test" logic there never gets a
+        # last call to actually clear it.
+        self.title_bar.set_max_button_native_hover(False)
+        super().leaveEvent(event)
+
+    def _reposition_project_inputs_panel(self):
+        """Keep the floating panel pinned to the view's left edge, full height.
+
+        Only y/height ever come from the window — width is whatever the user
+        last dragged the resize grip to (see ProjectInputsPanel/_ResizeGrip),
+        untouched here.
+        """
+        panel = self.project_inputs_panel
+        top = self.title_bar.height()
+        panel.setGeometry(0, top, panel.width(), self.centralWidget().height() - top)
 
     def changeEvent(self, event):
         if event.type() == QEvent.WindowStateChange:
@@ -1213,17 +1406,57 @@ class NodeEditorWindow(QMainWindow):
     # ── Chain execution ───────────────────────────────────────────────────────
 
     def execute_chain(self):
+        if self._execution_thread is not None:
+            return  # already running — the launch button is disabled meanwhile, this is belt-and-suspenders
         graph = scene_to_graph_model(self.scene, self.connections)
         chain = build_exec_chain(graph)
         if not chain or len(chain) < 2:
             MessageDialog.warning(self, t("dialog_incomplete_chain_title"),
                                 t("msg_incomplete_chain_desc"))
             return
-        tokens = build_launch_tokens(chain, graph)
-        try:
-            launch(tokens)
-        except Exception as exc:
+
+        self._execution_worker = GraphExecutionWorker(self._graph_executor, graph)
+        self._execution_thread = QThread(self)
+        self._execution_worker.moveToThread(self._execution_thread)
+        self._execution_thread.started.connect(self._execution_worker.run)
+        self._execution_worker.finished.connect(self._on_execution_finished)
+        self._execution_worker.failed.connect(self._on_execution_failed)
+        self._execution_worker.finished.connect(self._execution_thread.quit)
+        self._execution_worker.failed.connect(self._execution_thread.quit)
+        self._execution_thread.finished.connect(self._cleanup_execution_thread)
+        self._set_launch_controls_running(True)
+        self._execution_thread.start()
+
+    def cancel_chain_execution(self):
+        """Not wired to any control yet — a future run-tracking UI (once
+        there's more than one pack to juggle) will call this. The mechanism
+        it needs already works: GraphExecutionWorker.cancel_event reaches
+        core/pack_executor.py's poll loop, which kills the pack's whole
+        process tree, not just stops waiting for it."""
+        if self._execution_worker is not None:
+            self._execution_worker.cancel_event.set()
+
+    def _on_execution_finished(self, runs):
+        failed = next((run for run in runs if not run.result.ok), None)
+        if failed:
             MessageDialog.critical(
                 self, t("dialog_launch_error_title"),
-                log_and_explain(t("msg_launch_failed"), exc),
+                log_and_explain(t("msg_launch_failed"), RuntimeError(failed.result.error)),
             )
+
+    def _on_execution_failed(self, exc):
+        MessageDialog.critical(
+            self, t("dialog_launch_error_title"),
+            log_and_explain(t("msg_launch_failed"), exc),
+        )
+
+    def _cleanup_execution_thread(self):
+        self._execution_thread = None
+        self._execution_worker = None
+        self._set_launch_controls_running(False)
+
+    def _set_launch_controls_running(self, running: bool) -> None:
+        for tab in self.tabs:
+            start_node = next((i for i in tab.scene.items() if isinstance(i, StartNode)), None)
+            if start_node:
+                start_node.set_launch_running(running)

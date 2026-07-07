@@ -1,0 +1,13 @@
+{
+    "pack_id": "realitycapture",
+    "display_name": "RealityCapture",
+    "version": "1.0.0",
+    "protocol_version": 1,
+    "entry_point": "rc_pack.py",
+    "commands_source": "rc_commands.json",
+    "declares": {
+        "executable": true,
+        "filesystem": ["read", "write"],
+        "network": false
+    }
+}

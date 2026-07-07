@@ -279,12 +279,12 @@ def dedupe_param_name(base_name: str, seen: Dict[str, int]) -> str:
     the generic "filepath"; -setSelectedClassAsGroundForDTM's "true OR false"
     repeated is genuinely nameless). Without this, two sockets sharing one
     name collide in the name-keyed socket dict (ui/graph_items.py) and in
-    connection-value resolution (chain_execution.py's connections_to) — a
-    wire feeding either one can't be told apart from a wire feeding the
+    connection-value resolution (core/graph_executor.py's connections_to) —
+    a wire feeding either one can't be told apart from a wire feeding the
     other, so RC launches with whichever value happened to win the
-    collision, silently dropping the other input. chain_execution.py calls
-    this same helper, in the same param order, to keep its resolution keys
-    in sync with these socket names.
+    collision, silently dropping the other input. core/graph_executor.py
+    calls this same helper, in the same param order, to keep its resolution
+    keys in sync with these socket names.
     """
     occurrence = seen.get(base_name, 0) + 1
     seen[base_name] = occurrence

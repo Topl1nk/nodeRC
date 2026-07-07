@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (
     QFileDialog, QGraphicsItem, QGraphicsProxyWidget, QHBoxLayout, QLabel,
     QLineEdit, QSpinBox, QToolButton, QVBoxLayout, QWidget,
 )
-from PyQt5.QtGui import QColor, QDoubleValidator, QPalette
+from PyQt5.QtGui import QDoubleValidator
 from PyQt5.QtCore import QEvent, Qt, QTimer
 
 from localization import resolve_default_title, t
@@ -25,14 +25,12 @@ from configuration import (
     NODE_WIDGET_V_OFFSET, NODE_WIDGET_HEIGHT, NODE_LINKED_FIELD_Z,
     NODE_WIDGET_Z_BASE, BROWSE_BTN_WIDTH, TEXT_COLOR,
 )
-from ui.theme import (
-    FIELD_QSS, COMBOBOX_QSS, SPINBOX_QSS, TOOLBTN_QSS, VECTOR_AXIS_LABEL_QSS,
-    apply_field_placeholder_palette,
-)
+from ui.theme import TOOLBTN_QSS, VECTOR_AXIS_LABEL_QSS
 from core.node_blueprint import (
     NodeDef, PARAM_TITLE_KEY, SocketDef, html_title, param_node_def, resolve_color_schema,
 )
-from ui.graph_items import MetaNode, NodeComboBox, editor_window_of, InsetFillCheckBox
+from ui.graph_items import MetaNode, editor_window_of, selected_of_type_including
+from ui.value_widgets import build_checkbox, build_combobox, build_spinbox, build_text_field
 from diagnostics import log_and_explain
 
 
@@ -76,6 +74,22 @@ class ParamNode(MetaNode):
         none. Not folded into retranslate() itself so a subclass can extend
         it without also having to reimplement the title-resolution above."""
 
+    def _toggle_project_input(self):
+        # Multi-select applies the clicked node's own target state to every
+        # selected param node — the same "self decides the direction"
+        # convention the color picker's multi-node apply_scope_to_all uses —
+        # rather than only ever touching the single node under the cursor.
+        target = not self.is_project_input()
+        for node in selected_of_type_including(self, ParamNode):
+            node.set_project_input(target, record_undo=False)
+        win = editor_window_of(self)
+        if win:
+            win.push_undo_state()
+
+    def _extra_context_actions(self) -> list:
+        label = t("ctx_project_input_off") if self.is_project_input() else t("ctx_project_input_on")
+        return [(label, self._toggle_project_input, True)]
+
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.LeftButton:
             self._begin_rename()
@@ -99,78 +113,34 @@ class ParamNode(MetaNode):
     def _widget_width(self) -> int:
         return self.node_def.width - NODE_HORIZONTAL_PAD * 2 - 4
 
+    # The widgets themselves are built by ui/value_widgets.py — the same
+    # functions the Project Inputs panel calls for its rows (ст.1.1: one
+    # place knows what a "string field"/"bool checkbox" looks like). These
+    # wrappers just supply this node's own preferred width.
+
     def _make_field(self, text: str = "", placeholder: str = "", *,
                     fixed_width: bool = True) -> QLineEdit:
-        w = QLineEdit(text)
-        if placeholder:
-            w.setPlaceholderText(placeholder)
-        if fixed_width:
-            w.setFixedWidth(self._widget_width())
-        w.setFixedHeight(NODE_WIDGET_HEIGHT)
-        w.setStyleSheet(FIELD_QSS)
-        apply_field_placeholder_palette(w)
-        return w
+        return build_text_field(text, placeholder,
+                                width=self._widget_width() if fixed_width else None)
 
     def _make_combobox(self, items: List[str] = None, *, placeholder: str = "",
                        fixed_width: bool = True, editable: bool = True) -> QComboBox:
-        w = NodeComboBox(self)
-        w.setEditable(editable)
-        for item in (items or []):
-            w.addItem(item)
-        if placeholder and w.lineEdit():
-            # Every other field in this family (_make_field, the search bar)
-            # sets its placeholder text *before* the palette patch below —
-            # a stylesheet-styled QLineEdit only fully repaints from Qt's own
-            # QSS-derived colours the first time it's asked to paint actual
-            # placeholder content, so patching first and setting the text
-            # after (as PathParamNode's file combo used to do, calling
-            # lineEdit().setPlaceholderText() on the widget this returned)
-            # leaves exactly that one field's placeholder stuck on the
-            # stale/black colour. Keeping the same order here as everywhere
-            # else in the family closes that gap for good.
-            w.lineEdit().setPlaceholderText(placeholder)
-        if fixed_width:
-            w.setFixedWidth(self._widget_width())
-        w.setFixedHeight(NODE_WIDGET_HEIGHT)
-        w.setStyleSheet(COMBOBOX_QSS)
-        apply_field_placeholder_palette(w)
-        pal = w.palette()
-        pal.setColor(QPalette.ButtonText, QColor(TEXT_COLOR))
-        w.setPalette(pal)
-        return w
+        return build_combobox(self, items, placeholder=placeholder,
+                              width=self._widget_width() if fixed_width else None,
+                              editable=editable)
 
     def _make_spinbox(self, lo: int = -999999, hi: int = 999999,
                       value: int = 0, *, fixed_width: bool = True) -> QSpinBox:
-        w = QSpinBox()
-        # Native up/down arrows are QStyle sub-controls painted *inside* the
-        # widget's own border, overlapping its right edge instead of living in
-        # their own space — the opposite of every other button in this app.
-        # _make_stepper() below builds the replacement: two separate square
-        # buttons that sit outside the field, the same way Enum's +/- do.
-        w.setButtonSymbols(QAbstractSpinBox.NoButtons)
-        w.setRange(lo, hi)
-        w.setValue(value)
-        if fixed_width:
-            w.setFixedWidth(self._widget_width())
-        w.setFixedHeight(NODE_WIDGET_HEIGHT)
-        w.setStyleSheet(SPINBOX_QSS)
-        apply_field_placeholder_palette(w)
-        pal = w.palette()
-        pal.setColor(QPalette.ButtonText, QColor(TEXT_COLOR))
-        w.setPalette(pal)
-        return w
+        return build_spinbox(lo, hi, value, width=self._widget_width() if fixed_width else None)
 
     def _make_checkbox(self, text: str = "true", checked: bool = False) -> QCheckBox:
-        w = InsetFillCheckBox(text)
-        w.setChecked(checked)
-        w.setFixedWidth(self._widget_width())
-        w.setFixedHeight(NODE_WIDGET_HEIGHT)
-        return w
+        return build_checkbox(text, checked, width=self._widget_width())
 
     def _make_toolbtn(self, text: str, callback=None) -> QToolButton:
         w = QToolButton()
         w.setText(text)
         w.setStyleSheet(TOOLBTN_QSS)
+        w.setFocusPolicy(Qt.NoFocus)
         w.setFixedWidth(BROWSE_BTN_WIDTH)
         w.setFixedHeight(NODE_WIDGET_HEIGHT)
         if callback:
@@ -268,6 +238,11 @@ class ParamNode(MetaNode):
     def _notify_connections_changed(self, *args):
         self._propagate_connections_changed(set())
         self._broadcast_to_linked_peers()
+        if self.is_project_input():
+            win = editor_window_of(self)
+            panel = getattr(win, "project_inputs_panel", None) if win else None
+            if panel:
+                panel.refresh_node(self)
 
     # ── Linked mass-editing ───────────────────────────────────────────────────
     #
@@ -291,8 +266,18 @@ class ParamNode(MetaNode):
 
     def _watch_field_focus(self, widget: QWidget):
         for w in (widget, *widget.findChildren(QWidget)):
-            if isinstance(w, (QLineEdit, QComboBox, QAbstractSpinBox, QAbstractButton)):
-                w.installEventFilter(self)
+            if not isinstance(w, (QLineEdit, QComboBox, QAbstractSpinBox, QAbstractButton)):
+                continue
+            if w.focusPolicy() == Qt.NoFocus:
+                # eventFilter enters linked-editing on MouseButtonPress but
+                # only ever exits it on a later FocusOut — a NoFocus widget
+                # (EnumParamNode's "+"/"-" QToolButtons, via _make_toolbtn)
+                # can never receive focus in the first place, so it can
+                # never emit that FocusOut: the selection wash it triggered
+                # on click would stay lit forever. A one-shot action button
+                # isn't a "field" this mechanism was ever meant to cover.
+                continue
+            w.installEventFilter(self)
 
     def _owns_widget(self, widget: Optional[QWidget]) -> bool:
         if widget is None:
@@ -639,7 +624,8 @@ class VectorParamNode(ParamNode):
         # toggle, easier to hit than the tiny button.
         label = t("ctx_merge_vector") if self._split else t("ctx_split_vector")
         base_name = next(iter(self._vector_buttons), "components")
-        return [(label, lambda: self.toggle_vector_expansion(base_name), True)]
+        return [(label, lambda: self.toggle_vector_expansion(base_name), True),
+                *super()._extra_context_actions()]
 
 
 class _SingleFieldParamNode(ParamNode):
@@ -747,6 +733,7 @@ class EnumParamNode(ParamNode):
             title=html_title(param_name),
             header_color=schema["hdr"],
             body_color=schema["body"],
+            width=200,
             sockets=[
                 # value_out sits alone at row 0 — the same convention every
                 # other param node uses (output first, right after the
@@ -876,66 +863,84 @@ class EnumParamNode(ParamNode):
         return self._combobox.currentText()
 
 
-class PathParamNode(ParamNode):
-    TYPE_ID = "path"
+class DirParamNode(ParamNode):
+    TYPE_ID = "dirpath"
 
-    def __init__(self, param_name=None, param_type: str = "filepath"):
+    def __init__(self, param_name=None):
         if param_name is None:
-            param_name = t("param_path_title")
-        dir_schema    = resolve_color_schema("dirpath")
-        file_schema   = resolve_color_schema("filepath")
+            param_name = "Folder"
+        super().__init__(param_node_def(param_name, self.TYPE_ID))
+        
+        self._dir_editor = self._make_field(placeholder=t("param_path_dir_placeholder"), fixed_width=False)
+        self._dir_editor.textChanged.connect(self._notify_connections_changed)
+        self._dir_editor.editingFinished.connect(self._on_widget_user_edit)
+        
+        self._attach_widget_at_row(self._row_container(
+            [self._dir_editor, self._make_toolbtn("…", self._browse_for_folder)]), 1)
+            
+    def _browse_for_folder(self):
+        path = QFileDialog.getExistingDirectory(None, t("dialog_select_folder"), self._dir_editor.text())
+        if path:
+            self._dir_editor.setText(path)
+            self._on_widget_user_edit()
+
+    def get_value_state(self) -> Any:
+        return {"dir": self._dir_editor.text()}
+
+    def set_value_state(self, val: Any):
+        if isinstance(val, dict):
+            self._dir_editor.setText(val.get("dir", ""))
+        else:
+            self._dir_editor.setText(str(val))
+
+    def get_value(self, socket_name: str = None) -> str:
+        return self._dir_editor.text().strip().replace("\\", "/")
+
+    def _apply_linked_sync(self, source_node: ParamNode, active_key: Optional[str]):
+        if active_key == "row_1":
+            self._dir_editor.setText(source_node._dir_editor.text())
+
+
+class FileParamNode(ParamNode):
+    TYPE_ID = "filepath"
+
+    def __init__(self, param_name=None):
+        if param_name is None:
+            param_name = "File"
+            
+        file_schema = resolve_color_schema("filepath")
         string_schema = resolve_color_schema("string")
-
-        # Two distinct output rows: the folder output at row 0, the file
-        # output directly beneath it at row 1. Both share the same pink
-        # (filepath) socket color so they read as one family of outputs.
-        dirpath_socket = SocketDef("dirpath_out", "output", row=0, label="folder path",
-                                   color=file_schema["socket"], param_type="dirpath")
-        filepath_socket = SocketDef("path_out", "output", row=1, label="file path",
-                                    color=file_schema["socket"], param_type="filepath")
-        # This node always exposes both outputs, but MetaNode paints its header
-        # from whichever non-exec output socket comes first in the list — order
-        # them so a node created for a specific type (auto-create, or an
-        # explicit filepath/dirpath pick) actually gets that type's color
-        # instead of always landing on dirpath's.
-        ordered_sockets = ([dirpath_socket, filepath_socket] if param_type == "dirpath"
-                           else [filepath_socket, dirpath_socket])
-
+        dir_schema = resolve_color_schema("dirpath")
+        
         node_def = NodeDef(
             title=html_title(param_name),
-            header_color=dir_schema["hdr"],
-            body_color=dir_schema["body"],
+            header_color=file_schema["hdr"],
+            body_color=file_schema["body"],
+            width=200,
             sockets=[
-                # Rows 2-4 shift down one slot to make room for the file path
-                # output row above them.
-                SocketDef("dirpath_in", "input", row=2, label="",
-                          color=file_schema["socket"], param_type="dirpath",
+                SocketDef("path_out", "output", row=0, label="file path",
+                          color=file_schema["socket"], param_type="filepath"),
+                SocketDef("dirpath_in", "input", row=1, label="dirpath",
+                          color=dir_schema["socket"], param_type="dirpath",
                           optional=True),
-                SocketDef("filename", "input", row=3, label="",
+                SocketDef("filename", "input", row=2, label="",
                           color=string_schema["socket"], param_type="string",
                           optional=True),
-                SocketDef("filetype", "input", row=4, label="",
+                SocketDef("filetype", "input", row=3, label="",
                           color=string_schema["socket"], param_type="string",
                           optional=True),
-                *ordered_sockets,
             ],
-            width=260,
             has_footer=False,
             plain_title=param_name,
         )
         super().__init__(node_def)
-
+        
+        self._dir_path_cache = "" 
+        
         self._ext_filter = self._make_field("", t("param_path_ext_placeholder"))
-        self._ext_filter.textChanged.connect(
-            lambda: self._on_dir_changed(self._dir_editor.text())
-        )
+        self._ext_filter.textChanged.connect(self._refresh_file_list)
         self._ext_filter.textChanged.connect(self._notify_connections_changed)
         self._ext_filter.editingFinished.connect(self._on_widget_user_edit)
-
-        self._dir_editor = self._make_field(placeholder=t("param_path_dir_placeholder"), fixed_width=False)
-        self._dir_editor.textChanged.connect(self._on_dir_changed)
-        self._dir_editor.textChanged.connect(self._notify_connections_changed)
-        self._dir_editor.editingFinished.connect(self._on_widget_user_edit)
 
         self._file_combo = self._make_combobox(placeholder=t("param_path_file_placeholder"))
         self._file_combo.currentTextChanged.connect(self._notify_connections_changed)
@@ -943,47 +948,32 @@ class PathParamNode(ParamNode):
         if self._file_combo.lineEdit():
             self._file_combo.lineEdit().editingFinished.connect(self._on_widget_user_edit)
 
-        # Every row is a single wrapper QWidget primitive holding its leaves. Uniform
-        # structure means colour recoloring walks identical containers for each row;
-        # otherwise a bare leaf like the combobox can lose its proxy widget reference
-        # and silently skip the recolour pass.
-        self._attach_widget_at_row(self._row_container(
-            [self._dir_editor, self._make_toolbtn("…", self._browse_for_folder)]), 2)
-        self._attach_widget_at_row(self._row_container([self._file_combo]), 3)
-        self._attach_widget_at_row(self._row_container([self._ext_filter]), 4)
+        self._attach_widget_at_row(self._row_container([self._file_combo]), 2)
+        self._attach_widget_at_row(self._row_container([self._ext_filter]), 3)
 
     def _retranslate_widgets(self):
         self._ext_filter.setPlaceholderText(t("param_path_ext_placeholder"))
-        self._dir_editor.setPlaceholderText(t("param_path_dir_placeholder"))
         if self._file_combo.lineEdit():
             self._file_combo.lineEdit().setPlaceholderText(t("param_path_file_placeholder"))
 
-    def _browse_for_folder(self):
-        path = QFileDialog.getExistingDirectory(None, t("dialog_select_folder"), self._dir_editor.text())
-        if path:
-            self._dir_editor.setText(path)
-            self._on_widget_user_edit()
-
     def _update_connected_values(self):
         connected_dir = self._get_connected_input_value("dirpath_in")
-        self._show_connected_value(self._dir_editor, connected_dir)
-        if connected_dir:
-            # _show_connected_value blocks signals while it sets the text, so
-            # the usual textChanged -> _on_dir_changed listing refresh never
-            # fires on its own for a value that arrived via connection.
-            self._on_dir_changed(connected_dir)
+        if connected_dir is not None:
+            self._dir_path_cache = connected_dir
+        self._refresh_file_list()
+        
         self._show_connected_combobox(self._file_combo,
                                       self._get_connected_input_value("filename"))
         self._show_connected_value(self._ext_filter,
                                    self._get_connected_input_value("filetype"))
 
-    def _on_dir_changed(self, text):
+    def _refresh_file_list(self):
+        text = self._dir_path_cache
         self._file_combo.blockSignals(True)
         self._file_combo.clear()
-        if os.path.isdir(text):
+        if text and os.path.isdir(text):
             try:
-                raw = (self._get_connected_input_value("filetype")
-                       or self._ext_filter.text()).strip()
+                raw = (self._get_connected_input_value("filetype") or self._ext_filter.text()).strip()
                 ext = raw.lstrip("*").lstrip(".").lower()
                 files = sorted(
                     f for f in os.listdir(text)
@@ -1000,34 +990,20 @@ class PathParamNode(ParamNode):
 
     def get_value_state(self) -> Any:
         return {
-            "dir": self._dir_editor.text(),
+            "dir": self._dir_path_cache,
             "file": self._file_combo.currentText(),
             "ext": self._ext_filter.text(),
         }
 
     def set_value_state(self, val: Any):
         if isinstance(val, dict):
-            # Ext first so the directory listing filters correctly when dir is applied.
             self._ext_filter.setText(val.get("ext", ""))
-            self._dir_editor.setText(val.get("dir", ""))
+            self._dir_path_cache = val.get("dir", "")
+            self._refresh_file_list()
             self._file_combo.setCurrentText(val.get("file", ""))
-        else:
-            self._dir_editor.setText(str(val))
-
-    def _apply_linked_sync(self, source_node: ParamNode, active_key: Optional[str]):
-        if active_key == "row_1":
-            self._dir_editor.setText(source_node._dir_editor.text())
-        elif active_key == "row_2":
-            self._file_combo.setCurrentText(source_node._file_combo.currentText())
-        elif active_key == "row_3":
-            self._ext_filter.setText(source_node._ext_filter.text())
-        else:
-            self.set_value_state(source_node.get_value_state())
-
+            
     def get_value(self, socket_name: str = None) -> str:
-        d = self._dir_editor.text().strip().replace("\\", "/")
-        if socket_name == "dirpath_out":
-            return d
+        d = self._dir_path_cache.strip().replace("\\", "/")
         filename = self._get_connected_input_value("filename") or self._file_combo.currentText().strip()
         raw_type = (self._get_connected_input_value("filetype") or self._ext_filter.text()).strip()
         ext = raw_type.lstrip("*").lstrip(".")
@@ -1037,7 +1013,15 @@ class PathParamNode(ParamNode):
                 filename += suffix
         if d and filename:
             return (d + "/" + filename).replace("\\", "/")
-        return d
+        return ""
+        
+    def _apply_linked_sync(self, source_node: ParamNode, active_key: Optional[str]):
+        if active_key == "row_2":
+            self._file_combo.setCurrentText(source_node._file_combo.currentText())
+        elif active_key == "row_3":
+            self._ext_filter.setText(source_node._ext_filter.text())
+
+        # (Old leftovers removed)
 
 
 class KeyValueParamNode(_SingleFieldParamNode):
@@ -1085,7 +1069,7 @@ PARAM_NODE_TYPES: Dict[str, type] = {
     "float3":   Float3ParamNode,
     "enum":     EnumParamNode,
     "enum_int": EnumParamNode,
-    "filepath": PathParamNode,
-    "dirpath":  PathParamNode,
+    "filepath": FileParamNode,
+    "dirpath":  DirParamNode,
     "keyvalue": KeyValueParamNode,
 }

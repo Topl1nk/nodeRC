@@ -240,21 +240,19 @@ def widget_stylesheets(p: WidgetPalette) -> Dict[str, str]:
     return {
         "combo": (
             f"QComboBox{{border:1px solid {p.border};background:{p.field_bg};color:{TEXT_COLOR};"
-            f"border-radius:0px;padding:2px 4px;font:{WIDGET_FONT};combobox-popup:0;}}"
+            f"border-radius:0px;padding:2px 4px;font:{WIDGET_FONT};combobox-popup:0;"
+            f"margin-right:{BROWSE_BTN_WIDTH}px;}}"
             # [nodeHover] rather than :hover — see the note on "field" below.
             f"QComboBox[nodeHover=\"true\"]{{border-color:{p.highlight};}}"
-            f"QComboBox::drop-down{{border-left:1px solid {p.border};"
-            f"width:{BROWSE_BTN_WIDTH}px;background:{p.button_bg};}}"
+            f"QComboBox::drop-down{{subcontrol-origin:margin;subcontrol-position:top right;"
+            f"width:{BROWSE_BTN_WIDTH}px;background:{p.button_bg};border:1px solid {p.border};}}"
             f"QComboBox::drop-down:hover{{background:{p.hover_bg};border-color:{p.highlight};}}"
             f"QComboBox QAbstractItemView{{border:1px solid {p.border};"
             f"background:{p.field_bg};color:{TEXT_COLOR};"
             f"selection-background-color:{p.list_accent};selection-color:{p.field_bg};outline:0px;}}"
             f"QComboBox QAbstractItemView::item:hover{{background-color:{p.list_accent};color:{p.field_bg};}}"
             f"QComboBox QAbstractItemView::item:selected{{background-color:{p.list_accent};color:{p.field_bg};}}"
-            f"QScrollBar:vertical{{border:none;background:{p.field_bg};width:8px;margin:0px;}}"
-            f"QScrollBar::handle:vertical{{background:{p.border};min-height:20px;border-radius:0px;}}"
-            f"QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{{height:0px;}}"
-            f"QComboBox[connected=\"true\"]{{color:{TEXT_MUTED_COLOR};}}"
+            f"QComboBox[connected=\"true\"]{{color:{TEXT_MUTED_COLOR};margin-right:0px;}}"
             f"QComboBox[connected=\"true\"] QLineEdit{{color:{TEXT_MUTED_COLOR};}}"
             f"QComboBox[connected=\"true\"]::drop-down{{width:0px;border:none;}}"
         ),
@@ -296,7 +294,7 @@ def widget_stylesheets(p: WidgetPalette) -> Dict[str, str]:
         ),
         "tool": (
             f"QToolButton{{background:{p.button_bg};color:{BUTTON_TEXT_COLOR};"
-            f"border:1px solid {p.border};border-radius:0px;font:{WIDGET_FONT};}}"
+            f"border:1px solid {p.border};border-radius:0px;font:{WIDGET_FONT};outline:none;}}"
             # :hover covers a standalone QToolButton (e.g. in a plain
             # QDialog), where Qt delivers Enter/Leave natively and reliably;
             # [nodeHover="true"] additionally covers one embedded via
@@ -340,16 +338,30 @@ VECTOR_AXIS_LABEL_QSS = f"color:{VECTOR_AXIS_LABEL_COLOR};font:{WIDGET_FONT};"
 
 CONTEXT_MENU_STYLESHEET = f"""
 QMenu {{
-    background:{BUTTON_BG_COLOR}; color:{TEXT_COLOR};
+    background:{BUTTON_HOVER_COLOR}; color:{TEXT_COLOR};
     border:1px solid {NODE_BORDER_COLOR}; border-radius:0px;
     padding:4px 2px; font:{WIDGET_FONT};
 }}
 QMenu::item {{ padding:4px 20px 4px 10px; border-radius:0px; }}
-QMenu::item:selected {{ background:{BUTTON_HOVER_COLOR}; border:1px solid {NODE_SELECTED_COLOR}; }}
+/* Swapped with the menu's own background (BUTTON_BG_COLOR/BUTTON_HOVER_COLOR
+   are the same pair, just reused the other way round) rather than reaching
+   for a new color: a selected item still has to read against the menu face
+   it now sits on, and this is the one other tone already established as
+   "the other end" of that same button-state pair. */
+QMenu::item:selected {{ background:{BUTTON_BG_COLOR}; border:1px solid {NODE_SELECTED_COLOR}; }}
 QMenu::item:disabled {{ color:{NODE_BORDER_COLOR}; }}
 QMenu::separator {{ height:1px; background:{NODE_BORDER_COLOR}; margin:3px 8px; }}
 QMenu::icon {{ padding-left:6px; }}
 """
+
+# Only for menus that drop down flush against the title bar's own chrome
+# (the hamburger's project menu, the tab context menu — both anchored to a
+# button/tab's bottom-left corner): their top edge sits right at the seam
+# with whatever they dropped from, so a border there would just double up
+# against that seam. Every other context menu in the app (node, group,
+# canvas — anywhere a right-click isn't anchored to the title bar) keeps
+# CONTEXT_MENU_STYLESHEET's full 4-sided border unmodified.
+TITLE_BAR_MENU_STYLESHEET = CONTEXT_MENU_STYLESHEET + "QMenu { border-top: none; }"
 
 SEARCH_DIALOG_STYLESHEET = f"""
 QDialog {{
@@ -390,22 +402,6 @@ QLabel#descriptionLabel {{
     background: transparent;
     border: none;
 }}
-QScrollBar:vertical {{
-    background: transparent;
-    width: 14px;
-    margin: 0px 0px 0px 0px;
-}}
-QScrollBar::handle:vertical {{
-    background: {NODE_BORDER_COLOR};
-    min-height: 20px;
-    border-radius: 7px;
-}}
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-    height: 0px;
-}}
-QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
-    background: none;
-}}
 QFrame#descFrame {{
     border-top: 1px solid {NODE_BORDER_COLOR};
     border-bottom: 1px solid {NODE_BORDER_COLOR};
@@ -423,7 +419,7 @@ RESTORE_DIALOG_QSS = f"""
     border: 1px solid {NODE_BORDER_COLOR};
 }}
 #RestoreChoiceDialog QLabel#dialogHeader {{
-    background-color: {DEFAULT_HEADER_COLOR};
+    background-color: #cc4e63;
     color: {TEXT_COLOR};
     font-family: {UI_FONT_FAMILY};
     font-weight: bold;
@@ -459,6 +455,7 @@ QToolTip {{
     padding: 2px 4px;
     font-family: {UI_FONT_FAMILY};
 }}
+
 """
 
 # ── Custom title bar / tab strip ───────────────────────────────────────────────
@@ -480,20 +477,31 @@ TITLE_BAR_QSS = f"""
 QToolButton#titleBarWinBtn {{
     background: transparent;
     color: {TEXT_COLOR};
-    border: none;
+    border: 1px solid transparent;
     font-family: {UI_FONT_FAMILY};
 }}
-QToolButton#titleBarWinBtn:hover {{
+QToolButton#titleBarWinBtn:hover, QToolButton#titleBarWinBtn[nativeHover="true"] {{
+    /* [nativeHover] covers the maximize button once Windows starts
+       reporting its rect as HTMAXBUTTON for Snap Layouts support — that
+       makes Windows treat it as non-client, so it stops getting the
+       ordinary mouse-move/enter events :hover relies on (see
+       NodeEditorWindow._hit_test_native_message /
+       TitleBarWidget.set_max_button_native_hover). */
     background: {BUTTON_HOVER_COLOR};
+    /* Same 1px, same color as the menus these buttons open
+       (CONTEXT_MENU_STYLESHEET's border) — one outline vocabulary for the
+       title bar's own interactive chrome. */
+    border: 1px solid {NODE_BORDER_COLOR};
 }}
 QToolButton#titleBarCloseBtn {{
     background: transparent;
     color: {TEXT_COLOR};
-    border: none;
+    border: 1px solid transparent;
     font-family: {UI_FONT_FAMILY};
 }}
 QToolButton#titleBarCloseBtn:hover {{
     background: {TITLE_BAR_CLOSE_HOVER_COLOR};
+    border: 1px solid {NODE_BORDER_COLOR};
 }}
 """
 
@@ -503,16 +511,20 @@ TAB_STRIP_QSS = f"""
 }}
 """
 
+# The two stops of the tab-face gradient. Named (rather than inlined in the
+# QSS below) because TabButton's hover close button paints the same chrome
+# with QPainter — one pair of constants keeps the two renderings identical.
+TAB_GRADIENT_DARK  = "#04152B"
+TAB_GRADIENT_LIGHT = "#122337"
+
 TAB_BUTTON_QSS = f"""
 #TabButton {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #04152B, stop:1 #122337);
-    border: 1px solid {NODE_BORDER_COLOR};
-    border-top: none;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {TAB_GRADIENT_DARK}, stop:1 {TAB_GRADIENT_LIGHT});
+    border: none;
 }}
 #TabButton[active="true"] {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #122337, stop:1 #04152B);
-    border: 1px solid {NODE_BORDER_COLOR};
-    border-bottom: none;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {TAB_GRADIENT_LIGHT}, stop:1 {TAB_GRADIENT_DARK});
+    border: none;
 }}
 #TabButton QLabel {{
     color: {TEXT_COLOR};

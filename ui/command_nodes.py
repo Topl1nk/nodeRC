@@ -30,6 +30,7 @@ class StartNode(MetaNode):
     def __init__(self):
         super().__init__(start_node_def())
         self._set_resting_z(NODE_START_Z)
+        self._running = False  # mirrors ui.editor_window's worker state — see set_launch_running
         rows = self.node_def.param_row_count
         btn_w = self.node_def.width - NODE_HORIZONTAL_PAD * 2
 
@@ -46,12 +47,27 @@ class StartNode(MetaNode):
         proxy.setPos(NODE_HORIZONTAL_PAD, y)
 
     def retranslate(self):
-        self._launch_btn.setText(t("btn_launch"))
+        self._launch_btn.setText(t("btn_cancel") if self._running else t("btn_launch"))
 
     def _request_chain_execution(self):
         win = editor_window_of(self)
-        if win:
+        if not win:
+            return
+        # Same button doubles as Cancel while running (Ст.0.2 — no extra
+        # control needed for this to be recoverable): without it, a pack
+        # process that never exits on its own (RC not actually terminating
+        # when its own window closes, say) leaves the chain permanently
+        # unable to relaunch, with no way for the user to get back control.
+        if self._running:
+            win.cancel_chain_execution()
+        else:
             win.execute_chain()
+
+    def set_launch_running(self, running: bool) -> None:
+        """Toggles Launch/Cancel — stays enabled either way; see
+        _request_chain_execution for why this must not just disable."""
+        self._running = running
+        self._launch_btn.setText(t("btn_cancel") if running else t("btn_launch"))
 
 
 class CommandNode(MetaNode):

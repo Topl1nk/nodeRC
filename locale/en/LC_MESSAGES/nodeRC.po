@@ -196,6 +196,10 @@ msgstr "Close other projects"
 msgid "tab_menu_close_to_right"
 msgstr "Close projects to the right"
 
+#. Close projects to the left (project context menu)
+msgid "tab_menu_close_to_left"
+msgstr "Close projects to the left"
+
 #. Reopen closed project (project context menu)
 msgid "tab_menu_reopen_closed"
 msgstr "Reopen closed project"
@@ -478,9 +482,37 @@ msgstr "Split into X/Y/Z"
 msgid "ctx_merge_vector"
 msgstr "Merge into one output"
 
+#. Mark as Project Input
+msgid "ctx_project_input_on"
+msgstr "Mark as Project Input"
+
+#. Unmark as Project Input
+msgid "ctx_project_input_off"
+msgstr "Unmark as Project Input"
+
+#. Project Inputs
+msgid "project_inputs_panel_title"
+msgstr "Project Inputs"
+
+#. Socket-dot tooltip: hover previews the node, click jumps to it
+msgid "project_inputs_jump_tooltip"
+msgstr "Hover to preview, click to jump to this node"
+
+#. Pin checkbox label — keeps the panel open despite hover-reveal
+msgid "project_inputs_pin_label"
+msgstr "Pin"
+
+#. Pin button tooltip
+msgid "project_inputs_pin_tooltip"
+msgstr "Keep panel open (Ctrl+I to toggle)"
+
 #. Only header
 msgid "color_only_header"
 msgstr "Only header"
+
+#. Project-input nodes always show a full-tinted body
+msgid "color_only_header_locked_project_input"
+msgstr "Project Input nodes always show a full-tinted body"
 
 #. Reset
 msgid "color_reset"
@@ -489,6 +521,10 @@ msgstr "Reset"
 #. > Launch
 msgid "btn_launch"
 msgstr "> Launch"
+
+#. Cancel
+msgid "btn_cancel"
+msgstr "Cancel"
 
 #. Open
 msgid "btn_open"

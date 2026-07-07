@@ -223,7 +223,7 @@ class PresetButton(QPushButton):
 class ColorPickerPopup(QWidget):
     def __init__(self, on_color_selected, initial_color=None, on_close=None,
                  initial_only_header=False, on_only_header_changed=None,
-                 on_reset=None, parent=None):
+                 on_reset=None, only_header_locked=False, parent=None):
         """Custom in-app palette popup.
 
         ``on_color_selected`` is invoked as ``(hex_color, only_header)`` on every
@@ -235,6 +235,9 @@ class ColorPickerPopup(QWidget):
         button is clicked; it must restore the target(s) to their default
         color and return ``(hex_color, only_header)`` so the popup can sync
         its own controls to the new state.
+        ``only_header_locked`` disables the checkbox (unchecked) when the
+        target node(s) enforce a full-tinted body regardless of what's clicked
+        here — e.g. project-input param nodes.
         """
         super().__init__(parent, Qt.Popup | Qt.FramelessWindowHint)
         self.on_color_selected = on_color_selected
@@ -263,7 +266,8 @@ class ColorPickerPopup(QWidget):
         )
 
         self.current_color = QColor(initial_color or DEFAULT_HEADER_COLOR)
-        self._only_header = bool(initial_only_header)
+        self._only_header = bool(initial_only_header) and not only_header_locked
+        self._only_header_locked = bool(only_header_locked)
 
         self.setFixedWidth(COLOR_PICKER_WIDTH)
 
@@ -333,6 +337,9 @@ class ColorPickerPopup(QWidget):
         self.only_header_check = InsetFillCheckBox(t("color_only_header"))
         self.only_header_check.setChecked(self._only_header)
         self.only_header_check.setFixedHeight(COLOR_PICKER_ROW_HEIGHT)
+        self.only_header_check.setEnabled(not only_header_locked)
+        if only_header_locked:
+            self.only_header_check.setToolTip(t("color_only_header_locked_project_input"))
         self.only_header_check.toggled.connect(self._on_only_header_toggled)
         hex_row.addWidget(self.only_header_check)
 

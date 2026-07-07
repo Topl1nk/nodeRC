@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (
     QAbstractSpinBox, QComboBox,
 )
 from PyQt5.QtGui import QPainter, QColor, QRadialGradient, QBrush, QCursor
-from PyQt5.QtCore import Qt, QPoint, QRectF, QTimer
+from PyQt5.QtCore import Qt, QEvent, QPoint, QRect, QRectF, QTimer
 
 from localization import t
 from ui.graph_items import MetaNode
@@ -16,6 +16,7 @@ from configuration import (
     SCROLLBAR_BTN_SIZE, VIEW_ZOOM_STEP, VIEW_ZOOM_MIN, VIEW_ZOOM_MAX,
     VIEW_FRAME_MARGIN, NODE_HOVER_POLL_INTERVAL_MS, NODE_LOD_DETAIL_SCALE,
     SCROLLBAR_TOGGLE_SHOW_GLYPH, SCROLLBAR_TOGGLE_HIDE_GLYPH,
+    TITLE_BAR_RESIZE_MARGIN,
 )
 
 
@@ -34,6 +35,20 @@ class GraphicsView(QGraphicsView):
         # scrollContentsBy forces full repaint on pan to avoid smearing the screen-fixed vignette.
         self.setViewportUpdateMode(QGraphicsView.SmartViewportUpdate)
         self._vignette_brush: Optional[QBrush] = None
+
+        from ui.widgets import UnifiedScrollBar
+        self.setVerticalScrollBar(UnifiedScrollBar(Qt.Vertical, expand_on_hover=False))
+        self.setHorizontalScrollBar(UnifiedScrollBar(Qt.Horizontal, expand_on_hover=False))
+        # Qt's own QAbstractScrollArea re-lays these out (flush against the
+        # viewport edges) on more than just a widget resize — toggling
+        # ScrollBarAlwaysOff/AsNeeded (_toggle_scrollbar_visibility) and a
+        # scene-rect change (zoom, node move) both trigger it too. Watching
+        # the scrollbars' own Resize/Move events, not just this view's
+        # resizeEvent, is what makes _position_scrollbars' inset survive all
+        # of those instead of only the plain-resize case.
+        self.verticalScrollBar().installEventFilter(self)
+        self.horizontalScrollBar().installEventFilter(self)
+
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
@@ -81,9 +96,57 @@ class GraphicsView(QGraphicsView):
         self._scrollbar_toggle_btn.clicked.connect(self._toggle_scrollbar_visibility)
         self._scrollbars_visible = False
 
+        # Which embedded combo box's dropdown is currently open, if any —
+        # set/cleared by NodeComboBox.showPopup/hidePopup (ui/graph_items.py)
+        # itself, not inferred here. See wheelEvent for why this view has to
+        # track it explicitly instead of asking Qt.
+        self._open_popup_combo: Optional[QComboBox] = None
+
+    def register_open_popup(self, combo: QComboBox) -> None:
+        self._open_popup_combo = combo
+
+    def unregister_open_popup(self, combo: QComboBox) -> None:
+        if self._open_popup_combo is combo:
+            self._open_popup_combo = None
+
     def wheelEvent(self, event):
-        # Wheel over an embedded widget (combo dropdown, spinbox, scrollable text)
-        # must scroll/change the widget, not zoom the canvas — but only while its
+        # An open combo-box dropdown (e.g. the [E] Enum node's list) is its
+        # own floating widget on top of the canvas — not a scene item under
+        # event.pos(), so the item lookup below can never see it. Two
+        # Qt-native ways of detecting it were tried and both proved
+        # unreliable in the live app despite working in isolated tests:
+        # QApplication.activePopupWidget() (the popup container isn't
+        # guaranteed to register there on every style) and
+        # QApplication.widgetAt() (this app's custom frameless/translucent
+        # window chrome — see NodeEditorWindow's WM_NCHITTEST override —
+        # apparently keeps Win32 routing WM_MOUSEWHEEL to whichever window
+        # actually holds focus rather than the one under the cursor, so
+        # GraphicsView kept seeing the event first regardless of what's
+        # visually on top). Tracking the open combo ourselves (register/
+        # unregister_open_popup, called from NodeComboBox.showPopup/
+        # hidePopup) and computing its real on-screen rect directly sidesteps
+        # all of that guessing: no dependency on which native window the OS
+        # decided to deliver the message to.
+        combo = self._open_popup_combo
+        if combo is not None:
+            popup_view = combo.view()
+            if popup_view.isVisible():
+                popup_rect_global = QRect(popup_view.mapToGlobal(QPoint(0, 0)), popup_view.size())
+                if popup_rect_global.contains(event.globalPos()):
+                    # Unconditional return, not gated on event.isAccepted():
+                    # QAbstractScrollArea.wheelEvent *ignores* the event once
+                    # the list is already scrolled to its top/bottom (nothing
+                    # left to move), which used to fall through to canvas
+                    # zoom right at the scroll limit. Being over the open
+                    # popup means the wheel belongs to it regardless of
+                    # whether it had anything left to do with it.
+                    QApplication.sendEvent(popup_view.viewport(), event)
+                    return
+            else:
+                self._open_popup_combo = None
+
+        # Wheel over an embedded widget (spinbox, scrollable text) must
+        # scroll/change the widget, not zoom the canvas — but only while its
         # node is actually selected or the field itself has focus. Otherwise a
         # scroll gesture passing over an untouched node (e.g. panning past it
         # with the wheel) would silently change a parameter's value.
@@ -97,6 +160,7 @@ class GraphicsView(QGraphicsView):
                 focused = QApplication.focusWidget()
                 field_focused = widget is not None and focused is not None and (
                     focused is widget or widget.isAncestorOf(focused))
+
                 if node_selected or field_focused:
                     super().wheelEvent(event)
                     if event.isAccepted():
@@ -371,6 +435,39 @@ class GraphicsView(QGraphicsView):
             self.width()  - self._scrollbar_toggle_btn.width() - SCROLLBAR_BTN_MARGIN - SCROLLBAR_BTN_OFFSET,
             self.height() - self._scrollbar_toggle_btn.height() - SCROLLBAR_BTN_MARGIN - SCROLLBAR_BTN_OFFSET,
         )
+        self._position_scrollbars()
+
+    def eventFilter(self, obj, event):
+        if event.type() in (QEvent.Resize, QEvent.Move) and obj in (
+                self.verticalScrollBar(), self.horizontalScrollBar()):
+            # Self-correcting: Qt's own layout pass that just fired this
+            # Resize/Move already moved the scrollbar back flush against the
+            # edge; re-applying our inset here is idempotent (same target
+            # geometry every time), so this settles in one extra pass rather
+            # than looping.
+            self._position_scrollbars()
+        return super().eventFilter(obj, event)
+
+    def _position_scrollbars(self) -> None:
+        """Inset the canvas scrollbars from the view's edges — only while
+        the window is in its normal (non-maximized) state, where those
+        edges double as the native resize-grab band (TITLE_BAR_RESIZE_MARGIN,
+        the WM_NCHITTEST edge width in editor_window.py). A maximized window
+        has no such band, so the scrollbars sit flush there, same as before.
+        Qt's own QAbstractScrollArea layout already placed them flush against
+        these edges as part of the super().resizeEvent() call above — this
+        just nudges that default geometry inward.
+        """
+        top_level = self.window()
+        margin = 0 if (top_level is not None and top_level.isMaximized()) else TITLE_BAR_RESIZE_MARGIN
+
+        vbar = self.verticalScrollBar()
+        vbar.setGeometry(self.width() - vbar.width() - margin, margin,
+                         vbar.width(), self.height() - 2 * margin)
+
+        hbar = self.horizontalScrollBar()
+        hbar.setGeometry(margin, self.height() - hbar.height() - margin,
+                         self.width() - 2 * margin, hbar.height())
 
     def _toggle_scrollbar_visibility(self):
         self._scrollbars_visible = not self._scrollbars_visible

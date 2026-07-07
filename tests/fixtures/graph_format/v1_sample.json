@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": "n1",
+      "x": 0.0,
+      "y": 0.0,
+      "type": "StartNode"
+    },
+    {
+      "id": "n2",
+      "x": 100.0,
+      "y": 100.0,
+      "type": "NonexistentCommand",
+      "is_frozen": true,
+      "cmd_def": {"command": "-unknown"}
+    }
+  ],
+  "connections": [],
+  "groups": []
+}

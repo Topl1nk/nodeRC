@@ -58,19 +58,16 @@ TEXT_MUTED_COLOR = "#A0C0E0"
 FIELD_PLACEHOLDER_COLOR = "#878F9A"
 
 
-# ── External paths ─────────────────────────────────────────────────────────────
-# RealityCapture/RealityScan's own install location varies by version, drive
-# and Epic Games library path (Capturing Reality's original install path and
-# the newer Epic/RealityScan one both still turn up in the wild) — an
-# environment variable override means a non-default install doesn't require
-# editing source, only the two hardcoded paths below stay as the common case.
-RC_HELP_HTML    = os.environ.get(
-    "NODERC_RC_HELP_HTML",
-    r"C:\ProgramData\Epic\RealityScan\LanguagePack\help\en-US\appbasics\allcommands.htm")
-RC_EXECUTABLE   = os.environ.get(
-    "NODERC_RC_EXECUTABLE",
-    r"C:\Program Files\Capturing Reality\RealityCapture\RealityCapture.exe")
-COMMAND_DB_JSON = "rc_commands.json"
+# ── Node packs (core/pack_registry.py) ──────────────────────────────────────────
+# RC's own paths (RC_EXECUTABLE, RC_HELP_HTML, COMMAND_DB_JSON) live in
+# packs/realitycapture/config.py, not here — RealityCapture is one pack among
+# others this editor can drive, not a constant of the editor itself.
+# Packs bundled with the editor live in a repo-relative folder (same
+# cwd-relative convention as COMMAND_DB_JSON above); user-installed drop-in
+# packs live under the same %APPDATA%/nodeRC root as autosave/prefs, one
+# level down so they don't mix with those files.
+BUNDLED_PACKS_DIR_NAME = "packs"
+PACKS_DIR_NAME         = "packs"
 
 # ── Node layout ────────────────────────────────────────────────────────────────
 NODE_HEADER_HEIGHT        = 30
@@ -169,7 +166,6 @@ TITLE_BAR_RESIZE_MARGIN = 6   # px, edge hit-test band for WM_NCHITTEST resize
 TAB_HEIGHT             = 30   # px
 TAB_MIN_WIDTH          = 90
 TAB_MAX_WIDTH          = 200
-TAB_CLOSE_BTN_SIZE     = 16
 
 # DwmSetWindowAttribute identifier + DWMWCP_* values (Windows 11) — restores
 # the native rounded window corners a frameless window otherwise loses.
@@ -263,13 +259,15 @@ SOCKET_HOVER_COLOR = "#FFFFFF"
 # the single place a future rebind needs to touch.
 HOTKEY_HINTS = {
     "save": "Ctrl+S", "save_as": "Ctrl+Shift+S", "open": "Ctrl+O",
-    "new_tab": "Ctrl+T", "new_tab_alt": "Ctrl+N", "close_tab": "Ctrl+W",
+    "new_tab": "Ctrl+Shift+N", "new_tab_alt": "Ctrl+N", "close_tab": "Ctrl+Shift+X",
+    "duplicate_tab": "Ctrl+Shift+D", "close_others": "Ctrl+Shift+W",
+    "close_right": "Ctrl+Shift+E", "close_left": "Ctrl+Shift+Q",
     "reopen_closed_tab": "Ctrl+Shift+T",
     "next_tab": "Ctrl+Tab", "prev_tab": "Ctrl+Shift+Tab",
     "execute_chain": "F5", "undo": "Ctrl+Z", "redo": "Ctrl+Y",
     "copy": "Ctrl+C", "paste": "Ctrl+V", "select_all": "Ctrl+A",
     "group": "Ctrl+G", "duplicate": "Ctrl+D", "fullscreen": "F11", "rename": "F2",
-    "delete": "Delete",
+    "delete": "Delete", "toggle_project_inputs_panel": "Ctrl+I",
 }
 
 # ── Typography ─────────────────────────────────────────────────────────────────
@@ -289,6 +287,23 @@ COLOR_PRESETS = [
     "#E74C3C", "#E67E22", "#F1C40F", "#27AE60", "#3498DB", "#8E44AD", "#E91E63", "#00BCD4",
 ]
 
+
+# ── Project Inputs panel geometry ─────────────────────────────────────────────
+PROJECT_INPUTS_PANEL_WIDTH = 260       # initial width — the user can drag-resize from there
+PROJECT_INPUTS_PANEL_MIN_WIDTH = 180
+PROJECT_INPUTS_PANEL_MAX_WIDTH = 480
+PROJECT_INPUTS_PANEL_RESIZE_GRIP_WIDTH = 6
+PROJECT_INPUTS_PANEL_BACKGROUND_COLOR = "#04152b"
+PROJECT_INPUTS_PANEL_BORDER_COLOR = "#1a385f"
+# Every row's value editor gets this exact width regardless of the node's own
+# width, so every row's name/value boundary lines up on one straight column —
+# matches ParamNode._widget_width() for the common 200px-wide param node.
+PROJECT_INPUTS_FIELD_WIDTH = 172
+# Cursor within this many px of the window's left edge reveals the panel;
+# once open, it hides again only after the cursor clears the panel width plus
+# this much slack, so crossing back over the panel itself never flickers it shut.
+PROJECT_INPUTS_PANEL_HOVER_REVEAL_MARGIN = 8
+PROJECT_INPUTS_PANEL_HOVER_HIDE_MARGIN = 40
 
 # ── Color picker popup geometry ───────────────────────────────────────────────
 # All controls inside the popup obey a single grid so widths and heights stay

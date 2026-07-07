@@ -195,6 +195,10 @@ msgstr "Закрити інші проєкти"
 msgid "tab_menu_close_to_right"
 msgstr "Закрити проєкти праворуч"
 
+#. Close projects to the left (project context menu)
+msgid "tab_menu_close_to_left"
+msgstr "Закрити проєкти ліворуч"
+
 #. Reopen closed project (project context menu)
 msgid "tab_menu_reopen_closed"
 msgstr "Відновити закритий проєкт"
@@ -476,9 +480,37 @@ msgstr "Розбити на X/Y/Z"
 msgid "ctx_merge_vector"
 msgstr "Об'єднати в один вихід"
 
+#. Mark as Project Input
+msgid "ctx_project_input_on"
+msgstr "Позначити як вхід проєкту"
+
+#. Unmark as Project Input
+msgid "ctx_project_input_off"
+msgstr "Прибрати позначку входу проєкту"
+
+#. Project Inputs
+msgid "project_inputs_panel_title"
+msgstr "Входи проєкту"
+
+#. Socket-dot tooltip: hover previews the node, click jumps to it
+msgid "project_inputs_jump_tooltip"
+msgstr "Наведіть, щоб побачити вузол, клацніть, щоб перейти до нього"
+
+#. Pin checkbox label — keeps the panel open despite hover-reveal
+msgid "project_inputs_pin_label"
+msgstr "Закріпити"
+
+#. Pin button tooltip
+msgid "project_inputs_pin_tooltip"
+msgstr "Тримати панель відкритою (Ctrl+I для перемикання)"
+
 #. Only header
 msgid "color_only_header"
 msgstr "Лише шапка"
+
+#. Project-input nodes always show a full-tinted body
+msgid "color_only_header_locked_project_input"
+msgstr "Вузли-входи проєкту завжди показані з повністю зафарбованим тілом"
 
 #. Reset
 msgid "color_reset"
@@ -487,6 +519,10 @@ msgstr "Скинути"
 #. > Launch
 msgid "btn_launch"
 msgstr "> Запустити"
+
+#. Cancel
+msgid "btn_cancel"
+msgstr "Скасувати"
 
 #. Open
 msgid "btn_open"

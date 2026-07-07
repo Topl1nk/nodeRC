@@ -14,8 +14,8 @@ Lives in ui/, not core/: every function here reads/writes a live
 QGraphicsScene and concrete Qt graphics items (MetaNode, Connection,
 GroupFrameItem) — it's the scene<->payload bridge, not headless business
 logic. scene_to_graph_model() is the one function that actually produces a
-pure core.graph_model.GraphModel for chain_execution; everything else here
-needs Qt by nature and has no reason to pretend otherwise (see CODEX.md Ст.7).
+pure core.graph_model.GraphModel for core.graph_executor; everything else here
+needs Qt by nature and has no reason to pretend otherwise (see CODEX.md Ст.3/Ст.4).
 """
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ from core.node_blueprint import PARAM_TITLE_KEY
 from ui.graph_items import Connection, GroupFrameItem, MetaNode
 from ui.param_nodes import (
     EnumParamNode, Float2ParamNode, Float3ParamNode, PARAM_NODE_TYPES, ParamNode,
-    PathParamNode, StringParamNode,
+    StringParamNode,
 )
 from ui.command_nodes import CommandNode, StartNode
 
@@ -64,10 +64,6 @@ def build_param_node(creation_data: dict) -> ParamNode:
     values = creation_data.get("values", [])
     if node_class is EnumParamNode and values:
         node = node_class(name, values) if name else node_class(values=values)
-    elif node_class is PathParamNode:
-        # PathParamNode always exposes both a dirpath and a filepath output —
-        # ptype tells it which one to lead with for its header/socket color.
-        node = node_class(name, param_type=ptype) if name else node_class(param_type=ptype)
     elif node_class in (Float2ParamNode, Float3ParamNode):
         # Restores whichever split/merged shape the node was last toggled to.
         split = bool(creation_data.get("split", False))
@@ -84,6 +80,8 @@ def serialize_node(node: MetaNode) -> dict:
         record["color"] = node.color_override()
         if node.color_only_header():
             record["color_only_header"] = True
+    if node.is_project_input():
+        record["is_project_input"] = True
     return record
 
 
@@ -125,6 +123,8 @@ def _deserialize_node(scene, record: dict, pos: QPointF, *, preserve_uid: bool =
                        record_undo=False)
     else:
         node.reset_color(record_undo=False)
+    if record.get("is_project_input"):
+        node.set_project_input(True, record_undo=False)
     if isinstance(node, ParamNode) and record.get("current_value") is not None:
         node.set_value_state(record["current_value"])
     return node
@@ -306,6 +306,7 @@ def scene_to_graph_model(scene, connections: List[Connection]) -> GraphModel:
                 x=pos.x(), y=pos.y(),
                 color=item.color_override(),
                 color_only_header=item.color_only_header(),
+                is_project_input=item.is_project_input(),
             )
             if isinstance(item, CommandNode):
                 nm.cmd_def = item.cmd_def
@@ -455,6 +456,11 @@ def _patch_node(node: MetaNode, tgt_rec: dict) -> Tuple[bool, bool]:
         if tgt_value != node.get_value_state():
             node.set_value_state(tgt_value)
             changed = True
+
+    tgt_project_input = bool(tgt_rec.get("is_project_input", False))
+    if tgt_project_input != node.is_project_input():
+        node.set_project_input(tgt_project_input, record_undo=False)
+        changed = True
 
     if changed:
         node._refresh_connections()

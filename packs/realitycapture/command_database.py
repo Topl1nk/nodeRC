@@ -10,8 +10,8 @@ import json
 import os
 from typing import Dict, List, Tuple
 
-from configuration import COMMAND_DB_JSON
-from core.rc_documentation_extractor import command_display_name, command_action_word
+from packs.realitycapture.config import COMMAND_DB_JSON
+from packs.realitycapture.rc_documentation_extractor import command_display_name, command_action_word
 from diagnostics import log_and_explain
 
 CommandCategoryTree = Dict[str, Dict[str, List[dict]]]

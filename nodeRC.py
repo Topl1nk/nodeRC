@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import sys
 
-from configuration import COMMAND_DB_JSON, RC_HELP_HTML, WINDOW_STYLE
+from configuration import WINDOW_STYLE
 from diagnostics import install_global_exception_hook
 
 _logger = logging.getLogger("nodeRC")
@@ -35,8 +35,19 @@ if __name__ == "__main__":
     app.hotkey_filter = LanguageHotkeyFilter(app)
     app.installEventFilter(app.hotkey_filter)
 
+    # Same reasoning as the language filter above: the Project Inputs panel's
+    # hover-reveal must track the cursor across every open window, not just
+    # whichever one last had focus.
+    from ui.project_inputs_panel import ProjectInputsHoverFilter
+    app.project_inputs_hover_filter = ProjectInputsHoverFilter(app)
+    app.installEventFilter(app.project_inputs_hover_filter)
+
     try:
-        from core.rc_documentation_extractor import rebuild_command_database_from_html
+        # Both imports live in the try, not at module level (Доктрина III.1):
+        # the realitycapture pack is optional like any other, and a system
+        # without it installed must still launch, not crash on this import.
+        from packs.realitycapture.config import COMMAND_DB_JSON, RC_HELP_HTML
+        from packs.realitycapture.rc_documentation_extractor import rebuild_command_database_from_html
         rebuild_command_database_from_html(RC_HELP_HTML, COMMAND_DB_JSON)
     except (Exception, SystemExit) as exc:
         _logger.warning("Documentation refresh skipped: %s", exc)

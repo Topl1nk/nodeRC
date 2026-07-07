@@ -26,6 +26,8 @@ class NodeModel:
     color: Optional[str] = None
     color_only_header: bool = False
     selected: bool = False
+    is_frozen: bool = False
+    is_project_input: bool = False
 
     creation_data: Optional[dict] = None
     cmd_def: Optional[dict] = None
@@ -37,7 +39,7 @@ class NodeModel:
 
     def to_dict(self, *, include_selection: bool = False) -> dict:
         d: dict = {"id": self.uid, "x": self.x, "y": self.y, "type": self.node_type}
-        if self.node_type == "CommandNode" and self.cmd_def is not None:
+        if (self.node_type == "CommandNode" or self.is_frozen) and self.cmd_def is not None:
             d["cmd_def"] = self.cmd_def
             if self.expanded_vectors:
                 d["expanded_vectors"] = sorted(self.expanded_vectors)
@@ -50,6 +52,10 @@ class NodeModel:
             d["color"] = self.color
             if self.color_only_header:
                 d["color_only_header"] = True
+        if self.is_frozen:
+            d["is_frozen"] = True
+        if self.is_project_input:
+            d["is_project_input"] = True
         if include_selection:
             d["selected"] = self.selected
         return d
@@ -64,6 +70,8 @@ class NodeModel:
             color=record.get("color"),
             color_only_header=bool(record.get("color_only_header", False)),
             selected=record.get("selected", False),
+            is_frozen=record.get("is_frozen", False),
+            is_project_input=record.get("is_project_input", False),
             creation_data=record.get("creation_data"),
             cmd_def=record.get("cmd_def"),
             current_value=record.get("current_value"),
@@ -167,6 +175,8 @@ class GraphModel:
 
     @classmethod
     def from_dict(cls, payload: dict) -> GraphModel:
+        from core.graph_migration import migrate
+        payload = migrate(payload)
         return cls(
             version=payload.get("version", 1),
             nodes=[NodeModel.from_dict(r) for r in payload.get("nodes", [])],
@@ -182,3 +192,7 @@ class GraphModel:
 
     def connections_from(self, node_uid, socket_name: str) -> List[ConnectionModel]:
         return self._conn_by_src.get((node_uid, socket_name), [])
+
+    def project_input_nodes(self) -> List[NodeModel]:
+        """Param nodes flagged as exposed project inputs, in graph order."""
+        return [n for n in self.nodes if n.is_project_input]

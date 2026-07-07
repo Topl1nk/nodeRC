@@ -24,7 +24,7 @@ import json
 import logging
 from typing import Dict, List, Optional, Set, Tuple
 
-from configuration import RC_HELP_HTML, COMMAND_DB_JSON
+from packs.realitycapture.config import RC_HELP_HTML, COMMAND_DB_JSON
 
 _logger = logging.getLogger("nodeRC")
 

@@ -287,6 +287,12 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         # and embedded widgets keep their default scheme. Lets the user mark a
         # node visually without re-skinning every inner control.
         self._color_only_header: bool = False
+        # Marks this node's value as an exposed input of the project (see the
+        # left Project Inputs panel) — only meaningful on ParamNode subclasses.
+        self._is_project_input: bool = False
+        # The only-header scope set_project_input(True) overrode, restored
+        # when the node is unmarked — see set_project_input below.
+        self._pre_project_input_only_header: bool = False
         # True until the user actually picks a colour (or explicitly resets),
         # so a node-shape rebuild (Float2/3 split/merge, command X/Y/Z
         # expand/collapse — see _swap_node) knows whether to carry the
@@ -470,6 +476,19 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
             self._color_override = color
             self._color_only_header = only_header
 
+    def primary_output_socket_def(self) -> Optional[SocketDef]:
+        """The first non-exec output socket, or ``None`` for exec/command nodes.
+
+        The one param socket a scalar param node exposes — its color and
+        label are what the header tint (default_color_override below) and
+        the Project Inputs panel's row both read, so both stay in sync with
+        whatever the node's own definition says without duplicating the scan.
+        """
+        for sd in self.node_def.sockets:
+            if sd.kind == "output" and not sd.is_exec:
+                return sd
+        return None
+
     def default_color_override(self) -> Tuple[Optional[str], bool]:
         """The (color, only_header) pair this node is born with — reset target.
 
@@ -480,10 +499,8 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         """
         if not PARAM_NODE_HEADER_FROM_SOCKET:
             return None, False
-        for sd in self.node_def.sockets:
-            if sd.kind == "output" and not sd.is_exec:
-                return sd.color, True
-        return None, False
+        sd = self.primary_output_socket_def()
+        return (sd.color, True) if sd else (None, False)
 
     def reset_color(self, *, record_undo: bool = True):
         color, only_header = self.default_color_override()
@@ -495,10 +512,42 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
     def color_only_header(self) -> bool:
         return self._color_only_header
 
+    def is_project_input(self) -> bool:
+        return self._is_project_input
+
+    def set_project_input(self, flag: bool, *, record_undo: bool = True):
+        flag = bool(flag)
+        if flag == self._is_project_input:
+            return
+        if flag:
+            # Remember the scope being overridden so unmarking below can put
+            # it back — marking must not permanently erase a user's earlier
+            # "only header" choice.
+            self._pre_project_input_only_header = self._color_only_header
+            self._is_project_input = True
+            if self._color_only_header:
+                self.set_color(self._color_override, only_header=False,
+                                record_undo=False, is_default=self._color_is_default)
+        else:
+            self._is_project_input = False
+            if self._pre_project_input_only_header:
+                self.set_color(self._color_override, only_header=True,
+                                record_undo=False, is_default=self._color_is_default)
+        self.update()
+        win = editor_window_of(self)
+        if record_undo and win:
+            win.push_undo_state()
+
     def set_color(self, color_hex: Optional[str], *, only_header: bool = False,
                   record_undo: bool = True, is_default: bool = False):
         self._color_override = color_hex
-        self._color_only_header = bool(only_header) and color_hex is not None
+        # A project-input node must always read as a full-tinted body on the
+        # canvas, never header-only — that's its visual distinction from an
+        # ordinary param node — so the scope is clamped here, the one place
+        # every caller (picker, reset, restore, multi-select) funnels through.
+        self._color_only_header = (
+            bool(only_header) and color_hex is not None and not self._is_project_input
+        )
         self._color_is_default = is_default
         self.update()
         self._update_children_colors()
@@ -610,6 +659,10 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
             on_reset=reset_all,
             initial_color=initial,
             initial_only_header=self._color_only_header,
+            # A project-input node is pinned to a full-tinted body (set_color
+            # enforces this regardless), so the toggle is greyed out instead
+            # of showing a checkbox that would silently do nothing.
+            only_header_locked=any(n.is_project_input() for n in selected_nodes),
             on_close=on_close,
             parent=win
         )
@@ -837,12 +890,15 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         return NODE_COMBO_POPUP_PROXY_Z if popup_open else proxy._base_z
 
     def _set_hovered(self, hovered: bool):
-        """Single setter for the hover outline. Called from exactly one place:
-        GraphicsView's mouse-move tracking (view.py) — not from this item's
-        own hover events, which QGraphicsProxyWidget children make unreliable
-        (see the note by ``self._hovered`` in ``__init__``). Deriving hover
-        from one authoritative poll instead of per-item hover events sidesteps
-        that entirely instead of working around it per widget type.
+        """Single setter for the hover outline.
+
+        Its own hover events are unreliable — QGraphicsProxyWidget children
+        swallow them (see the note by ``self._hovered`` in ``__init__``) — so
+        GraphicsView's mouse-move tracking (view.py) derives hover from one
+        authoritative poll instead, sidestepping that per widget type. The
+        Project Inputs panel's row socket dot (ui/project_inputs_panel.py)
+        calls this too, as a "preview which node this row is" affordance —
+        same outline, a second legitimate trigger for it.
         """
         if self._hovered == hovered:
             return
@@ -1081,6 +1137,8 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         if not self._color_is_default:
             new_node.set_color(self._color_override, only_header=self._color_only_header,
                                record_undo=False, is_default=False)
+        if self._is_project_input:
+            new_node.set_project_input(True, record_undo=False)
         scene.addItem(new_node)
         new_node.setSelected(was_selected)
 
@@ -1205,8 +1263,24 @@ class NodeComboBox(QComboBox):
     """
 
     def __init__(self, node: MetaNode):
+        from ui.widgets import UnifiedScrollBar
+        from PyQt5.QtWidgets import QListView
+        from PyQt5.QtCore import Qt
         super().__init__()
         self.node = node
+        
+        # Explicitly enforce a list view to bypass native OS menu-style popups
+        # which lack standard scrollbars (e.g. for non-editable comboboxes).
+        view = QListView()
+        self.setView(view)
+        # QComboBox.setView() silently resets the view's own scrollbar
+        # policy to ScrollBarAlwaysOff (it assumes the popup will manage
+        # overflow itself) — setting ScrollBarAsNeeded *before* setView()
+        # just gets clobbered, so it has to happen after, or a long list
+        # (e.g. the [E] Enum node's dropdown) opens with no scrollbar at all.
+        self.view().setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.view().setVerticalScrollBar(UnifiedScrollBar())
+        self.setMaxVisibleItems(10)
 
     @property
     def popup_is_open(self) -> bool:
@@ -1216,10 +1290,16 @@ class NodeComboBox(QComboBox):
     def showPopup(self):
         super().showPopup()
         self._safe_refresh()
+        win = editor_window_of(self.node)
+        if win is not None:
+            win.view.register_open_popup(self)
 
     def hidePopup(self):
         super().hidePopup()
         self._safe_refresh()
+        win = editor_window_of(self.node)
+        if win is not None:
+            win.view.unregister_open_popup(self)
         # Belt-and-suspenders: on some platforms popup teardown can still be
         # mid-flight when hidePopup() returns, so re-settle once the event
         # loop catches up.

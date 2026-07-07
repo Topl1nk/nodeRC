@@ -28,11 +28,18 @@ KEY_GROUP        = Qt.Key_G  # with Ctrl — frames the selection (bare G toggle
 KEY_DUPLICATE    = Qt.Key_D  # with Ctrl — clones the selection in place
 KEY_PREV_LANG    = Qt.Key_BracketLeft
 KEY_NEXT_LANG    = Qt.Key_BracketRight
-KEY_NEW_TAB      = Qt.Key_T  # with Ctrl — new tab; with Ctrl+Shift — reopen closed tab
-KEY_NEW_TAB_ALT  = Qt.Key_N  # with Ctrl — alias for new_tab(), same action as Ctrl+T
-KEY_CLOSE_TAB    = Qt.Key_W  # with Ctrl — close the active project
+KEY_NEW_TAB      = Qt.Key_N  # with Ctrl+Shift — new tab
+KEY_NEW_TAB_ALT  = Qt.Key_N  # with Ctrl — new tab
+KEY_DUPLICATE_TAB= Qt.Key_D  # with Ctrl+Shift — duplicate tab
+KEY_CLOSE_TAB    = Qt.Key_X  # with Ctrl+Shift — close the active project
+KEY_CLOSE_OTHERS = Qt.Key_W  # with Ctrl+Shift — close other tabs
+KEY_CLOSE_RIGHT  = Qt.Key_E  # with Ctrl+Shift — close tabs to right
+KEY_CLOSE_LEFT   = Qt.Key_Q  # with Ctrl+Shift — close tabs to left
+KEY_REOPEN_TAB   = Qt.Key_T  # with Ctrl+Shift — reopen closed tab
 KEY_NEXT_TAB     = Qt.Key_Tab  # with Ctrl / Ctrl+Shift — cycle projects
 KEY_EXECUTE      = Qt.Key_F5  # trigger execute_chain(), same as StartNode's Launch button
+KEY_TOGGLE_PROJECT_INPUTS_PANEL = Qt.Key_I  # with Ctrl — show/hide the left Project Inputs dock
+KEY_TOGGLE_PROJECT_INPUTS_PANEL_ALT = Qt.Key_Q  # without modifiers - same as above
 
 # ── Keyboard Modifiers ────────────────────────────────────────────────────────
 MOD_NONE       = Qt.NoModifier

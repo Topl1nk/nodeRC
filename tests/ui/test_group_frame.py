@@ -17,7 +17,6 @@ from PyQt5.QtCore import QPointF, QRectF, Qt
 from PyQt5.QtGui import QKeyEvent
 from PyQt5.QtCore import QEvent
 
-from ui.editor_window import NodeEditorWindow
 from ui.graph_items import GroupFrameItem
 from ui.param_nodes import StringParamNode
 from ui.command_nodes import StartNode
@@ -26,15 +25,7 @@ from ui.graph_serialization import serialize_graph
 from ui import keymap
 import configuration as cfg
 
-
-@pytest.fixture(scope="session")
-def app():
-    return QApplication.instance() or QApplication([])
-
-
-@pytest.fixture
-def window(app):
-    return NodeEditorWindow()
+# app/window fixtures moved to tests/ui/conftest.py (shared across the Qt suite)
 
 
 def _param(window, x=0, y=0):
