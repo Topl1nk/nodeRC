@@ -730,12 +730,22 @@ class NodeScene(QGraphicsScene):
         if not win:
             return
 
+        # Anchor on scene_pos — already the exact spot the new node lands at
+        # (ghost_spawn_pos()/_drag_ghost_top_left, set by mouseReleaseEvent
+        # before calling here) — instead of the raw cursor position, so the
+        # menu opens visually out of the ghost silhouette that was already
+        # showing "the new node goes here" rather than wherever the mouse
+        # happened to be released. Falls back to screen_pos verbatim when
+        # there's no view to map through (still exact for the plain
+        # right-click case, where scene_pos already *is* the click point).
+        view = self.views()[0] if self.views() else None
+        anchor_pos = view.mapToGlobal(view.mapFromScene(scene_pos)) if view else screen_pos
+
         dialog = SearchMenuDialog(win.command_categories, win, source_socket=source_socket)
-        dialog.set_anchor_pos(screen_pos)
+        dialog.set_anchor_pos(anchor_pos)
 
         result = dialog.exec_()
 
-        view = self.views()[0] if self.views() else None
         if view and result != QDialog.Accepted and bool(QApplication.mouseButtons() & Qt.LeftButton):
             view._suppress_redelivered_click = True
 

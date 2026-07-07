@@ -392,6 +392,9 @@ QTreeWidget {{
     selection-background-color: {NODE_SELECTED_COLOR};
     selection-color: {CANVAS_BACKGROUND_COLOR};
 }}
+QTreeWidget::item {{
+    padding: 3px 2px;
+}}
 QTreeWidget::item:hover, QTreeWidget::item:selected {{
     background-color: {NODE_SELECTED_COLOR};
     color: {CANVAS_BACKGROUND_COLOR};

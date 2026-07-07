@@ -8,8 +8,8 @@ import re
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QTreeWidget, QTreeWidgetItem, QLabel, QGraphicsView, QGraphicsScene, QSizePolicy, QFrame, QWidget, QApplication
 )
-from PyQt5.QtCore import Qt, QEvent, QTimer
-from PyQt5.QtGui import QPainter, QColor
+from PyQt5.QtCore import Qt, QEvent, QTimer, QSize
+from PyQt5.QtGui import QPainter, QColor, QPixmap, QIcon
 
 from configuration import (
     SEARCH_DIALOG_WIDTH,
@@ -19,11 +19,42 @@ from ui.theme import NODE_BORDER_COLOR, TEXT_MUTED_COLOR, SEARCH_DIALOG_STYLESHE
 from localization import t
 from ui.param_nodes import PARAM_NODE_TYPES
 from ui.command_nodes import CommandNode
-from core.node_blueprint import resolve_param_type
+from core.node_blueprint import resolve_param_type, resolve_color_schema
 from core.app_prefs import get_search_usage, get_search_usage_after, record_search_usage
 from diagnostics import log_and_explain
 
 SUGGESTION_LIMIT = 6
+_SWATCH_DIAMETER = 10
+
+# One dot per socket color, built once and reused — the same color
+# vocabulary already painted on every socket/wire on the canvas
+# (SOCKET_COLOR_SCHEMA), so a row reads by its color at a glance instead of
+# needing a "[Prm]"/"[Cmd]" text tag to say what it is.
+_swatch_icon_cache: dict = {}
+
+
+def _swatch_icon(hex_color: str) -> QIcon:
+    icon = _swatch_icon_cache.get(hex_color)
+    if icon is None:
+        pixmap = QPixmap(_SWATCH_DIAMETER, _SWATCH_DIAMETER)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(hex_color))
+        painter.drawEllipse(0, 0, _SWATCH_DIAMETER, _SWATCH_DIAMETER)
+        painter.end()
+        icon = QIcon(pixmap)
+        _swatch_icon_cache[hex_color] = icon
+    return icon
+
+
+def _entry_color(payload: dict) -> str:
+    """The same socket color this payload's node would show on canvas —
+    per-type for a param, the flat exec grey for a command."""
+    if "param_type" in payload:
+        return resolve_color_schema(payload["param_type"])["socket"]
+    return resolve_color_schema("exec")["socket"]
 
 
 
@@ -111,6 +142,8 @@ class SearchMenuDialog(QDialog):
         self.tree.setVerticalScrollBar(UnifiedScrollBar())
         self.tree.setHeaderHidden(True)
         self.tree.setMouseTracking(True)
+        self.tree.setIconSize(QSize(_SWATCH_DIAMETER, _SWATCH_DIAMETER))
+        self.tree.setIndentation(14)
         self.tree.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.tree.itemSelectionChanged.connect(self._on_item_selected)
         self.tree.itemEntered.connect(self._on_item_hovered)
@@ -280,8 +313,13 @@ class SearchMenuDialog(QDialog):
 
     def _render_browse(self):
         """Empty query: a Suggested shortlist (only once there's usage
-        history for this context) on top, then the full browsable category
-        tree (params, then commands) as before."""
+        history for this context) on top, expanded; every other category
+        collapsed to its header. The old layout expanded every param and
+        every command pack immediately — dozens of rows all competing for
+        attention before the user typed a single character. Typing is the
+        primary path (the search bar has focus and a placeholder inviting
+        it); browsing a specific collapsed category is the fallback, one
+        click away, not the default view."""
         self.tree.clear()
         self._all_items = []
         self._suggestion_items = []
@@ -290,37 +328,54 @@ class SearchMenuDialog(QDialog):
         if suggestions:
             sug_cat = QTreeWidgetItem(self.tree, [f"★ {t('tree_header_suggested')}"])
             sug_cat.setExpanded(True)
+            self._style_category_header(sug_cat)
             for idx, entry in enumerate(suggestions):
-                item = QTreeWidgetItem(sug_cat, [f"  {idx + 1}  {entry['label']}"])
+                item = QTreeWidgetItem(sug_cat, [f"{idx + 1}   {entry['label']}"])
+                item.setIcon(0, _swatch_icon(_entry_color(entry["payload"])))
                 item.setData(0, Qt.UserRole, entry["payload"])
                 self._apply_compat_style(item, entry["payload"])
                 self._all_items.append(item)
                 self._suggestion_items.append(item)
 
-        param_cat = QTreeWidgetItem(self.tree, [f"[Prm] {t('tree_header_params')}"])
-        param_cat.setExpanded(True)
+        param_cat = QTreeWidgetItem(self.tree, [t("tree_header_params")])
+        self._style_category_header(param_cat)
         for label, payload in self._param_specs:
-            item = QTreeWidgetItem(param_cat, [f"  {label}"])
+            item = QTreeWidgetItem(param_cat, [label])
+            item.setIcon(0, _swatch_icon(_entry_color(payload)))
             item.setData(0, Qt.UserRole, payload)
             self._apply_compat_style(item, payload)
             self._all_items.append(item)
 
+        exec_color = resolve_color_schema("exec")["socket"]
         for pack_name, pack_sections in self.command_categories.items():
-            pack_item = QTreeWidgetItem(self.tree, [f"[Cmd] {pack_name}"])
-            pack_item.setExpanded(True)
+            pack_item = QTreeWidgetItem(self.tree, [pack_name])
+            self._style_category_header(pack_item)
             for sec_name, subsections in pack_sections.items():
                 sec_item = QTreeWidgetItem(pack_item, [sec_name])
+                self._style_category_header(sec_item)
                 for subsec_name, commands in subsections.items():
-                    parent_item = sec_item if subsec_name == "__root__" \
-                        else QTreeWidgetItem(sec_item, [subsec_name])
+                    parent_item = sec_item
+                    if subsec_name != "__root__":
+                        parent_item = QTreeWidgetItem(sec_item, [subsec_name])
+                        self._style_category_header(parent_item)
                     for cmd in commands:
-                        item = QTreeWidgetItem(parent_item, [f"  • {cmd['display']}"])
+                        item = QTreeWidgetItem(parent_item, [cmd["display"]])
+                        item.setIcon(0, _swatch_icon(exec_color))
                         item.setData(0, Qt.UserRole, cmd)
                         self._apply_compat_style(item, cmd)
                         self._all_items.append(item)
 
         if suggestions:
             self._select_first_match()
+
+    @staticmethod
+    def _style_category_header(item):
+        """Bold, muted — a header reads as chrome to skim past, not content
+        to parse, now that it no longer carries a "[Prm]"/"[Cmd]" text tag."""
+        font = item.font(0)
+        font.setBold(True)
+        item.setFont(0, font)
+        item.setForeground(0, QColor(TEXT_MUTED_COLOR))
 
     def _render_results(self, query):
         """Non-empty query: a flat list ranked best-first, category noise
@@ -337,7 +392,8 @@ class SearchMenuDialog(QDialog):
         self.tree.clear()
         self._all_items = []
         for _, entry in scored[:SEARCH_RESULTS_LIMIT]:
-            item = QTreeWidgetItem(self.tree, [f"  {entry['label']}"])
+            item = QTreeWidgetItem(self.tree, [entry["label"]])
+            item.setIcon(0, _swatch_icon(_entry_color(entry["payload"])))
             item.setData(0, Qt.UserRole, entry["payload"])
             self._apply_compat_style(item, entry["payload"])
             self._all_items.append(item)
