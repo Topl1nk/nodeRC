@@ -179,6 +179,14 @@ GHOST_SPLICE_DETACH_DISTANCE = 40
 # silhouette, and a plain click/drag-release spawns it directly, skipping
 # the search menu entirely for the common "I know what comes next" case.
 GHOST_CANDIDATE_LIMIT = 6
+# How close (px, scene units) a far node's own exec row must be to the
+# source socket's row for a plain hover to treat it as an alignable
+# long-range target (NodeScene._ghost_ray_socket) — "roughly level", not
+# exact; about half of the ghost's own (header + one row) placeholder
+# height. Connecting to a node found this way also snaps its Y to match
+# the source's (NodeScene._align_ray_target) — unlike a near
+# _ghost_collision_socket match, which never moves anything.
+GHOST_RAY_Y_TOLERANCE = GHOST_NODE_HEIGHT / 2
 
 # ── Parameter typing ───────────────────────────────────────────────────────────
 # Command parameters whose name marks them as whole numbers, promoted from the

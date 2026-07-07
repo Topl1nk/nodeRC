@@ -262,7 +262,15 @@ class SocketItem(QGraphicsObject):
         scene = self.scene()
         if scene is not None and hasattr(scene, "_ghost_collision_socket"):
             rect = QRectF(ghost.pos(), QSizeF(ghost._width, ghost._height))
-            ghost.set_collision_target(scene._ghost_collision_socket(self, rect))
+            near = scene._ghost_collision_socket(self, rect)
+            ghost.set_collision_target(near)
+            # Nothing right next to the ghost's own fixed spot — scan
+            # further out along the row for a node roughly level with the
+            # source (NodeScene._ghost_ray_socket) before giving up to the
+            # plain generic silhouette. A near collision always wins if it
+            # already matched, so this only ever runs as a fallback.
+            if near is None and hasattr(scene, "_ghost_ray_socket"):
+                ghost.set_ray_target(scene._ghost_ray_socket(self))
         self._force_ghost_repaint()
 
     def _hide_ghost(self) -> None:
@@ -450,6 +458,17 @@ class _SocketGhostPreview(QGraphicsItem):
         # as "release here to connect directly into this existing node"
         # (see set_collision_target/paint).
         self._collision_target: Optional["SocketItem"] = None
+        # A socket found further out along the same row (NodeScene.
+        # _ghost_ray_socket, beyond the near _collision_target's own rect)
+        # whose node sits roughly level with the source — mutually
+        # exclusive with _collision_target (see set_ray_target/
+        # set_collision_target, which each clear the other) and kept as its
+        # own field, not folded into _collision_target, so
+        # NodeScene.mouseReleaseEvent can tell "release here connects
+        # straight in" (near collision, nothing moves) apart from "release
+        # here connects *and* nudges that node's Y to line up" (ray match —
+        # see _align_ray_target).
+        self._ray_target: Optional["SocketItem"] = None
         # The ranked next-node candidates for this hover (SocketItem.
         # _ranked_ghost_candidates, set fresh on every _show_ghost) and
         # which one, if any, side-button cycling has landed on — -1 means
@@ -506,6 +525,7 @@ class _SocketGhostPreview(QGraphicsItem):
         self._height = GHOST_NODE_HEIGHT
         self._drag_override = None
         self._collision_target = None
+        self._ray_target = None
         self.setPos(self._socket.ghost_spawn_pos())
 
     def set_drag_override(self, scene_top_left: Optional[QPointF]) -> None:
@@ -518,9 +538,19 @@ class _SocketGhostPreview(QGraphicsItem):
         self.prepareGeometryChange()
         self._drag_override = scene_top_left
         self._collision_target = None
+        self._ray_target = None
         self._width = GHOST_NODE_WIDTH
         self._height = GHOST_NODE_HEIGHT
         self.setPos(scene_top_left)
+
+    def _adopt_target_node(self, target: "SocketItem") -> None:
+        """Shared by set_collision_target/set_ray_target: the ghost drops
+        its own generic placeholder and takes on ``target``'s own node's
+        exact position/size verbatim."""
+        node = target.meta_node
+        self._width = node.node_def.width
+        self._height = node.node_def.body_height
+        self.setPos(node.pos())
 
     def set_collision_target(self, target: Optional["SocketItem"]) -> None:
         """``target`` not None: the ghost adopts that socket's own node's
@@ -528,14 +558,32 @@ class _SocketGhostPreview(QGraphicsItem):
         placeholder — see paint(), which also drops the header/body fill in
         this mode (the real node underneath already shows that) for just a
         highlight outline plus a wire straight to ``target``'s own actual
-        socket position."""
+        socket position. Mutually exclusive with a ray target (see
+        _ray_target's own docstring) — a near collision always wins if both
+        would otherwise apply."""
         self.prepareGeometryChange()
         self._collision_target = target
+        self._ray_target = None
         if target is not None:
-            node = target.meta_node
-            self._width = node.node_def.width
-            self._height = node.node_def.body_height
-            self.setPos(node.pos())
+            self._adopt_target_node(target)
+
+    def set_ray_target(self, target: Optional["SocketItem"]) -> None:
+        """Same adoption/visual as set_collision_target, for a node found
+        further out along the row (NodeScene._ghost_ray_socket) instead of
+        directly under the ghost's own near rect — see _ray_target's own
+        docstring for why this is a separate field rather than folded into
+        _collision_target."""
+        self.prepareGeometryChange()
+        self._ray_target = target
+        self._collision_target = None
+        if target is not None:
+            self._adopt_target_node(target)
+
+    def _active_target(self) -> Optional["SocketItem"]:
+        """Whichever of the two mutually-exclusive adopted targets is
+        currently set — paint()/_facing_socket_pos treat them identically;
+        only NodeScene.mouseReleaseEvent (align-on-connect) cares which."""
+        return self._collision_target or self._ray_target
 
     def set_splice_target(self, other: Optional["SocketItem"]) -> None:
         self._splice_target = other
@@ -553,8 +601,9 @@ class _SocketGhostPreview(QGraphicsItem):
         In collision mode this is instead the real target socket's own
         actual position (mapped into the ghost's local coordinates) —
         wherever that really is, not a synthetic mirror of it."""
-        if self._collision_target is not None:
-            return self.mapFromScene(self._collision_target.scene_center())
+        active_target = self._active_target()
+        if active_target is not None:
+            return self.mapFromScene(active_target.scene_center())
         x = 0.0 if self._direction() > 0 else self._width
         return QPointF(x, NODE_HEADER_HEIGHT / 2.0)
 
@@ -597,13 +646,16 @@ class _SocketGhostPreview(QGraphicsItem):
         sock_pos = self._facing_socket_pos()
         source_local = self.mapFromScene(self._socket.scene_center())
 
-        if self._collision_target is not None:
-            # Collision: the ghost has adopted the real target node's own
-            # position/size verbatim (set_collision_target) — the real node
-            # underneath already shows its own body/header, so this only
-            # adds a bright highlight outline around it plus the wire
-            # straight to its own real socket, instead of redrawing a
-            # second (redundant, muddying) copy of its body/header fill.
+        if self._active_target() is not None:
+            # Collision or ray match: the ghost has adopted the real target
+            # node's own position/size verbatim (set_collision_target/
+            # set_ray_target) — the real node underneath already shows its
+            # own body/header, so this only adds a bright highlight outline
+            # around it plus the wire straight to its own real socket,
+            # instead of redrawing a second (redundant, muddying) copy of
+            # its body/header fill. Both read identically here — only
+            # NodeScene.mouseReleaseEvent (align-on-connect) treats a ray
+            # match differently once it's actually confirmed.
             painter.setPen(QPen(QColor(*GHOST_CONNECTION_RGBA), GHOST_CONNECTION_WIDTH, Qt.SolidLine))
             painter.drawLine(source_local, sock_pos)
             painter.setPen(QPen(QColor(*GHOST_NODE_BORDER_RGBA), GHOST_NODE_BORDER_WIDTH * 2, Qt.SolidLine))

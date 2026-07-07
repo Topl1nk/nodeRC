@@ -17,7 +17,7 @@ from configuration import (
     SCENE_INITIAL_X, SCENE_INITIAL_Y, SCENE_INITIAL_WIDTH, SCENE_INITIAL_HEIGHT,
     DRAG_PREVIEW_LINE_WIDTH, NODE_DRAG_Z, GROUP_FRAME_HEADER_HEIGHT,
     NODE_LOD_DETAIL_SCALE, GHOST_NODE_WIDTH, GHOST_NODE_HEIGHT, NODE_HEADER_HEIGHT,
-    GHOST_SPLICE_DETACH_DISTANCE,
+    GHOST_SPLICE_DETACH_DISTANCE, GHOST_RAY_Y_TOLERANCE,
 )
 from ui.search_menu import SearchMenuDialog
 from ui.graph_items import Connection, SocketItem, MetaNode, GroupFrameItem, snap_to_grid
@@ -194,12 +194,31 @@ class NodeScene(QGraphicsScene):
             item.dest.meta_node.update()
 
     def removeItem(self, item):
+        if item.scene() is not self:
+            # Already gone — some other path (MetaNode._swap_node's own
+            # scene.removeItem(self), _delete_node_bridging_exec, a second
+            # clear_graph pass) already removed this exact item. Qt's own
+            # QGraphicsScene.removeItem() prints a loud "item's scene is
+            # different from this scene" warning for what is otherwise
+            # already a no-op; skip straight to it instead of letting Qt
+            # complain about work that was never going to happen anyway.
+            return
         super().removeItem(item)
         if isinstance(item, MetaNode):
             try:
                 self._meta_nodes.remove(item)
             except ValueError:
                 pass
+            # A socket's ghost preview (SocketItem._ensure_ghost) is a
+            # top-level scene item, never a Qt child of its socket/node —
+            # removing the node here would otherwise leave any ghost it
+            # ever built for a hover dangling in the scene forever
+            # (invisible, but still alive and still holding a reference
+            # back to this now-removed node/socket, leaking both).
+            for socket in item.sockets.values():
+                ghost = getattr(socket, "_ghost", None)
+                if ghost is not None and ghost.scene() is self:
+                    super().removeItem(ghost)
         elif isinstance(item, GroupFrameItem):
             try:
                 self._group_frames.remove(item)
@@ -429,12 +448,18 @@ class NodeScene(QGraphicsScene):
             ghost.set_splice_target(None)
             self._set_splice_hidden(None)
         else:
-            ghost.set_drag_override(top_left)
-            original_dest = self._drag_original_dest
-            if original_dest is not None:
-                spliced = self._splice_still_attached(source, original_dest, cursor_scene_pos)
-                ghost.set_splice_target(original_dest if spliced else None)
-                self._set_splice_hidden(self._find_connection_between(source, original_dest) if spliced else None)
+            ray_socket = self._ghost_ray_socket(source)
+            if ray_socket is not None:
+                ghost.set_ray_target(ray_socket)
+                ghost.set_splice_target(None)
+                self._set_splice_hidden(None)
+            else:
+                ghost.set_drag_override(top_left)
+                original_dest = self._drag_original_dest
+                if original_dest is not None:
+                    spliced = self._splice_still_attached(source, original_dest, cursor_scene_pos)
+                    ghost.set_splice_target(original_dest if spliced else None)
+                    self._set_splice_hidden(self._find_connection_between(source, original_dest) if spliced else None)
         if ghost.isVisible():
             source._force_ghost_repaint()
         else:
@@ -457,6 +482,61 @@ class NodeScene(QGraphicsScene):
                 if s.sock_def.kind != source.sock_def.kind and s.sock_def.is_exec == source.sock_def.is_exec:
                     return s
         return None
+
+    def _ghost_ray_socket(self, source: SocketItem) -> Optional[SocketItem]:
+        """A compatible socket on a node further out along the same row
+        than _ghost_collision_socket's own near rect reaches — scanning
+        outward in the drag direction (right off an output socket, left off
+        an input one) for the *closest* node whose own exec row sits within
+        GHOST_RAY_Y_TOLERANCE of the source's. Restricted to nodes at least
+        partially inside the current viewport — an off-screen node has no
+        visual confirmation of what "hits" it, so hovering never reaches
+        across a huge scene to one the user can't actually see land.
+        Connecting to one found this way additionally snaps its Y to the
+        source's row (_align_ray_target); a near collision never does."""
+        view = self.views()[0] if self.views() else None
+        if view is None or source is None:
+            return None
+        visible_rect = view.mapToScene(view.viewport().rect()).boundingRect()
+        source_center = source.scene_center()
+        direction = 1 if source.sock_def.kind == "output" else -1
+
+        best_socket: Optional[SocketItem] = None
+        best_distance: Optional[float] = None
+        for node in self._meta_nodes:
+            if node is source.meta_node:
+                continue
+            node_rect = QRectF(node.pos(), QSizeF(node.node_def.width, node.node_def.body_height))
+            if not visible_rect.intersects(node_rect):
+                continue
+            node_exec_y = node.pos().y() + NODE_HEADER_HEIGHT / 2.0
+            if abs(node_exec_y - source_center.y()) > GHOST_RAY_Y_TOLERANCE:
+                continue
+            near_edge_x = node.pos().x() if direction > 0 else node.pos().x() + node.node_def.width
+            if (near_edge_x - source_center.x()) * direction <= 0:
+                continue  # behind the source, not ahead of it in the drag direction
+            distance = abs(near_edge_x - source_center.x())
+            if best_distance is not None and distance >= best_distance:
+                continue
+            for s in node.sockets.values():
+                if s.sock_def.kind != source.sock_def.kind and s.sock_def.is_exec == source.sock_def.is_exec:
+                    best_socket, best_distance = s, distance
+                    break
+        return best_socket
+
+    def _align_ray_target(self, source_socket: SocketItem, target_socket: SocketItem) -> None:
+        """The "align" half of the ray-target promise (_ghost_ray_socket) —
+        matches the far node's own top Y to the source node's. An exec
+        socket always sits at the same NODE_HEADER_HEIGHT/2 offset from its
+        own node's top regardless of width (the same reasoning
+        SocketItem.ghost_spawn_pos already uses for a freshly spawned
+        node), so equal top-Y is exactly what makes the two exec rows
+        level — turning "roughly aligned" into a perfectly straight wire.
+        Never touches X."""
+        target_node = target_socket.meta_node
+        source_top_y = source_socket.meta_node.pos().y()
+        if target_node.pos().y() != source_top_y:
+            target_node.setPos(target_node.pos().x(), source_top_y)
 
     def _set_splice_hidden(self, conn: Optional["Connection"]) -> None:
         """Keeps at most one real Connection hidden at a time — whichever
@@ -544,6 +624,12 @@ class NodeScene(QGraphicsScene):
             # still honors a collision that was already there from hover.
             ghost = source_socket._ghost if source_socket is not None else None
             collision_target = ghost._collision_target if ghost is not None else None
+            # A ray_target (NodeScene._ghost_ray_socket, a node further out
+            # along the row than collision_target's own near rect reaches)
+            # connects exactly like collision_target — the only difference
+            # is that landing on it also re-aligns that node's Y once the
+            # connection below is actually made (_align_ray_target).
+            ray_target = ghost._ray_target if ghost is not None else None
             # Read off the ghost before _cancel_connection_drag() below wipes
             # it (a fresh _show_ghost() call resets candidate selection) —
             # side-button cycling (SocketItem.mousePressEvent) may have
@@ -551,7 +637,7 @@ class NodeScene(QGraphicsScene):
             # collision (an existing socket to wire straight into) still
             # takes priority over it below.
             candidate_payload = ghost.selected_candidate_payload() if ghost is not None else None
-            target        = self._find_compatible_socket(event.scenePos()) or collision_target
+            target        = self._find_compatible_socket(event.scenePos()) or collision_target or ray_target
             original_dest = self._drag_original_dest
             press_pos     = self._drag_press_scene_pos
             self._cancel_connection_drag()
@@ -568,6 +654,8 @@ class NodeScene(QGraphicsScene):
                 if self.nodeEditorWindow:
                     self.nodeEditorWindow.connections.append(conn)
                     in_sock.meta_node._refresh_connections()
+                    if target is ray_target and ray_target is not None:
+                        self._align_ray_target(source_socket, ray_target)
                     self.nodeEditorWindow.push_undo_state()
             elif click_in_place and original_dest is not None and source_socket.sock_def.is_exec:
                 # The "-" affordance (SocketItem.paint/hoverEnterEvent): a
