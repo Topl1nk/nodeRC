@@ -295,13 +295,18 @@ def widget_stylesheets(p: WidgetPalette) -> Dict[str, str]:
         "tool": (
             f"QToolButton{{background:{p.button_bg};color:{BUTTON_TEXT_COLOR};"
             f"border:1px solid {p.border};border-radius:0px;font:{WIDGET_FONT};outline:none;}}"
-            # :hover covers a standalone QToolButton (e.g. in a plain
-            # QDialog), where Qt delivers Enter/Leave natively and reliably;
-            # [nodeHover="true"] additionally covers one embedded via
-            # QGraphicsProxyWidget (see the "field" note above), where it
-            # doesn't. Same rule, both hover mechanisms — nothing about this
-            # widget cares which one is driving it.
-            f"QToolButton:hover,QToolButton[nodeHover=\"true\"]{{background:{p.hover_bg};border-color:{p.highlight};}}"
+            # [nodeHover="true"] only — no native :hover branch. Every
+            # QToolButton in the app goes through _make_toolbtn
+            # (param_nodes.py), which always lives inside a
+            # QGraphicsProxyWidget on the canvas; there is no standalone
+            # QToolButton anywhere that would need the native pseudo-state.
+            # Keeping :hover as a belt-and-suspenders OR actively caused a
+            # stuck-lit outline: when the cursor left the button fast enough
+            # that the proxy never delivered a real Leave, Qt's native
+            # :hover latched true and the OR condition kept matching even
+            # after our own poll (view.py's _update_hovered_widget) correctly
+            # cleared nodeHover back to false — nothing could un-stick it.
+            f"QToolButton[nodeHover=\"true\"]{{background:{p.hover_bg};border-color:{p.highlight};}}"
             f"QToolButton:pressed{{background:{p.pressed_bg};}}"
         ),
         "push": (

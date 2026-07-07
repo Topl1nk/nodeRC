@@ -591,6 +591,14 @@ class ProjectInputsHoverFilter(QObject):
         panel = getattr(window, "project_inputs_panel", None)
         if panel is None or panel.is_pinned() or panel.is_interacting():
             return
+        # Any held mouse button means something is being dragged somewhere in
+        # the app — a node across the canvas, a rubber-band selection, a tab,
+        # the panel's own resize grip. The reveal/hide edge-proximity check
+        # has no idea what's under the cursor in any of those cases, so it
+        # must not fire mid-drag rather than special-casing every drag site
+        # individually (ст. 14.3: one common guard, not patches per drag kind).
+        if QApplication.mouseButtons() != Qt.NoButton:
+            return
         local = window.mapFromGlobal(QCursor.pos())
         if not window.rect().contains(local):
             return

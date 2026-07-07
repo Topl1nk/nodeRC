@@ -17,9 +17,9 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import (
     QPen, QBrush, QColor, QPainterPath, QFont, QFontMetrics, QPainter, QPolygonF,
-    QCursor,
+    QCursor, QRadialGradient,
 )
-from PyQt5.QtCore import QRectF, Qt, QPoint, QPointF, QTimer
+from PyQt5.QtCore import QRectF, Qt, QPoint, QPointF, QSizeF, QTimer
 
 from localization import t
 from configuration import (
@@ -30,14 +30,19 @@ from configuration import (
     SOCKET_HOVER_COLOR, NODE_SELECTED_COLOR, NODE_HOVER_COLOR, NODE_HOVER_BORDER_WIDTH,
     CONNECTION_SELECTED_COLOR, TEXT_COLOR,
     BEZIER_CTRL_FACTOR, BEZIER_CTRL_MIN,
-    SOCKET_BORDER_DARKEN, SOCKET_BORDER_WIDTH,
+    SOCKET_BORDER_WIDTH, SOCKET_RING_TRIM_WIDTH,
+    SOCKET_EXEC_HOVER_GROW, SOCKET_PLUS_GLYPH_SCALE, SOCKET_PLUS_GLYPH_WIDTH,
+    GHOST_NODE_GAP_CELLS, GHOST_NODE_WIDTH, GHOST_NODE_HEIGHT, GHOST_NODE_BORDER_WIDTH,
+    GHOST_NODE_FILL_RGBA, GHOST_NODE_HEADER_RGBA, GHOST_NODE_BORDER_RGBA, GHOST_SOCKET_RGBA,
+    GHOST_CONNECTION_RGBA, GHOST_CONNECTION_WIDTH,
+    CANVAS_BACKGROUND_COLOR, SOCKET_UNCONNECTED_CENTER_COLOR,
     CONNECTION_EXEC_WIDTH, CONNECTION_EXEC_SELECTED_WIDTH,
     CONNECTION_PARAM_WIDTH, CONNECTION_PARAM_SELECTED_WIDTH,
     GRID_SIZE_SMALL, NODE_POPUP_Z, NODE_COMBO_POPUP_PROXY_Z,
     VECTOR_COLLAPSE_GLYPH, VECTOR_COLLAPSE_GLYPH_MIRRORED, VECTOR_EXPAND_GLYPH, VECTOR_TOGGLE_WIDTH,
     NODE_SELECTION_OVERLAY_RGBA, NODE_SELECTION_OVERLAY_Z, NODE_SOCKET_Z,
     CONNECTION_Z,
-    UI_FONT_FAMILY, NODE_LABEL_FONT_SIZE, NODE_RENAME_FONT_SIZE,
+    UI_FONT_FAMILY, NODE_LABEL_FONT_SIZE, NODE_RENAME_FONT_SIZE, SOCKET_LABEL_OUTLINE_WIDTH,
     TINT_BODY_DARKEN, TINT_TITLE_LUMINANCE_THRESHOLD,
     PARAM_NODE_HEADER_FROM_SOCKET, HOTKEY_HINTS,
 )
@@ -60,6 +65,16 @@ from ui.group_frame import GroupFrameItem                            # noqa: F40
 from ui.widgets import InsetFillCheckBox, suppress_default_selection_chrome  # noqa: F401
 
 
+def snap_to_grid(value: float) -> float:
+    """Round ``value`` to the nearest grid line — the exact formula
+    MetaNode.itemChange already applies to every node position change
+    (drag, paste, spawn), so every node placed anywhere always lands on the
+    grid. SocketItem.ghost_spawn_pos reuses this same function so the ghost
+    preview shows precisely where a spawned node will actually land, not an
+    unsnapped approximation of it."""
+    return round(value / GRID_SIZE_SMALL) * GRID_SIZE_SMALL
+
+
 class SocketItem(QGraphicsObject):
     """
     Single socket visual.
@@ -76,19 +91,48 @@ class SocketItem(QGraphicsObject):
         self.meta_node: MetaNode = parent
         self._radius  = NODE_EXEC_SOCKET_HALFSIZE if sock_def.is_exec else NODE_PARAM_SOCKET_RADIUS
         self._hovered = False
+        # Maintained by NodeScene.addItem/removeItem — the single choke point
+        # every Connection passes through regardless of which of the many
+        # call sites created/removed it (ст. 14.3). A count, not a bool: a
+        # param output can fan out to several wires (see
+        # NodeScene.enforce_connection_rules — only exec output and any
+        # input are capped at one).
+        self._connection_count = 0
+        # Lazily built on first hover (most sockets are never hovered in a
+        # given session) — see _ensure_ghost/_SocketGhostPreview.
+        self._ghost: Optional["_SocketGhostPreview"] = None
 
         self.setFlag(QGraphicsItem.ItemIsSelectable, False)
         self.setAcceptHoverEvents(True)
         self.setZValue(NODE_SOCKET_Z)
         self.setPos(node_def.socket_x(sock_def.kind), node_def.socket_y(row, sock_def.is_exec))
 
+    def _outer_radius(self) -> float:
+        """Total visual extent — ring + both keylines — at normal zoom;
+        bare radius at LOD-far (paint() skips the ring layers there)."""
+        if getattr(self.meta_node, "_lod_far", False):
+            return self._radius
+        return self._effective_radius() + SOCKET_BORDER_WIDTH / 2.0 + SOCKET_RING_TRIM_WIDTH
+
     def boundingRect(self) -> QRectF:
-        r = self._radius + 3
+        r = self._outer_radius() + 3
         return QRectF(-r, -r, 2 * r, 2 * r)
 
-    def shape(self) -> QPainterPath:
+    def _effective_radius(self) -> float:
+        """Base radius, grown by SOCKET_EXEC_HOVER_GROW while an exec socket
+        is hovered — the enlarge-on-hover the task asked for. Param sockets
+        never grow (only their fill color changes on hover, as before); LOD-
+        far never grows (see paint(), which skips the ring entirely there)."""
+        if self.sock_def.is_exec and self._hovered and not getattr(self.meta_node, "_lod_far", False):
+            return self._radius + SOCKET_EXEC_HOVER_GROW
+        return self._radius
+
+    def _shape_at(self, r: float) -> QPainterPath:
+        """Pure geometry — diamond (exec) / circle (param) / LOD-far square —
+        at a caller-chosen radius ``r``. ``shape()`` and ``paint()``'s ring
+        layers both build on this instead of repeating the exec/param/LOD
+        branch three times over."""
         path = QPainterPath()
-        r = self._radius
         if getattr(self.meta_node, "_lod_far", False):
             path.addRect(QRectF(-r, -r, 2 * r, 2 * r))
         elif self.sock_def.is_exec:
@@ -101,35 +145,162 @@ class SocketItem(QGraphicsObject):
             path.addEllipse(QPointF(0, 0), r, r)
         return path
 
+    def shape(self) -> QPainterPath:
+        return self._shape_at(self._outer_radius())
+
+    def is_connected(self) -> bool:
+        return self._connection_count > 0
+
     def paint(self, painter: QPainter, option, widget=None):
         painter.setRenderHint(QPainter.Antialiasing)
-        color  = QColor(SOCKET_HOVER_COLOR if self._hovered else self.sock_def.color)
-        border = QPen(color.darker(SOCKET_BORDER_DARKEN), SOCKET_BORDER_WIDTH)
-        r = self._radius
-        painter.setPen(border)
-        painter.setBrush(QBrush(color))
+        painter.setPen(Qt.NoPen)
+        main_color = QColor(SOCKET_HOVER_COLOR if self._hovered else self.sock_def.color)
+
         if self.meta_node._lod_far:
-            # A square reads as a socket "dot" from a distance without the
-            # extra vertices a diamond/circle costs to rasterize — plenty at
-            # a zoom where the exec/param shape distinction isn't legible
-            # anyway.
-            painter.drawRect(QRectF(-r, -r, 2 * r, 2 * r))
-        elif self.sock_def.is_exec:
-            painter.drawPolygon(QPolygonF([
-                QPointF(0, -r), QPointF(r, 0),
-                QPointF(0,  r), QPointF(-r, 0),
-            ]))
+            # Simplified far-LOD dot: flat fill/hollow, no ring layers — the
+            # keyline trim is imperceptible at this zoom and not worth the
+            # extra fills across every socket on screen (ст. 9.1).
+            painter.setBrush(QBrush(main_color) if self.is_connected() else Qt.NoBrush)
+            painter.drawPath(self._shape_at(self._radius))
+            return
+
+        # Ring built from outside in: a 1px keyline (canvas color, or the
+        # node's own selection white while the owning node is selected),
+        # the main colored ring (SOCKET_BORDER_WIDTH), then a second 1px
+        # keyline (always canvas color, never selection-tinted) before the
+        # true center. A connected socket's center fills solid to read as
+        # "wired up"; an unconnected one gets a radial gradient from the
+        # inner keyline's own color down to a darker center — a cheap paint
+        # trick that *looks* like the canvas shows through, with no actual
+        # masking of the node's body/header/border needed.
+        r = self._effective_radius()
+        main_half = SOCKET_BORDER_WIDTH / 2.0
+        trim = SOCKET_RING_TRIM_WIDTH
+        outer_edge = self._shape_at(r + main_half + trim)
+        outer_main = self._shape_at(r + main_half)
+        inner_main = self._shape_at(r - main_half)
+        inner_edge = self._shape_at(r - main_half - trim)
+
+        outer_trim_color = NODE_SELECTED_COLOR if self.meta_node._is_visually_selected() else CANVAS_BACKGROUND_COLOR
+        painter.setBrush(QBrush(QColor(outer_trim_color)))
+        painter.drawPath(outer_edge.subtracted(outer_main))
+
+        painter.setBrush(QBrush(main_color))
+        painter.drawPath(outer_main.subtracted(inner_main))
+
+        painter.setBrush(QBrush(QColor(CANVAS_BACKGROUND_COLOR)))
+        painter.drawPath(inner_main.subtracted(inner_edge))
+
+        if self.is_connected():
+            painter.setBrush(QBrush(main_color))
         else:
-            painter.drawEllipse(QPointF(0, 0), r, r)
+            center_r = r - main_half - trim
+            gradient = QRadialGradient(QPointF(0, 0), max(center_r, 1.0))
+            gradient.setColorAt(0.0, QColor(SOCKET_UNCONNECTED_CENTER_COLOR))
+            gradient.setColorAt(1.0, QColor(CANVAS_BACKGROUND_COLOR))
+            painter.setBrush(QBrush(gradient))
+        painter.drawPath(inner_edge)
+
+        # Exec-only hover affordance: a white "+" marking "click/drag here to
+        # spawn a node" — sized off the already-grown radius so it scales
+        # with the enlarge effect instead of looking fixed against it.
+        if self.sock_def.is_exec and self._hovered:
+            arm = r * SOCKET_PLUS_GLYPH_SCALE
+            painter.setPen(QPen(QColor(NODE_SELECTED_COLOR), SOCKET_PLUS_GLYPH_WIDTH, Qt.SolidLine, Qt.RoundCap))
+            painter.drawLine(QPointF(-arm, 0), QPointF(arm, 0))
+            painter.drawLine(QPointF(0, -arm), QPointF(0, arm))
+
+    def _ensure_ghost(self) -> "_SocketGhostPreview":
+        if self._ghost is None:
+            self._ghost = _SocketGhostPreview(self)
+        return self._ghost
+
+    def _show_ghost(self) -> None:
+        self._ensure_ghost().setVisible(True)
+        self._force_ghost_repaint()
+
+    def _hide_ghost(self) -> None:
+        if self._ghost is not None:
+            self._ghost.setVisible(False)
+            self._force_ghost_repaint()
+
+    def _force_ghost_repaint(self) -> None:
+        """``setVisible()`` alone only *schedules* a repaint through Qt's own
+        dirty-region tracking — the same unreliable-under-SmartViewportUpdate
+        mechanism documented in GraphicsView._update_hovered_node and fixed
+        the same way in MetaNode._refresh_selection_visuals and
+        GraphicsView.mouseMoveEvent's rubber-band handling: a translucent
+        overlay toggling on/off left a ghost trail behind (its own two
+        opposite edges' semi-transparent strokes overlapping) until an
+        unrelated repaint happened to touch that exact pixel region. A
+        precise mapped-rect update() (the first attempt at this) still left
+        the trail — the ghost's own dashed border and diamond socket extend
+        antialiasing past a tightly computed rect in a way a plain node's
+        sceneBoundingRect math doesn't account for — so this forces a full
+        viewport repaint instead, the same blanket fix already proven for
+        the rubber band: cheap, since showing/hiding the ghost is a rare
+        hover transition, not a hot per-frame path.
+        """
+        win = editor_window_of(self.meta_node)
+        if win is None:
+            return
+        win.view.viewport().update()
+
+    def ghost_spawn_pos(self) -> QPointF:
+        """Scene position (top-left — matches add_command_node/add_param_node's
+        ``pos`` convention) where a node spawned from this socket lands. The
+        exact same anchor _SocketGhostPreview shows on hover, so what the
+        ghost promises is what the user gets regardless of where a drag
+        happens to actually end (NodeScene.mouseReleaseEvent uses this
+        instead of the raw drop position for an exec source). Side is
+        automatic — output sockets spawn to the right, input sockets to the
+        left — never a per-drag decision.
+
+        The gap is measured from the *source node's own edge* (not the
+        socket — though for an exec socket, socket_x() already puts it
+        exactly on that edge, so this is really the same X either way) at
+        GHOST_NODE_GAP_CELLS grid cells; the X result is snapped to the
+        grid via snap_to_grid — the same function MetaNode.itemChange
+        applies to every node position change, so a node spawned here lands
+        exactly where every other node (dragged, pasted, spawned from empty
+        space) already always lands: on the grid.
+
+        Y is the source node's own top-left Y, not an independent
+        computation — an exec socket always sits at the same
+        NODE_HEADER_HEIGHT/2 offset from its own node's top, regardless of
+        that node's width, so matching the ghost's top to the source's top
+        puts *both* sockets at exactly the same absolute Y: a perfectly
+        straight connection line, dead right or dead left, never one cell
+        off. It comes out grid-aligned for free too — the source node's own
+        Y is already a grid multiple (itemChange), so there's nothing left
+        to snap.
+        """
+        node = self.meta_node
+        gap = GRID_SIZE_SMALL * GHOST_NODE_GAP_CELLS
+        if self.sock_def.kind == "output":
+            x = node.pos().x() + node.node_def.width + gap
+        else:
+            x = node.pos().x() - gap - GHOST_NODE_WIDTH
+        return QPointF(snap_to_grid(x), node.pos().y())
 
     def hoverEnterEvent(self, event):
+        self.prepareGeometryChange()  # boundingRect/shape grow for exec sockets — see _effective_radius
         self._hovered = True
         self.update()
+        if self.sock_def.is_exec:
+            self.meta_node.update()  # the node's own mask must grow/shrink to match
+            scene = self.scene()
+            if not (scene is not None and getattr(scene, "_drag_active", False)):
+                self._show_ghost()
         super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event):
+        self.prepareGeometryChange()
         self._hovered = False
         self.update()
+        if self.sock_def.is_exec:
+            self.meta_node.update()
+            self._hide_ghost()
         super().hoverLeaveEvent(event)
 
     def mousePressEvent(self, event):
@@ -141,6 +312,97 @@ class SocketItem(QGraphicsObject):
 
     def scene_center(self) -> QPointF:
         return self.mapToScene(QPointF(0, 0))
+
+
+class _SocketGhostPreview(QGraphicsItem):
+    """A realistic but colorless (monochrome white, at varying opacity) node
+    silhouette + dashed wire, shown while hovering an exec socket
+    (SocketItem.hoverEnterEvent) — previews exactly where
+    SocketItem.ghost_spawn_pos() will place a node spawned from here: a
+    header band, a body, and a facing socket on whichever edge points back
+    at the real source socket — everything a real node has *except* a title
+    or field content, since this isn't previewing any specific node type.
+    A child of the socket, so it moves for free with the node; never accepts
+    mouse input of its own (setAcceptedMouseButtons(NoButton)) since it's
+    purely an indicator, not an interactive element.
+    """
+
+    def __init__(self, socket: "SocketItem"):
+        super().__init__(socket)
+        self._socket = socket
+        self.setAcceptedMouseButtons(Qt.NoButton)
+        self.setZValue(NODE_SOCKET_Z + 1)
+        self.setVisible(False)
+
+    def _direction(self) -> int:
+        return 1 if self._socket.sock_def.kind == "output" else -1
+
+    def _local_rect(self) -> QRectF:
+        """The ghost's own body rect, in socket-local coordinates — derived
+        from the socket's own ghost_spawn_pos() (scene, grid-snapped)
+        mapped back into this coordinate space, so the drawn preview always
+        matches exactly where the node will actually land, on the grid."""
+        top_left = self._socket.mapFromScene(self._socket.ghost_spawn_pos())
+        return QRectF(top_left, QSizeF(GHOST_NODE_WIDTH, GHOST_NODE_HEIGHT))
+
+    def _header_rect(self) -> QRectF:
+        r = self._local_rect()
+        return QRectF(r.left(), r.top(), r.width(), NODE_HEADER_HEIGHT)
+
+    def _facing_socket_pos(self) -> QPointF:
+        """Where the ghost's own socket sits: on whichever edge faces the
+        real source socket, at header mid-height — the same position
+        convention a real exec socket uses (NodeDef.socket_y for is_exec)."""
+        r = self._local_rect()
+        x = r.left() if self._direction() > 0 else r.right()
+        return QPointF(x, r.top() + NODE_HEADER_HEIGHT / 2.0)
+
+    def boundingRect(self) -> QRectF:
+        return self._local_rect().adjusted(-6, -6, 6, 6)
+
+    def paint(self, painter: QPainter, option, widget=None):
+        painter.setRenderHint(QPainter.Antialiasing)
+        rect = self._local_rect()
+        sock_pos = self._facing_socket_pos()
+
+        # Preview wire: the real source socket's center -> the ghost's own
+        # facing socket, not just to the rect's edge — so it visibly lands
+        # on the socket silhouette below instead of stopping short of it.
+        # Solid, like a real Connection — dashed was reserved for the live
+        # drag-preview line (NodeScene._drag_preview_line), and this isn't one.
+        painter.setPen(QPen(QColor(*GHOST_CONNECTION_RGBA), GHOST_CONNECTION_WIDTH, Qt.SolidLine))
+        painter.drawLine(QPointF(0, 0), sock_pos)
+
+        # Body then header, same layering (and same NODE_HEADER_HEIGHT) a
+        # real node's own paint() uses — just monochrome white at low alpha
+        # instead of the node's own header/body colors, and no title/fields.
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(QColor(*GHOST_NODE_FILL_RGBA)))
+        painter.drawRect(rect)
+        painter.setBrush(QBrush(QColor(*GHOST_NODE_HEADER_RGBA)))
+        painter.drawRect(self._header_rect())
+
+        painter.setPen(QPen(QColor(*GHOST_NODE_BORDER_RGBA), GHOST_NODE_BORDER_WIDTH, Qt.DashLine))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(rect)
+
+        # The facing socket itself — a diamond matching a real exec socket's
+        # own silhouette (NODE_EXEC_SOCKET_HALFSIZE) and, like any real
+        # unconnected socket (SocketItem.paint), filled with the same radial
+        # gradient from SOCKET_UNCONNECTED_CENTER_COLOR to
+        # CANVAS_BACKGROUND_COLOR instead of left hollow — so the preview
+        # reads as "a real node's socket connects here", not an arbitrary dot.
+        r = NODE_EXEC_SOCKET_HALFSIZE
+        diamond = QPolygonF([
+            sock_pos + QPointF(0, -r), sock_pos + QPointF(r, 0),
+            sock_pos + QPointF(0,  r), sock_pos + QPointF(-r, 0),
+        ])
+        gradient = QRadialGradient(sock_pos, max(r - GHOST_NODE_BORDER_WIDTH, 1.0))
+        gradient.setColorAt(0.0, QColor(SOCKET_UNCONNECTED_CENTER_COLOR))
+        gradient.setColorAt(1.0, QColor(CANVAS_BACKGROUND_COLOR))
+        painter.setPen(QPen(QColor(*GHOST_SOCKET_RGBA), GHOST_NODE_BORDER_WIDTH))
+        painter.setBrush(QBrush(gradient))
+        painter.drawPolygon(diamond)
 
 
 class Connection(QGraphicsPathItem):
@@ -247,6 +509,49 @@ def _lod_widget_text(widget: QWidget) -> Optional[str]:
     if isinstance(widget, QSpinBox):
         return str(widget.value())
     return None  # QToolButton / QPushButton
+
+
+class _OutlinedTextItem(QGraphicsTextItem):
+    """A QGraphicsTextItem whose glyphs also get a thin outline stroke
+    (SOCKET_LABEL_OUTLINE_WIDTH / CANVAS_BACKGROUND_COLOR) — used for socket
+    name labels so they stay legible over whatever's directly behind them:
+    the canvas grid through an unconnected socket's masked-out area, a
+    bright embedded widget, an overlapping wire. Qt's own QGraphicsTextItem
+    can only fill its glyphs, never stroke them, so this repaints the same
+    text as an outlined QPainterPath underneath Qt's normal (fill-only)
+    rich-text paint pass.
+
+    Subclasses QGraphicsTextItem itself (not a from-scratch QGraphicsItem)
+    so boundingRect()/defaultTextColor() and every existing label-layout call
+    site (MetaNode._generate's label_width/label_height math) keep working
+    unmodified, and so MetaNode._paint_lod_primitives's
+    ``isinstance(child, QGraphicsTextItem)`` check for the far-LOD stand-in
+    bar still finds these labels — a from-scratch item would silently drop
+    out of both.
+
+    Document margin is forced to 0 so the manually-drawn outline path
+    (drawn at the glyph's own origin, no margin) lines up exactly with
+    Qt's own fill pass underneath it — QTextDocument's default 4px margin
+    would otherwise offset the two from each other.
+    """
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(text, parent)
+        self.document().setDocumentMargin(0)
+
+    def paint(self, painter, option, widget=None):
+        painter.setRenderHint(QPainter.Antialiasing)
+        text = self.toPlainText()
+        if text:
+            path = QPainterPath()
+            metrics = QFontMetrics(self.font())
+            path.addText(0, metrics.ascent(), self.font(), text)
+            painter.save()
+            painter.setPen(QPen(QColor(CANVAS_BACKGROUND_COLOR), SOCKET_LABEL_OUTLINE_WIDTH))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPath(path)
+            painter.restore()
+        super().paint(painter, option, widget)
 
 
 class MetaNode(RenamableTitleMixin, QGraphicsObject):
@@ -366,7 +671,7 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
 
             text_to_show = socket_def.name if socket_def.label is None else socket_def.label
             if text_to_show:
-                label = QGraphicsTextItem(text_to_show, self)
+                label = _OutlinedTextItem(text_to_show, self)
                 label.setFont(QFont(UI_FONT_FAMILY, NODE_LABEL_FONT_SIZE))
                 label_height = label.boundingRect().height()
                 label_width  = label.boundingRect().width()
@@ -678,6 +983,7 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
             d.body_height + NODE_SHADOW_OFFSET_Y + NODE_SHADOW_BLUR + 2 * m,
         )
 
+
     def paint(self, painter: QPainter, option, widget=None):
         suppress_default_selection_chrome(option)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -719,13 +1025,20 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
             border_pen = QPen(QColor(NODE_HOVER_COLOR), NODE_HOVER_BORDER_WIDTH)
         else:
             border_pen = QPen(body_border_color, 1.0)
+
+        body_rect   = QRectF(0, 0, d.width, d.body_height)
+        header_rect = QRectF(0, 0, d.width, NODE_HEADER_HEIGHT)
+        # Sockets no longer need a hole punched under them — an unconnected
+        # socket fakes the "canvas shows through" look itself via a radial
+        # gradient (SocketItem.paint), so the body/header/border just draw
+        # their plain rects, same as any other node.
         painter.setPen(border_pen)
         painter.setBrush(QBrush(body_color))
-        painter.drawRect(QRectF(0, 0, d.width, d.body_height))
+        painter.drawRect(body_rect)
 
         painter.setPen(Qt.NoPen)
         painter.setBrush(QBrush(header_color))
-        painter.drawRect(QRectF(0, 0, d.width, NODE_HEADER_HEIGHT))
+        painter.drawRect(header_rect)
 
         # Header outline: in only-header mode the picked colour traces the entire
         # header rectangle (top, sides, bottom) so the band reads as a self-
@@ -737,7 +1050,7 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         if only_header and not visually_selected:
             painter.setPen(QPen(header_edge, 1))
             painter.setBrush(Qt.NoBrush)
-            painter.drawRect(QRectF(0, 0, d.width, NODE_HEADER_HEIGHT))
+            painter.drawRect(header_rect)
 
         if self._lod_far:
             self._paint_lod_primitives(painter)
@@ -818,9 +1131,7 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
     def itemChange(self, change, value):
         if change == QGraphicsItem.ItemPositionChange and self.scene():
             new_pos = value
-            x = round(new_pos.x() / GRID_SIZE_SMALL) * GRID_SIZE_SMALL
-            y = round(new_pos.y() / GRID_SIZE_SMALL) * GRID_SIZE_SMALL
-            return QPointF(x, y)
+            return QPointF(snap_to_grid(new_pos.x()), snap_to_grid(new_pos.y()))
         if change == QGraphicsItem.ItemPositionHasChanged and self.scene():
             self._refresh_connections()
         if change == QGraphicsItem.ItemSelectedHasChanged:
@@ -851,6 +1162,32 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         self._resync_proxy_z()
         self.update()
         self._selection_overlay.update()
+        # Every socket's ring reads self._is_visually_selected() too (the
+        # outer keyline goes white while selected) — but a socket is a
+        # separate child item with its own dirty region, which self.update()
+        # above does not reliably cover: a socket's ring can extend past the
+        # node's own boundingRect margin (NODE_BOUNDS_MARGIN), especially
+        # once hover-grown, so its stale color could survive this repaint
+        # until some unrelated later event happened to touch that exact
+        # pixel region. Updating each socket directly closes that gap.
+        for sock in self.sockets.values():
+            sock.update()
+        # QGraphicsItem.update() only *schedules* a repaint through Qt's own
+        # dirty-region tracking, which GraphicsView._update_hovered_node
+        # (view.py) already documents as unreliable under SmartViewportUpdate
+        # for exactly this kind of cross-item visual change — the translucent
+        # selection wash toggling on/off left ghost trails on screen for the
+        # same reason a stale hover outline used to. Forcing the viewport to
+        # actually repaint this node's mapped rect, the same explicit idiom
+        # _update_hovered_node uses, is what makes the wash disappear/appear
+        # cleanly instead of leaving a trail behind it.
+        win = editor_window_of(self)
+        if win is not None:
+            try:
+                rect = win.view.mapFromScene(self.sceneBoundingRect()).boundingRect()
+            except RuntimeError:
+                return  # deleted from under us
+            win.view.viewport().update(rect)
 
     def _set_resting_z(self, z: float):
         """Change the Z this node returns to once no popup is open (see
@@ -1290,29 +1627,44 @@ class NodeComboBox(QComboBox):
     def showPopup(self):
         super().showPopup()
         self._safe_refresh()
-        win = editor_window_of(self.node)
+        node = self._safe_node()
+        if node is None:
+            return
+        win = editor_window_of(node)
         if win is not None:
             win.view.register_open_popup(self)
 
     def hidePopup(self):
         super().hidePopup()
         self._safe_refresh()
-        win = editor_window_of(self.node)
-        if win is not None:
-            win.view.unregister_open_popup(self)
+        node = self._safe_node()
+        if node is not None:
+            win = editor_window_of(node)
+            if win is not None:
+                win.view.unregister_open_popup(self)
         # Belt-and-suspenders: on some platforms popup teardown can still be
         # mid-flight when hidePopup() returns, so re-settle once the event
         # loop catches up.
         QTimer.singleShot(0, self._safe_refresh)
 
+    def _safe_node(self) -> Optional[MetaNode]:
+        """``self.node``, or ``None`` if this wrapper's ``__init__`` never
+        ran — the one place every ``self.node`` access in this class routes
+        through, so the "was this widget's __init__ ever called" question
+        only has one answer instead of a try/except repeated at each call
+        site (ст. 14.3). See _safe_refresh for why this happens: Qt can
+        recreate a fresh Python shim for a still-alive C++ combobox after the
+        original wrapper (and its self.node) was garbage-collected, and a
+        deferred callback (QTimer.singleShot above, or an event queued before
+        teardown) then fires against that shim.
+        """
+        return getattr(self, "node", None)
+
     def _safe_refresh(self):
+        node = self._safe_node()
+        if node is None:
+            return
         try:
-            self.node._refresh_selection_visuals()
-        except (RuntimeError, AttributeError):
-            # RuntimeError: the underlying C++ node was already deleted.
-            # AttributeError: this callback was deferred (see hidePopup's
-            # QTimer.singleShot above) and fired after the widget got
-            # reparented/rebuilt elsewhere (e.g. mid session-restore) without
-            # its Python __init__ running again, so self.node was never set.
-            # Either way, there's nothing left to refresh.
-            pass
+            node._refresh_selection_visuals()
+        except RuntimeError:
+            pass  # the underlying C++ node was already deleted

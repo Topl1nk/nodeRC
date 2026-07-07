@@ -358,6 +358,14 @@ msgstr ""
 msgid "param_path_title"
 msgstr ""
 
+#. [Add] File
+msgid "param_file_title"
+msgstr ""
+
+#. [Add] Folder
+msgid "param_dir_title"
+msgstr ""
+
 #. dirpath...
 msgid "param_path_dir_placeholder"
 msgstr ""

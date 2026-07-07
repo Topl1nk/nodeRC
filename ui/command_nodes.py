@@ -11,7 +11,7 @@ from PyQt5.QtCore import QPointF, Qt
 
 from localization import t
 from configuration import (
-    NODE_HEADER_HEIGHT, NODE_ROW_HEIGHT, NODE_HORIZONTAL_PAD, NODE_WIDGET_V_OFFSET,
+    NODE_HORIZONTAL_PAD, NODE_WIDGET_V_OFFSET,
     AUTOSPAWN_X_GAP, AUTOSPAWN_Y_OFFSET, AUTOSPAWN_V_GAP, NODE_START_Z, HOTKEY_HINTS,
 )
 from ui.theme import PUSHBTN_QSS
@@ -43,7 +43,7 @@ class StartNode(MetaNode):
         self._launch_btn.setToolTip(HOTKEY_HINTS["execute_chain"])
         self._launch_btn.clicked.connect(self._request_chain_execution)
         proxy = self._make_proxy(self._launch_btn)
-        y = NODE_HEADER_HEIGHT + rows * NODE_ROW_HEIGHT + NODE_WIDGET_V_OFFSET
+        y = self.node_def.row_top(rows) + NODE_WIDGET_V_OFFSET
         proxy.setPos(NODE_HORIZONTAL_PAD, y)
 
     def retranslate(self):

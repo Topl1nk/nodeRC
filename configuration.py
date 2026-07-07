@@ -88,6 +88,21 @@ NODE_SHADOW_BLUR     = 0
 # is fully covered — lets the view use partial repaints without leaving trails.
 NODE_BOUNDS_MARGIN   = 3
 
+# A node's own width/height are always an exact multiple of GRID_SIZE_SMALL
+# (see core.node_blueprint.NodeDef.__post_init__) — the same grid every
+# node's *position* already snaps to, so a node's whole footprint lines up
+# with the canvas grid, not just where it sits.
+NODE_WIDTH_MIN_CELLS  = 10   # minimum node width, in grid cells
+NODE_WIDTH_MAX_CELLS  = 15   # maximum node width, in grid cells
+NODE_HEIGHT_MIN_CELLS = 2    # minimum node height, in grid cells — no max: height grows with content
+
+# The first param row's own center (row=0 in NodeDef.socket_y) sits exactly
+# on the boundary between grid cell 3 and cell 4, counted from the node's
+# very top (y=0, the header's own top edge) — not from wherever the header
+# happens to end (NODE_HEADER_HEIGHT itself isn't a grid multiple). Every
+# later row continues at +NODE_ROW_HEIGHT from there, same as before.
+NODE_FIRST_ROW_CELLS  = 3
+
 # ── Grid ───────────────────────────────────────────────────────────────────────
 GRID_SIZE_SMALL = 20   # minor grid lines and node snap resolution
 GRID_SIZE_LARGE = 100  # major grid lines
@@ -101,11 +116,47 @@ GRID_MIN_SPACING_PX = 6
 BEZIER_CTRL_FACTOR = 0.55  # horizontal spread relative to endpoint distance
 BEZIER_CTRL_MIN    = 60.0  # minimum control-point offset — prevents flat S-curves
 SOCKET_BORDER_DARKEN     = 160  # socket outline = darker shade of the socket's own colour
-SOCKET_BORDER_WIDTH      = 1.5
+SOCKET_BORDER_WIDTH      = 2.5  # main ring thickness (was 1.5, +1px)
+# Thin keyline flanking the ring on both sides — outer edge (canvas color,
+# or NODE_SELECTED_COLOR while the owning node is selected) and inner edge
+# (always canvas color, never changes with selection) — see SocketItem.paint.
+SOCKET_RING_TRIM_WIDTH   = 1
+# An unconnected socket's center is a radial gradient from the inner keyline
+# color (CANVAS_BACKGROUND_COLOR, at the rim) down to this darker center —
+# a cheap paint-only fake of "the canvas shows through here" with no masking
+# of the node body/header/border needed (that approach hit a Qt rasterization
+# quirk with multiple holes on one node and was reverted).
+SOCKET_UNCONNECTED_CENTER_COLOR = "#0A1A2F"
 CONNECTION_EXEC_WIDTH             = 3.0
 CONNECTION_EXEC_SELECTED_WIDTH    = 3.5
 CONNECTION_PARAM_WIDTH            = 1.8
 CONNECTION_PARAM_SELECTED_WIDTH   = 2.2
+
+# ── Exec socket hover: grow + "+" glyph + ghost node preview ────────────────────
+SOCKET_EXEC_HOVER_GROW   = 3     # px added to an exec socket's radius while hovered
+SOCKET_PLUS_GLYPH_SCALE  = 0.55  # "+" arm half-length, as a fraction of the (grown) radius
+SOCKET_PLUS_GLYPH_WIDTH  = 1.6   # "+" stroke width
+
+# _SocketGhostPreview (ui/graph_items.py) — a colorless (monochrome white)
+# node silhouette + wire, shown while hovering an exec socket, previewing
+# exactly where a node spawned from it will land (SocketItem.ghost_spawn_pos):
+# to the right of an output socket, to the left of an input one — automatic,
+# never ambiguous. Header/body/border/socket are all the same white, just at
+# different opacities, and carry no title or field content — it's a shape,
+# not a specific node.
+GHOST_NODE_GAP_CELLS     = 3     # gap between the source node's own edge and the
+                                  # ghost's near edge, in grid cells (GRID_SIZE_SMALL
+                                  # each) — computed at runtime, not baked in px, so
+                                  # it stays correct if the grid size ever changes
+GHOST_NODE_WIDTH         = 160   # ghost placeholder width
+GHOST_NODE_HEIGHT        = NODE_HEADER_HEIGHT + NODE_ROW_HEIGHT  # header + one row
+GHOST_NODE_BORDER_WIDTH  = 1.5
+GHOST_NODE_FILL_RGBA     = (255, 255, 255, 18)   # body — near-invisible, a hint not a solid node
+GHOST_NODE_HEADER_RGBA   = (255, 255, 255, 45)   # header band — a little brighter than the body
+GHOST_NODE_BORDER_RGBA   = (255, 255, 255, 90)
+GHOST_SOCKET_RGBA        = (255, 255, 255, 140)  # the facing socket's own outline — brightest of all
+GHOST_CONNECTION_RGBA    = (255, 255, 255, 90)
+GHOST_CONNECTION_WIDTH   = 1.8
 
 # ── Parameter typing ───────────────────────────────────────────────────────────
 # Command parameters whose name marks them as whole numbers, promoted from the
@@ -286,6 +337,12 @@ HOTKEY_HINTS = {
 UI_FONT_FAMILY        = "Consolas"
 NODE_LABEL_FONT_SIZE  = 8   # socket-row labels
 NODE_RENAME_FONT_SIZE = 9   # in-place title editor
+# Socket-row label outline — keeps the (often type-tinted) label text legible
+# over whatever's directly behind it: the canvas grid through an unconnected
+# socket's masked-out area, a bright embedded widget, an overlapping wire.
+# Color reuses CANVAS_BACKGROUND_COLOR verbatim (same hex, #04152B) rather
+# than a second literal — this is that same color, not a coincidence.
+SOCKET_LABEL_OUTLINE_WIDTH = 1
 WIDGET_FONT_PT        = 9   # embedded editors, buttons, menus (stylesheet font size)
 
 # General Node Defaults

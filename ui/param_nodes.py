@@ -21,7 +21,7 @@ from PyQt5.QtCore import QEvent, Qt, QTimer
 
 from localization import resolve_default_title, t
 from configuration import (
-    NODE_HEADER_HEIGHT, NODE_ROW_HEIGHT, NODE_HORIZONTAL_PAD,
+    NODE_HORIZONTAL_PAD,
     NODE_WIDGET_V_OFFSET, NODE_WIDGET_HEIGHT, NODE_LINKED_FIELD_Z,
     NODE_WIDGET_Z_BASE, BROWSE_BTN_WIDTH, TEXT_COLOR,
 )
@@ -186,7 +186,7 @@ class ParamNode(MetaNode):
         proxy = self._make_proxy(widget)
         proxy.setPos(
             NODE_HORIZONTAL_PAD,
-            NODE_HEADER_HEIGHT + row * NODE_ROW_HEIGHT + NODE_WIDGET_V_OFFSET,
+            self.node_def.row_top(row) + NODE_WIDGET_V_OFFSET,
         )
         proxy.setZValue(NODE_WIDGET_Z_BASE - row)
         proxy._field_key = f"row_{row}"
@@ -550,7 +550,7 @@ class VectorParamNode(ParamNode):
             proxy = self._make_proxy(cell_widget)
             proxy.setPos(
                 NODE_HORIZONTAL_PAD + i * (col_w + spacing),
-                NODE_HEADER_HEIGHT + rows * NODE_ROW_HEIGHT + NODE_WIDGET_V_OFFSET,
+                self.node_def.row_top(rows) + NODE_WIDGET_V_OFFSET,
             )
             proxy.setZValue(NODE_WIDGET_Z_BASE - rows)
             proxy._field_key = f"vector_{axis}"
@@ -565,7 +565,7 @@ class VectorParamNode(ParamNode):
             proxy = self._make_proxy(row_widget)
             proxy.setPos(
                 NODE_HORIZONTAL_PAD,
-                NODE_HEADER_HEIGHT + i * NODE_ROW_HEIGHT + NODE_WIDGET_V_OFFSET,
+                self.node_def.row_top(i) + NODE_WIDGET_V_OFFSET,
             )
             proxy.setZValue(NODE_WIDGET_Z_BASE - i)
             proxy._field_key = f"vector_{axis}"
@@ -868,7 +868,7 @@ class DirParamNode(ParamNode):
 
     def __init__(self, param_name=None):
         if param_name is None:
-            param_name = "Folder"
+            param_name = t("param_dir_title")
         super().__init__(param_node_def(param_name, self.TYPE_ID))
         
         self._dir_editor = self._make_field(placeholder=t("param_path_dir_placeholder"), fixed_width=False)
@@ -906,7 +906,7 @@ class FileParamNode(ParamNode):
 
     def __init__(self, param_name=None):
         if param_name is None:
-            param_name = "File"
+            param_name = t("param_file_title")
             
         file_schema = resolve_color_schema("filepath")
         string_schema = resolve_color_schema("string")

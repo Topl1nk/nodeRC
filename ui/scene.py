@@ -170,6 +170,18 @@ class NodeScene(QGraphicsScene):
             if views:
                 far = views[0].transform().m11() < NODE_LOD_DETAIL_SCALE
                 item._set_lod_far(far)
+        elif isinstance(item, Connection):
+            # The one choke point every Connection passes through on its way
+            # into the scene, regardless of which of the many call sites
+            # created it (editor_window, graph_serialization, scene's own
+            # drag-release, splice-into-wire) — see SocketItem._connection_count
+            # docstring. Repainting both endpoint nodes (not just the socket's
+            # own small rect) is what actually reveals/re-covers the punched
+            # hole in MetaNode.paint()'s body/header fill.
+            item.source._connection_count += 1
+            item.dest._connection_count += 1
+            item.source.meta_node.update()
+            item.dest.meta_node.update()
 
     def removeItem(self, item):
         super().removeItem(item)
@@ -183,6 +195,13 @@ class NodeScene(QGraphicsScene):
                 self._group_frames.remove(item)
             except ValueError:
                 pass
+        elif isinstance(item, Connection):
+            for sock in (item.source, item.dest):
+                try:
+                    sock._connection_count = max(0, sock._connection_count - 1)
+                    sock.meta_node.update()
+                except RuntimeError:
+                    pass  # the endpoint node/socket was already deleted
 
     def _schedule_rect_recalc(self):
         # Why: Coalesces a burst of additions into a single O(N) pass to avoid O(N²) layout updates.
@@ -199,6 +218,10 @@ class NodeScene(QGraphicsScene):
         self._drag_active = True
         self._drag_source = source
         self._drag_original_dest = None
+        # The ghost preview (hover-only affordance) would otherwise keep
+        # showing its own dashed wire alongside the live drag preview line
+        # below — redundant and visually competing with it.
+        source._hide_ghost()
         win = self.nodeEditorWindow
         if win:
             if source.sock_def.kind == "output":
@@ -353,15 +376,23 @@ class NodeScene(QGraphicsScene):
                 in_sock  = target if source_socket.sock_def.kind == "output" else source_socket
                 self.enforce_connection_rules(out_sock, in_sock)
                 conn = Connection(out_sock, in_sock)
-                super().addItem(conn)
+                self.addItem(conn)
                 if self.nodeEditorWindow:
                     self.nodeEditorWindow.connections.append(conn)
                     in_sock.meta_node._refresh_connections()
                     self.nodeEditorWindow.push_undo_state()
             else:
                 if self.nodeEditorWindow:
+                    # An exec source spawns exactly where its hover ghost
+                    # promised (SocketItem.ghost_spawn_pos) — automatically
+                    # right of an output / left of an input — rather than
+                    # wherever the drag happened to end; the ghost is a
+                    # direct instruction for the spawn, not just a preview.
+                    # A param source keeps the previous drop-position behavior.
+                    spawn_pos = (source_socket.ghost_spawn_pos() if source_socket.sock_def.is_exec
+                                 else event.scenePos())
                     self.show_node_creation_menu(
-                        event.scenePos(), event.screenPos(),
+                        spawn_pos, event.screenPos(),
                         source_socket=source_socket,
                         original_dest=original_dest
                     )
@@ -430,6 +461,14 @@ class NodeScene(QGraphicsScene):
         if self._drag_preview_line:
             self.removeItem(self._drag_preview_line)
             self._drag_preview_line = None
+        # The cursor is very likely still resting on the source socket right
+        # after a release (no hoverEnterEvent fires again to tell us that —
+        # Qt already considers it "entered"), so re-show the ghost we hid in
+        # start_connection_drag instead of leaving it gone until the cursor
+        # happens to leave and re-enter.
+        if (self._drag_source is not None and self._drag_source.sock_def.is_exec
+                and self._drag_source._hovered):
+            self._drag_source._show_ghost()
         self._drag_active = False
         self._drag_source = None
 

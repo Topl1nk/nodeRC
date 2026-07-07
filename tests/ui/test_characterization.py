@@ -12,7 +12,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt5.QtWidgets import QApplication
-from PyQt5.QtCore import QPointF, QEvent
+from PyQt5.QtCore import QPointF, QEvent, QRectF
 from PyQt5.QtGui import QFocusEvent
 
 from ui.graph_items import MetaNode, Connection
@@ -271,6 +271,330 @@ def test_expanded_vector_and_its_wiring_survive_save_load(window):
         c.dest.meta_node is reloaded and c.dest.sock_def.name == "posX"
         for c in window.connections
     )
+
+
+def test_socket_connection_count_tracks_wiring_through_scene_add_remove(window):
+    """SocketItem.is_connected() must flip on/off purely by going through
+    scene.addItem/removeItem(Connection) — the single choke point every
+    connection-creating call site funnels through (editor_window,
+    graph_serialization, NodeScene's own drag-release, splice-into-wire) —
+    regardless of which one actually created/removed this particular wire."""
+    src = _param(window, "float", x=-200, y=0)
+    dst = _command(window, required=["posX"])
+    src_sock = src.get_socket("value_out")
+    dst_sock = dst.get_socket("posX")
+
+    assert src_sock.is_connected() is False
+    assert dst_sock.is_connected() is False
+
+    window.scene.enforce_connection_rules(src_sock, dst_sock)
+    conn = Connection(src_sock, dst_sock)
+    window.scene.addItem(conn)
+    window.connections.append(conn)
+
+    assert src_sock.is_connected() is True
+    assert dst_sock.is_connected() is True
+
+    window.scene.removeItem(conn)
+    window.connections.remove(conn)
+
+    assert src_sock.is_connected() is False
+    assert dst_sock.is_connected() is False
+
+
+def test_unconnected_socket_center_is_a_gradient_not_a_masked_hole(window):
+    """Sockets no longer cut a hole in the node's body/header/border — an
+    attempt at that (MetaNode._rect_with_holes / _border_path_with_gaps) hit
+    a Qt rasterization quirk where a node with sockets on both sides lost
+    part of its mask on every socket except the last one processed, under
+    the real QGraphicsScene paint pipeline specifically (not reproducible via
+    an isolated fillPath/QPainterPath.contains() check). Reverted in favor of
+    a plain radial gradient painted by the socket itself: cheap, and immune
+    to inter-item paint-order effects since it never touches the parent's own
+    geometry at all."""
+    from configuration import SOCKET_UNCONNECTED_CENTER_COLOR, CANVAS_BACKGROUND_COLOR
+
+    node = _param(window, "float", x=0, y=0)
+    sock = node.get_socket("value_out")
+    assert not sock.is_connected()
+
+    # No masking method should exist on MetaNode any more.
+    assert not hasattr(node, "_rect_with_holes")
+    assert not hasattr(node, "_border_path_with_gaps")
+    assert not hasattr(sock, "_mask_radius")
+
+    assert SOCKET_UNCONNECTED_CENTER_COLOR == "#0A1A2F"
+    assert CANVAS_BACKGROUND_COLOR == "#04152B"
+
+
+def test_socket_ring_width_and_trim_are_configured(window):
+    """Locks the requested ring geometry: main ring thickened by 1px (2.5,
+    was 1.5) with a 1px keyline trim on each side."""
+    from configuration import SOCKET_BORDER_WIDTH, SOCKET_RING_TRIM_WIDTH
+    assert SOCKET_BORDER_WIDTH == 2.5
+    assert SOCKET_RING_TRIM_WIDTH == 1
+
+
+def test_socket_ring_outer_trim_whitens_on_node_selection_inner_does_not(window):
+    """The ring's outer 1px keyline switches to NODE_SELECTED_COLOR while the
+    owning node is selected; the inner keyline always stays canvas-colored,
+    selected or not."""
+    from configuration import CANVAS_BACKGROUND_COLOR, NODE_SELECTED_COLOR
+
+    node = _param(window, "float", x=0, y=0)
+    sock = node.get_socket("value_out")
+
+    assert not node.isSelected()
+    unselected_outer = NODE_SELECTED_COLOR if sock.meta_node._is_visually_selected() else CANVAS_BACKGROUND_COLOR
+    assert unselected_outer == CANVAS_BACKGROUND_COLOR
+
+    node.setSelected(True)
+    selected_outer = NODE_SELECTED_COLOR if sock.meta_node._is_visually_selected() else CANVAS_BACKGROUND_COLOR
+    assert selected_outer == NODE_SELECTED_COLOR
+    # Inner keyline color is a fixed literal in SocketItem.paint (never
+    # selection-conditional) — this asserts the constant it must stay
+    # anchored to, so a future refactor that accidentally makes it
+    # selection-aware breaks loudly here.
+    assert CANVAS_BACKGROUND_COLOR == "#04152B"
+
+
+def test_exec_socket_grows_and_shows_plus_glyph_on_hover(window):
+    """Only exec sockets get the hover enlarge/"+" affordance — param
+    sockets keep their existing hover behavior (color change only, no size
+    change, no glyph)."""
+    from configuration import SOCKET_EXEC_HOVER_GROW
+
+    start = next(i for i in window.scene.items() if isinstance(i, StartNode))
+    exec_sock = next(s for s in start.sockets.values() if s.sock_def.is_exec)
+    param_node = _param(window, "float", x=0, y=0)
+    param_sock = param_node.get_socket("value_out")
+
+    assert exec_sock._effective_radius() == exec_sock._radius
+    assert param_sock._effective_radius() == param_sock._radius
+
+    exec_sock._hovered = True
+    param_sock._hovered = True
+
+    assert exec_sock._effective_radius() == exec_sock._radius + SOCKET_EXEC_HOVER_GROW
+    assert param_sock._effective_radius() == param_sock._radius  # unaffected
+
+
+def test_selecting_a_node_repaints_its_sockets(window):
+    """Regression: SocketItem.paint()'s ring reads
+    meta_node._is_visually_selected() for its outer keyline color, but a
+    socket is a separate child item with its own dirty region — calling
+    self.update() on the node alone (the old behavior) doesn't reliably
+    repaint it, since a socket's ring can extend past the node's own
+    boundingRect margin (worse once hover-grown). Symptom in the app: select
+    a node, deselect it, and a stale ring color survives on one socket edge
+    until an unrelated repaint happens to touch that pixel region.
+    _refresh_selection_visuals must call update() on every socket."""
+    node = _param(window, "float", x=0, y=0)
+    sock = node.get_socket("value_out")
+
+    calls = []
+    sock.update = lambda *a, **k: calls.append(True)
+
+    node.setSelected(True)
+    assert calls, "selecting the node must repaint its sockets"
+
+    calls.clear()
+    node.setSelected(False)
+    assert calls, "deselecting the node must repaint its sockets too"
+
+
+def test_selecting_a_node_forces_an_explicit_viewport_repaint(window):
+    """Regression: the translucent selection wash (_selection_overlay)
+    toggling visible/invisible left a ghost trail on screen — self.update()
+    only *schedules* a repaint through Qt's own dirty-region tracking, which
+    GraphicsView._update_hovered_node (view.py) already documents as
+    unreliable under SmartViewportUpdate for cross-item visual changes like
+    this. _refresh_selection_visuals must force the same explicit
+    view.viewport().update(mapped_rect) _update_hovered_node uses, not just
+    rely on update()."""
+    node = _param(window, "float", x=0, y=0)
+
+    calls = []
+    window.view.viewport().update = lambda *a, **k: calls.append(a)
+
+    node.setSelected(True)
+    assert calls, "selecting a node must force an explicit viewport repaint"
+
+    calls.clear()
+    node.setSelected(False)
+    assert calls, "deselecting a node must force an explicit viewport repaint too"
+
+
+def test_rubber_band_drag_forces_a_full_viewport_repaint_on_move(window):
+    """Regression: Qt's own native rubber-band selection rectangle (the
+    dashed marquee you drag to multi-select) isn't reliably fully
+    invalidated by its own dirty-region tracking under SmartViewportUpdate —
+    shrink it to a thin sliver (a fast, near-axis-aligned drag) and its two
+    opposite edges' semi-transparent strokes overlap, leaving a residual
+    colored stripe behind once the rectangle moves. GraphicsView.
+    mouseMoveEvent must force a full viewport repaint on every move while a
+    left-button rubber-band drag is active."""
+    from PyQt5.QtCore import QEvent, QPoint, Qt
+    from PyQt5.QtGui import QMouseEvent
+    from PyQt5.QtWidgets import QGraphicsView
+
+    view = window.view
+    assert view.dragMode() == QGraphicsView.RubberBandDrag
+
+    calls = []
+    view.viewport().update = lambda *a, **k: calls.append(True)
+
+    move = QMouseEvent(QEvent.MouseMove, QPoint(40, 40), QPoint(40, 40),
+                        Qt.NoButton, Qt.LeftButton, Qt.NoModifier)
+    view.mouseMoveEvent(move)
+
+    assert calls, "a left-button drag move must force a full viewport repaint"
+
+
+def test_exec_socket_hover_shows_ghost_on_correct_side(window):
+    """Hovering an exec socket shows _SocketGhostPreview automatically on the
+    side matching its kind — output to the right, input to the left — with
+    no ambiguity or per-drag decision needed."""
+    start = next(i for i in window.scene.items() if isinstance(i, StartNode))
+    exec_out = next(s for s in start.sockets.values() if s.sock_def.is_exec and s.sock_def.kind == "output")
+
+    assert exec_out._ghost is None  # never hovered yet -> lazily unbuilt
+
+    exec_out.hoverEnterEvent(None)
+    assert exec_out._ghost is not None
+    assert exec_out._ghost.isVisible()
+    ghost_rect = exec_out._ghost._local_rect()
+    assert ghost_rect.left() > 0  # sits to the right of the socket (local x=0)
+
+    exec_out.hoverLeaveEvent(None)
+    assert not exec_out._ghost.isVisible()
+
+
+def test_ghost_show_hide_forces_an_explicit_viewport_repaint(window):
+    """Regression: the same trail bug as the selection wash and the rubber
+    band — setVisible() alone only schedules a repaint through Qt's own
+    dirty-region tracking (unreliable under SmartViewportUpdate for this
+    kind of translucent overlay). _show_ghost/_hide_ghost must force an
+    explicit view.viewport().update(mapped_rect), the same idiom used
+    everywhere else this bug has shown up."""
+    start = next(i for i in window.scene.items() if isinstance(i, StartNode))
+    exec_out = next(s for s in start.sockets.values() if s.sock_def.is_exec and s.sock_def.kind == "output")
+
+    calls = []
+    window.view.viewport().update = lambda *a, **k: calls.append(a)
+
+    exec_out._show_ghost()
+    assert calls, "showing the ghost must force an explicit viewport repaint"
+
+    calls.clear()
+    exec_out._hide_ghost()
+    assert calls, "hiding the ghost must force an explicit viewport repaint too"
+
+
+def test_ghost_preview_looks_like_a_real_node_silhouette(window):
+    """The ghost is a realistic (header + body + facing socket) but
+    colorless node silhouette, not just a bare rectangle — no title/field
+    content, but everything a real node's shape has otherwise."""
+    from configuration import NODE_HEADER_HEIGHT, NODE_EXEC_SOCKET_HALFSIZE
+
+    start = next(i for i in window.scene.items() if isinstance(i, StartNode))
+    exec_out = next(s for s in start.sockets.values() if s.sock_def.is_exec and s.sock_def.kind == "output")
+    ghost = exec_out._ensure_ghost()
+
+    body_rect = ghost._local_rect()
+    header_rect = ghost._header_rect()
+    assert header_rect.top() == body_rect.top()
+    assert header_rect.height() == NODE_HEADER_HEIGHT
+    assert header_rect.width() == body_rect.width()
+    assert header_rect.height() < body_rect.height()  # header is only part of the silhouette
+
+    # The facing socket sits on the ghost's own left edge (it's an output
+    # socket, so the ghost — the thing it would connect *into* — sits to
+    # its right, facing back with an edge on its own left side) at header
+    # mid-height, exactly like a real exec socket's own position.
+    sock_pos = ghost._facing_socket_pos()
+    assert sock_pos.x() == body_rect.left()
+    assert sock_pos.y() == body_rect.top() + NODE_HEADER_HEIGHT / 2.0
+
+
+def test_ghost_spawn_pos_matches_side_and_is_used_for_actual_spawn(window):
+    """SocketItem.ghost_spawn_pos() is what NodeScene.mouseReleaseEvent's
+    show_node_creation_menu call actually uses for an exec source — the
+    ghost is a direct instruction for the spawn, not just a preview.
+    Measured from the source node's own edge at GHOST_NODE_GAP_CELLS grid
+    cells, then snapped to the grid via snap_to_grid — the same snap every
+    node position already gets (MetaNode.itemChange), so the ghost never
+    promises an off-grid position the real spawn wouldn't land on."""
+    from configuration import GHOST_NODE_GAP_CELLS, GHOST_NODE_WIDTH, GRID_SIZE_SMALL
+    from ui.graph_items import snap_to_grid
+
+    gap = GRID_SIZE_SMALL * GHOST_NODE_GAP_CELLS
+    start = next(i for i in window.scene.items() if isinstance(i, StartNode))
+    exec_out = next(s for s in start.sockets.values() if s.sock_def.is_exec and s.sock_def.kind == "output")
+
+    pos = exec_out.ghost_spawn_pos()
+    assert pos.x() == snap_to_grid(start.pos().x() + start.node_def.width + gap)
+    assert pos.x() % GRID_SIZE_SMALL == 0
+    assert pos.y() == start.pos().y()  # dead right, never one cell up/down
+
+    cmd = _command(window, required=[])
+    exec_in = next(s for s in cmd.sockets.values() if s.sock_def.is_exec and s.sock_def.kind == "input")
+    in_pos = exec_in.ghost_spawn_pos()
+    assert in_pos.x() == snap_to_grid(cmd.pos().x() - gap - GHOST_NODE_WIDTH)
+    assert in_pos.x() % GRID_SIZE_SMALL == 0
+    assert in_pos.y() == cmd.pos().y()  # dead left, never one cell up/down
+
+
+def test_ghost_connection_line_is_perfectly_straight(window):
+    """Regression: the ghost used to land one grid cell higher than the
+    source node — its Y was computed by centering the whole ghost body on
+    the socket's own Y and then independently grid-snapping that, which
+    doesn't reproduce the source socket's Y (itself not a grid multiple —
+    NODE_HEADER_HEIGHT/2 isn't one). ghost_spawn_pos's Y now equals the
+    source node's own top-left Y directly (already grid-aligned via
+    itemChange, no separate snap needed) — since an exec socket always sits
+    at the same header-mid-height offset from its own node's top regardless
+    of node width, this puts the ghost's own facing socket at exactly the
+    same absolute Y as the real one: dead straight, not diagonal."""
+    start = next(i for i in window.scene.items() if isinstance(i, StartNode))
+    exec_out = next(s for s in start.sockets.values() if s.sock_def.is_exec and s.sock_def.kind == "output")
+    ghost = exec_out._ensure_ghost()
+
+    source_y = exec_out.scene_center().y()
+    # _facing_socket_pos() is in socket-local coordinates — map it to scene
+    # space (matching source_y's own frame) before comparing.
+    ghost_socket_y = exec_out.mapToScene(ghost._facing_socket_pos()).y()
+    assert ghost_socket_y == source_y
+
+
+def test_socket_label_has_an_outline_and_stays_a_qgraphicstextitem(window):
+    """Socket name labels get a thin outline (SOCKET_LABEL_OUTLINE_WIDTH,
+    CANVAS_BACKGROUND_COLOR) so they stay legible over whatever's directly
+    behind them (canvas grid through an unconnected socket's masked-out
+    area, a bright embedded widget, an overlapping wire) — a bare
+    QGraphicsTextItem can only fill its glyphs, never stroke them.
+    _OutlinedTextItem still subclasses QGraphicsTextItem (not a
+    from-scratch QGraphicsItem) rather than reimplementing metrics/hit-test
+    from zero, so existing label-layout math (label_width/label_height in
+    MetaNode._generate) and MetaNode._paint_lod_primitives's
+    isinstance(child, QGraphicsTextItem) check for the far-LOD stand-in bar
+    both keep working unmodified — a from-scratch item would silently drop
+    out of the LOD check."""
+    from PyQt5.QtWidgets import QGraphicsTextItem
+    from ui.graph_items import _OutlinedTextItem
+
+    cmd = _command(window, required=["posX"])
+    labels = [c for c in cmd.childItems()
+              if isinstance(c, QGraphicsTextItem) and c is not cmd.title_item]
+    assert labels, "expected at least one socket label"
+    label = labels[0]
+
+    assert isinstance(label, _OutlinedTextItem)
+    assert isinstance(label, QGraphicsTextItem)
+    # Document margin must be 0 — otherwise the manually-drawn outline path
+    # (drawn at the glyph's own origin) would be offset from Qt's own fill
+    # pass underneath it, which assumes the same zero margin.
+    assert label.document().documentMargin() == 0
 
 
 def test_restore_isolates_a_corrupt_node(window):

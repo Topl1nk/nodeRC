@@ -599,8 +599,10 @@ def test_only_header_paints_full_header_perimeter(window):
     img = QImage(300, 100, QImage.Format_ARGB32); img.fill(0)
     p = QPainter(img); window.scene.render(p, source=QRectF(-10, -10, 300, 100)); p.end()
     width = node.node_def.width
-    # All four edges of the header rect should carry the picked colour.
-    for x, y in [(120, 10), (120, 39), (10, 25), (9 + width, 25)]:
+    # All four edges of the header rect should carry the picked colour, a
+    # couple px in from the true boundary rather than sitting exactly on it
+    # (the exact corner pixel blends under antialiasing regardless).
+    for x, y in [(120, 12), (120, 38), (12, 14), (width + 8, 14)]:
         px = img.pixelColor(x, y)
         assert (px.red(), px.green(), px.blue()) == (255, 0, 0), \
             f"header perimeter px at ({x},{y}) was {px.getRgb()}, expected red"

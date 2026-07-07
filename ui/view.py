@@ -257,6 +257,18 @@ class GraphicsView(QGraphicsView):
             event.accept()
         else:
             super().mouseMoveEvent(event)
+            if self.dragMode() == QGraphicsView.RubberBandDrag and (event.buttons() & Qt.LeftButton):
+                # Qt's own native rubber-band rectangle isn't reliably fully
+                # invalidated by its own dirty-region tracking under
+                # SmartViewportUpdate — shrink it down to a very thin sliver
+                # (a fast, near-horizontal/vertical drag) and its two
+                # opposite edges' semi-transparent strokes end up overlapping
+                # each other, leaving a residual colored stripe behind on
+                # screen once the rectangle moves on. A full viewport repaint
+                # on every move while a selection drag is active guarantees
+                # the previous frame's rubber-band pixels are actually gone,
+                # not just scheduled to maybe be redrawn.
+                self.viewport().update()
 
     def _poll_hover(self):
         # Geometric containment against the real OS cursor, not underMouse():

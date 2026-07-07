@@ -88,6 +88,23 @@ def test_showing_the_popup_registers_it_with_the_view(window):
     assert window.view._open_popup_combo is None
 
 
+def test_popup_survives_missing_node_attribute(window):
+    """Regression (crashed the real app): Qt can recreate a fresh Python
+    shim for a still-alive C++ combobox after the original wrapper (and its
+    self.node) was garbage-collected — a deferred callback (hidePopup's own
+    QTimer.singleShot, or a queued event) then fires show/hidePopup against
+    that shim, which never had its __init__ (and so never got self.node) run.
+    show/hidePopup must not crash — only _refresh's own try/except used to
+    cover this, while the surrounding methods still touched self.node
+    directly right after it."""
+    node = _enum_node(window)
+    combo = node._combobox
+    del combo.node
+
+    combo.showPopup()  # must not raise AttributeError
+    combo.hidePopup()  # must not raise AttributeError
+
+
 def test_wheel_over_open_popup_scrolls_it_not_the_canvas(window):
     node = _enum_node(window)
     combo = node._combobox

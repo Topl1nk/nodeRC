@@ -9,6 +9,7 @@ graph_items.py consume these specs verbatim.
 from __future__ import annotations
 
 import html
+import math
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -17,7 +18,34 @@ from configuration import (
     NODE_DEFAULT_WIDTH, DEFAULT_HEADER_COLOR, DEFAULT_BODY_COLOR,
     SOCKET_COLOR_SCHEMA, INTEGER_PARAM_NAMES,
     UI_FONT_FAMILY, NODE_RENAME_FONT_SIZE,
+    GRID_SIZE_SMALL, NODE_WIDTH_MIN_CELLS, NODE_WIDTH_MAX_CELLS, NODE_HEIGHT_MIN_CELLS,
+    NODE_FIRST_ROW_CELLS,
 )
+
+# The first param row's center (row=0) — see NODE_FIRST_ROW_CELLS in
+# configuration.py for why this is measured from the node's own top (y=0),
+# not from NODE_HEADER_HEIGHT (itself not a grid multiple).
+FIRST_ROW_CENTER_Y = GRID_SIZE_SMALL * NODE_FIRST_ROW_CELLS
+# Where the row stack visually begins (row 0's own top edge) — mirrors the
+# old formula's structure (which used NODE_HEADER_HEIGHT as that same
+# starting point) so body_height's row-stacking math doesn't otherwise change.
+_ROW_STACK_TOP = FIRST_ROW_CENTER_Y - NODE_ROW_HEIGHT / 2.0
+
+
+def _snap_dimension(value: float, *, min_cells: int, max_cells: Optional[int] = None) -> int:
+    """Round ``value`` UP to the next grid-cell multiple, then clamp to
+    ``[min_cells, max_cells]`` (``max_cells=None`` means no upper bound) —
+    a node's own width/height is always an exact multiple of
+    ``GRID_SIZE_SMALL``, the same grid every node's *position* already
+    snaps to (``ui.graph_items.snap_to_grid``), so a node's whole footprint
+    lines up with the canvas grid, not just where it sits. Rounding UP
+    (never down) guarantees the requested size still fits — a node's raw
+    computed height/width is always "the minimum this content needs".
+    """
+    cells = max(min_cells, math.ceil(value / GRID_SIZE_SMALL))
+    if max_cells is not None:
+        cells = min(cells, max_cells)
+    return cells * GRID_SIZE_SMALL
 
 # Visual prefix per parameter type — keeps auto-created nodes consistent with the
 # titles the typed ParamNode classes assign themselves.
@@ -39,7 +67,7 @@ PARAM_TITLE_KEY: Dict[str, str] = {
     "integer": "param_int_title", "float": "param_float_title",
     "float2": "param_float2_title", "float3": "param_float3_title",
     "enum": "param_enum_title", "enum_int": "param_enum_title",
-    "filepath": "param_path_title", "dirpath": "param_path_title",
+    "filepath": "param_file_title", "dirpath": "param_dir_title",
     "path": "param_path_title", "keyvalue": "param_keyvalue_title",
 }
 
@@ -96,6 +124,14 @@ class NodeDef:
     extra_rows: float = 0.0
     plain_title: str = ""
 
+    def __post_init__(self):
+        # Every NodeDef's width is grid-quantized regardless of what its
+        # caller passed in (a literal like StartNode's 185, or the various
+        # ParamNode/CommandNode defaults) — one place enforces the rule
+        # instead of every call site having to already know it.
+        self.width = _snap_dimension(
+            self.width, min_cells=NODE_WIDTH_MIN_CELLS, max_cells=NODE_WIDTH_MAX_CELLS)
+
     @property
     def param_row_count(self) -> int:
         param_rows = [s.row for s in self.sockets if not s.is_exec]
@@ -104,14 +140,25 @@ class NodeDef:
     @property
     def body_height(self) -> int:
         rows = self.param_row_count
-        return int(NODE_HEADER_HEIGHT + (rows + self.extra_rows) * NODE_ROW_HEIGHT + (
+        raw = _ROW_STACK_TOP + (rows + self.extra_rows) * NODE_ROW_HEIGHT + (
             NODE_FOOTER_HEIGHT if self.has_footer else NODE_BOTTOM_PAD
-        ))
+        )
+        return _snap_dimension(raw, min_cells=NODE_HEIGHT_MIN_CELLS)
 
     def socket_y(self, row: int, is_exec: bool = False) -> float:
         if is_exec:
             return NODE_HEADER_HEIGHT / 2.0
-        return NODE_HEADER_HEIGHT + row * NODE_ROW_HEIGHT + NODE_ROW_HEIGHT / 2.0
+        return FIRST_ROW_CENTER_Y + row * NODE_ROW_HEIGHT
+
+    def row_top(self, row: int) -> float:
+        """The Y where row ``row``'s own content area begins — socket_y(row)
+        minus half a row height. Every embedded-widget positioning call site
+        (ui/param_nodes.py, ui/command_nodes.py) derives its own Y from this
+        instead of re-deriving the row anchor independently, so a change to
+        where rows start (NODE_FIRST_ROW_CELLS) can't leave widgets
+        positioned against the old anchor while sockets move to the new one.
+        """
+        return self.socket_y(row) - NODE_ROW_HEIGHT / 2.0
 
     def socket_x(self, kind: str) -> float:
         return 0.0 if kind == "input" else float(self.width)
