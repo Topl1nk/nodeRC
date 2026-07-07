@@ -39,6 +39,7 @@ from configuration import (
     CONNECTION_EXEC_WIDTH, CONNECTION_EXEC_SELECTED_WIDTH,
     CONNECTION_PARAM_WIDTH, CONNECTION_PARAM_SELECTED_WIDTH,
     GRID_SIZE_SMALL, NODE_POPUP_Z, NODE_COMBO_POPUP_PROXY_Z,
+    NODE_WIDTH_MIN_CELLS, NODE_WIDTH_MAX_CELLS,
     VECTOR_COLLAPSE_GLYPH, VECTOR_COLLAPSE_GLYPH_MIRRORED, VECTOR_EXPAND_GLYPH, VECTOR_TOGGLE_WIDTH,
     NODE_SELECTION_OVERLAY_RGBA, NODE_SELECTION_OVERLAY_Z, NODE_SOCKET_Z,
     CONNECTION_Z, GHOST_NODE_Z, GHOST_CANDIDATE_LIMIT,
@@ -53,7 +54,7 @@ from ui.theme import (
     VECTOR_TOGGLE_QSS, CONTEXT_MENU_STYLESHEET,
     apply_field_placeholder_palette,
 )
-from core.node_blueprint import NodeDef, SocketDef, html_title
+from core.node_blueprint import NodeDef, SocketDef, html_title, command_node_def, _snap_dimension
 from ui.color_picker import ColorPickerPopup
 from ui.search_ranking import context_key_for_socket, collect_command_entries, ranked_candidates
 
@@ -477,6 +478,11 @@ class _SocketGhostPreview(QGraphicsItem):
         # title/counter paint() draws once a candidate is picked.
         self._candidates: list = []
         self._candidate_index: int = -1
+        # The selected candidate's own real NodeDef (core.node_blueprint.
+        # command_node_def — full param-socket layout), rebuilt on every
+        # cycle_candidate so paint() can preview its actual sockets, not
+        # just its name. None whenever no candidate is selected.
+        self._node_def: Optional[NodeDef] = None
         self.setAcceptedMouseButtons(Qt.NoButton)
         self.setZValue(GHOST_NODE_Z)
         self.setVisible(False)
@@ -492,6 +498,7 @@ class _SocketGhostPreview(QGraphicsItem):
         pick the user might not even remember making."""
         self._candidates = candidates
         self._candidate_index = -1
+        self._apply_candidate_geometry()
         self.update()
 
     def cycle_candidate(self, direction: int) -> None:
@@ -504,6 +511,7 @@ class _SocketGhostPreview(QGraphicsItem):
             self._candidate_index = 0 if direction > 0 else len(self._candidates) - 1
         else:
             self._candidate_index = (self._candidate_index + direction) % len(self._candidates)
+        self._apply_candidate_geometry()
         self.update()
 
     def selected_candidate_payload(self) -> Optional[dict]:
@@ -514,6 +522,54 @@ class _SocketGhostPreview(QGraphicsItem):
         if 0 <= self._candidate_index < len(self._candidates):
             return self._candidates[self._candidate_index]["payload"]
         return None
+
+    def _apply_candidate_geometry(self) -> None:
+        """Resizes the ghost to match whatever cycle_candidate/set_candidates
+        just landed on: the selected candidate's own real param-socket
+        layout (core.node_blueprint.command_node_def — same row math a real
+        CommandNode would use, so every socket paint() later draws is
+        exactly where it'll really be) at a width fitted to its title
+        instead of every real node's fixed default — clamped to the same
+        NODE_WIDTH_MAX_CELLS ceiling a real node's own width is already
+        clamped to (core.node_blueprint._snap_dimension), so a long name
+        still elides rather than growing the ghost without bound. No
+        selection (index -1, the plain generic silhouette) resets to the
+        fixed 3-cell placeholder, same as before candidates existed at all.
+        """
+        self.prepareGeometryChange()
+        payload = self.selected_candidate_payload()
+        if payload is None:
+            self._node_def = None
+            self._width = GHOST_NODE_WIDTH
+            self._height = GHOST_NODE_HEIGHT
+            return
+        node_def = command_node_def(payload)
+        node_def.width = self._measure_candidate_width(payload.get("display", ""))
+        self._node_def = node_def
+        self._width = node_def.width
+        self._height = node_def.body_height
+
+    @staticmethod
+    def _measure_candidate_width(title: str) -> int:
+        font = QFont(UI_FONT_FAMILY, NODE_LABEL_FONT_SIZE)
+        text_width = QFontMetrics(font).horizontalAdvance(title)
+        # Room for the title's own left/right padding (matching a real
+        # node's title margin) plus both edge sockets' diamonds, so the
+        # text never crowds right up against them.
+        measured = text_width + NODE_HORIZONTAL_PAD * 2 + NODE_EXEC_SOCKET_HALFSIZE * 4
+        return _snap_dimension(measured, min_cells=NODE_WIDTH_MIN_CELLS, max_cells=NODE_WIDTH_MAX_CELLS)
+
+    def _clear_candidate_selection(self) -> None:
+        """Drops any side-button candidate pick — called whenever the ghost
+        switches to a drag-driven mode (drag_override/collision/ray) or
+        resets to plain hover, all of which set their own _width/_height
+        directly. Without this, a candidate picked before a drag started
+        would keep being reported by selected_candidate_payload() even
+        though paint() stopped showing it the moment the drag took over —
+        release would then silently spawn a node the ghost hadn't actually
+        been previewing anymore."""
+        self._candidate_index = -1
+        self._node_def = None
 
     def reset_to_hover_position(self) -> None:
         """Fixed hover-only placement, at the ghost's own default size —
@@ -526,6 +582,7 @@ class _SocketGhostPreview(QGraphicsItem):
         self._drag_override = None
         self._collision_target = None
         self._ray_target = None
+        self._clear_candidate_selection()
         self.setPos(self._socket.ghost_spawn_pos())
 
     def set_drag_override(self, scene_top_left: Optional[QPointF]) -> None:
@@ -539,6 +596,7 @@ class _SocketGhostPreview(QGraphicsItem):
         self._drag_override = scene_top_left
         self._collision_target = None
         self._ray_target = None
+        self._clear_candidate_selection()
         self._width = GHOST_NODE_WIDTH
         self._height = GHOST_NODE_HEIGHT
         self.setPos(scene_top_left)
@@ -564,6 +622,7 @@ class _SocketGhostPreview(QGraphicsItem):
         self.prepareGeometryChange()
         self._collision_target = target
         self._ray_target = None
+        self._clear_candidate_selection()
         if target is not None:
             self._adopt_target_node(target)
 
@@ -576,6 +635,7 @@ class _SocketGhostPreview(QGraphicsItem):
         self.prepareGeometryChange()
         self._ray_target = target
         self._collision_target = None
+        self._clear_candidate_selection()
         if target is not None:
             self._adopt_target_node(target)
 
@@ -715,6 +775,7 @@ class _SocketGhostPreview(QGraphicsItem):
         self._draw_socket_diamond(painter, sock_pos)
         self._draw_socket_diamond(painter, other_pos)
         self._draw_candidate_label(painter, rect)
+        self._draw_candidate_param_sockets(painter)
 
     def _draw_candidate_label(self, painter: QPainter, rect: QRectF) -> None:
         """When side-button cycling has landed on a candidate, replaces the
@@ -739,6 +800,43 @@ class _SocketGhostPreview(QGraphicsItem):
         counter_rect = rect.adjusted(0, rect.height() - 16, -4, -2)
         painter.drawText(counter_rect, int(Qt.AlignRight | Qt.AlignBottom),
                           f"{self._candidate_index + 1}/{len(self._candidates)}")
+
+    def _draw_candidate_param_sockets(self, painter: QPainter) -> None:
+        """Every param socket the selected candidate would actually have,
+        drawn as a small dot in its own real socket color (the same
+        SOCKET_COLOR_SCHEMA vocabulary painted on every socket/wire on the
+        canvas) at its own real row position — self._node_def is built by
+        command_node_def, the exact function a real CommandNode's own
+        sockets come from, so this is a true preview of what wiring the
+        candidate up would need, not a guess. Lets a hover-and-cycle plan
+        the next few steps ahead before ever placing anything."""
+        node_def = self._node_def
+        if node_def is None:
+            return
+        font = QFont(UI_FONT_FAMILY, max(NODE_LABEL_FONT_SIZE - 1, 6))
+        painter.setFont(font)
+        metrics = QFontMetrics(font)
+        label_gap = NODE_PARAM_SOCKET_RADIUS + 4
+        for sock_def in node_def.sockets:
+            if sock_def.is_exec:
+                continue
+            pos = QPointF(node_def.socket_x(sock_def.kind), node_def.socket_y(sock_def.row))
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(sock_def.color))
+            painter.drawEllipse(pos, NODE_PARAM_SOCKET_RADIUS, NODE_PARAM_SOCKET_RADIUS)
+
+            label = sock_def.label or sock_def.name
+            if not label:
+                continue
+            is_input = sock_def.kind == "input"
+            text_x = pos.x() + label_gap if is_input else NODE_HORIZONTAL_PAD
+            avail_width = max(self._width - text_x - NODE_HORIZONTAL_PAD, 10) if is_input \
+                else max(pos.x() - label_gap - text_x, 10)
+            elided = metrics.elidedText(label, Qt.ElideRight, int(avail_width))
+            text_rect = QRectF(text_x, pos.y() - metrics.height() / 2.0, avail_width, metrics.height())
+            painter.setPen(QColor(GHOST_SOCKET_RGBA[0], GHOST_SOCKET_RGBA[1], GHOST_SOCKET_RGBA[2], 200))
+            align = Qt.AlignLeft if is_input else Qt.AlignRight
+            painter.drawText(text_rect, int(align | Qt.AlignVCenter), elided)
 
 
 class Connection(QGraphicsPathItem):
