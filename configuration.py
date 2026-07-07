@@ -172,6 +172,13 @@ GHOST_CONNECTION_WIDTH   = 1.8
 # far connection made on release — drops, leaving the ghost wired only to
 # the socket it was dragged from.
 GHOST_SPLICE_DETACH_DISTANCE = 40
+# Side mouse buttons (back/forward) while hovering an unconnected exec
+# socket cycle through this many top-ranked next-node candidates (see
+# ui/search_ranking.py, SocketItem._ranked_ghost_candidates) — the ghost
+# shows the currently selected one's real title instead of its generic
+# silhouette, and a plain click/drag-release spawns it directly, skipping
+# the search menu entirely for the common "I know what comes next" case.
+GHOST_CANDIDATE_LIMIT = 6
 
 # ── Parameter typing ───────────────────────────────────────────────────────────
 # Command parameters whose name marks them as whole numbers, promoted from the

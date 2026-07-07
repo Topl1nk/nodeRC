@@ -19,8 +19,12 @@ from ui.theme import NODE_BORDER_COLOR, TEXT_MUTED_COLOR, SEARCH_DIALOG_STYLESHE
 from localization import t
 from ui.param_nodes import PARAM_NODE_TYPES
 from ui.command_nodes import CommandNode
-from core.node_blueprint import resolve_param_type, resolve_color_schema
+from core.node_blueprint import resolve_color_schema
 from core.app_prefs import get_search_usage, get_search_usage_after, record_search_usage
+from ui.search_ranking import (
+    usage_key, context_key_for_socket, is_compatible, score_components,
+    collect_command_entries, ranked_candidates,
+)
 from diagnostics import log_and_explain
 
 SUGGESTION_LIMIT = 6
@@ -74,7 +78,7 @@ class SearchMenuDialog(QDialog):
         # drives all context ranking below — None for a plain right-click on
         # empty canvas, which gets no ranking bias at all.
         self.source_socket = source_socket
-        self._context_key = self._compute_context_key(source_socket)
+        self._context_key = context_key_for_socket(source_socket)
         self._usage = get_search_usage()
         self._usage_after = get_search_usage_after()
 
@@ -185,87 +189,19 @@ class SearchMenuDialog(QDialog):
             new_y = max(geom.top(), min(new_y, geom.bottom() - self.height()))
         self.move(new_x, new_y)
 
-    @staticmethod
-    def _compute_context_key(source_socket):
-        """Identifies "what this menu was opened from", for the usage-after
-        bigram: the owning command's name for an exec socket, "start" for
-        the chain root, or None for a param socket / plain right-click —
-        param context is ranked by type compatibility instead (see
-        _is_compatible), which needs no history."""
-        if source_socket is None or not source_socket.sock_def.is_exec:
-            return None
-        node = source_socket.meta_node
-        cmd_def = getattr(node, "cmd_def", None)
-        if cmd_def:
-            return f"cmd:{cmd_def.get('command', '')}"
-        return "start"
-
-    @staticmethod
-    def _usage_key(payload):
-        if "command" in payload:
-            return f"cmd:{payload.get('command', '')}"
-        if "param_type" in payload:
-            return f"param:{payload['param_type']}"
-        return None
-
-    @staticmethod
-    def _payload_param_types(payload):
-        """Every data type this command's required/optional params accept —
-        derived straight from cmd_def, no node instantiation needed."""
-        types = set()
-        for key in ("required", "optional"):
-            for param in payload.get(key, []):
-                name = param if isinstance(param, str) else param.get("name", "")
-                types.add(resolve_param_type(name, param) if isinstance(param, dict) else "string")
-        return types
-
-    def _is_compatible(self, payload):
-        """Whether ``payload`` matches the drag source's data type — only
-        meaningful for a param (non-exec) source, where sockets carry a real
-        type; an exec source (chain flow) reports every command compatible,
-        since virtually all of them are, and lets usage ranking sort instead."""
-        if self.source_socket is None or self.source_socket.sock_def.is_exec:
-            return True
-        src_type = self.source_socket.sock_def.param_type
-        if self.source_socket.sock_def.kind == "output":
-            return "command" not in payload or src_type in self._payload_param_types(payload)
-        return payload.get("param_type") == src_type
-
-    def _score_components(self, payload):
-        """(usage_score, compat_bonus) for one entry. usage_score reflects
-        prior picks — raw popularity plus the "usually follows this node"
-        bigram for the current exec context; compat_bonus rewards a real
-        data-type match on a param source. Kept apart because the two
-        callers weight them differently: the Suggested shortlist only fires
-        on real usage_score (so a fresh install shows nothing rather than an
-        arbitrary top-N), while search ranking blends both into one score."""
-        usage_score = 0.0
-        key = self._usage_key(payload)
-        if key:
-            usage_score += min(self._usage.get(key, 0), 20) * 3
-            if self._context_key:
-                usage_score += min(self._usage_after.get(self._context_key, {}).get(key, 0), 20) * 15
-        compat_bonus = 40.0 if self._is_compatible(payload) else 0.0
-        return usage_score, compat_bonus
-
     def _rank_bonus(self, payload):
-        usage_score, compat_bonus = self._score_components(payload)
+        usage_score, compat_bonus = score_components(
+            payload, self.source_socket, self._context_key, self._usage, self._usage_after)
         return usage_score + compat_bonus
 
     def _ranked_suggestions(self, limit=SUGGESTION_LIMIT):
-        scored = []
-        for entry in self._entries:
-            usage_score, compat_bonus = self._score_components(entry["payload"])
-            if usage_score > 0:
-                scored.append((usage_score + compat_bonus, entry))
-        scored.sort(key=lambda pair: pair[0], reverse=True)
-        return [entry for _, entry in scored[:limit]]
+        return ranked_candidates(self._entries, self.source_socket, self._context_key, limit=limit)
 
     def _apply_compat_style(self, item, payload):
         """Dims an entry whose data type can't actually feed the drag
         source — a passive hint, never a filter; every node stays clickable."""
         if (self.source_socket is not None and not self.source_socket.sock_def.is_exec
-                and not self._is_compatible(payload)):
+                and not is_compatible(payload, self.source_socket)):
             item.setForeground(0, QColor(TEXT_MUTED_COLOR))
 
     def _collect_entries(self):
@@ -298,18 +234,15 @@ class SearchMenuDialog(QDialog):
                 "haystack": f"{title} {ptype} {desc}".lower(),
             })
 
-        for pack_sections in self.command_categories.values():
-            for subsections in pack_sections.values():
-                for commands in subsections.values():
-                    for cmd in commands:
-                        label = cmd["display"]
-                        parts = (label, cmd.get("command", ""), cmd.get("action", ""),
-                                 cmd.get("action_word", ""),
-                                 cmd.get("description") or cmd.get("desc") or "")
-                        self._entries.append({
-                            "payload": cmd, "label": label,
-                            "haystack": " ".join(parts).lower(),
-                        })
+        for entry in collect_command_entries(self.command_categories):
+            cmd, label = entry["payload"], entry["label"]
+            parts = (label, cmd.get("command", ""), cmd.get("action", ""),
+                     cmd.get("action_word", ""),
+                     cmd.get("description") or cmd.get("desc") or "")
+            self._entries.append({
+                "payload": cmd, "label": label,
+                "haystack": " ".join(parts).lower(),
+            })
 
     def _render_browse(self):
         """Empty query: a Suggested shortlist (only once there's usage
@@ -554,7 +487,7 @@ class SearchMenuDialog(QDialog):
         item_payload = item.data(0, Qt.UserRole)
         if item_payload:
             self.payload = item_payload
-            key = self._usage_key(item_payload)
+            key = usage_key(item_payload)
             if key:
                 record_search_usage(key, self._context_key)
             self.accept()

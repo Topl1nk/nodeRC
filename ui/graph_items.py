@@ -41,7 +41,7 @@ from configuration import (
     GRID_SIZE_SMALL, NODE_POPUP_Z, NODE_COMBO_POPUP_PROXY_Z,
     VECTOR_COLLAPSE_GLYPH, VECTOR_COLLAPSE_GLYPH_MIRRORED, VECTOR_EXPAND_GLYPH, VECTOR_TOGGLE_WIDTH,
     NODE_SELECTION_OVERLAY_RGBA, NODE_SELECTION_OVERLAY_Z, NODE_SOCKET_Z,
-    CONNECTION_Z, GHOST_NODE_Z,
+    CONNECTION_Z, GHOST_NODE_Z, GHOST_CANDIDATE_LIMIT,
     UI_FONT_FAMILY, NODE_LABEL_FONT_SIZE, NODE_RENAME_FONT_SIZE, SOCKET_LABEL_OUTLINE_WIDTH,
     TINT_BODY_DARKEN, TINT_TITLE_LUMINANCE_THRESHOLD,
     PARAM_NODE_HEADER_FROM_SOCKET, HOTKEY_HINTS,
@@ -55,6 +55,7 @@ from ui.theme import (
 )
 from core.node_blueprint import NodeDef, SocketDef, html_title
 from ui.color_picker import ColorPickerPopup
+from ui.search_ranking import context_key_for_socket, collect_command_entries, ranked_candidates
 
 # Re-exports from extracted modules — keep ``from ui.graph_items import …`` working.
 from ui.title_item import (                                          # noqa: F401
@@ -229,9 +230,24 @@ class SocketItem(QGraphicsObject):
                 scene.addItem(self._ghost)
         return self._ghost
 
+    def _ranked_ghost_candidates(self) -> list:
+        """Commands most likely wanted next off this socket, ranked the same
+        way the search menu's own Suggested shortlist is (ui/search_ranking)
+        — empty (no usage history yet, or a param socket) leaves the ghost
+        showing its plain generic silhouette exactly as before; side-button
+        cycling (mousePressEvent) simply has nothing to cycle through."""
+        if not self.sock_def.is_exec:
+            return []
+        win = editor_window_of(self.meta_node)
+        if win is None:
+            return []
+        entries = collect_command_entries(win.command_categories)
+        return ranked_candidates(entries, self, context_key_for_socket(self), limit=GHOST_CANDIDATE_LIMIT)
+
     def _show_ghost(self) -> None:
         ghost = self._ensure_ghost()
         ghost.setVisible(True)
+        ghost.set_candidates(self._ranked_ghost_candidates())
         # Even a plain hover (no drag yet) can already collide with a
         # neighboring node sitting right where ghost_spawn_pos() lands —
         # NodeScene._ghost_collision_socket is the same check
@@ -364,6 +380,20 @@ class SocketItem(QGraphicsObject):
         if event.button() == Qt.LeftButton:
             self.scene().start_connection_drag(self, event.scenePos())
             event.accept()
+        elif (event.button() in (Qt.XButton1, Qt.XButton2) and self.sock_def.is_exec
+                and not self.is_connected() and self._ghost is not None and self._ghost.isVisible()):
+            # Side mouse buttons (back/forward) page through the ghost's own
+            # ranked candidate list while just hovering — no drag needed.
+            # XButton2 (forward) advances, XButton1 (back) goes the other
+            # way, matching every browser's own back/forward convention for
+            # these buttons. A plain click or drag-release right after this
+            # spawns whichever candidate the ghost is currently showing
+            # (NodeScene.mouseReleaseEvent) instead of opening the search
+            # menu — see _SocketGhostPreview.cycle_candidate/
+            # selected_candidate_payload.
+            self._ghost.cycle_candidate(1 if event.button() == Qt.XButton2 else -1)
+            self._force_ghost_repaint()
+            event.accept()
         else:
             event.ignore()
 
@@ -420,6 +450,14 @@ class _SocketGhostPreview(QGraphicsItem):
         # as "release here to connect directly into this existing node"
         # (see set_collision_target/paint).
         self._collision_target: Optional["SocketItem"] = None
+        # The ranked next-node candidates for this hover (SocketItem.
+        # _ranked_ghost_candidates, set fresh on every _show_ghost) and
+        # which one, if any, side-button cycling has landed on — -1 means
+        # "none selected", the plain generic silhouette. See
+        # set_candidates/cycle_candidate/selected_candidate_payload and the
+        # title/counter paint() draws once a candidate is picked.
+        self._candidates: list = []
+        self._candidate_index: int = -1
         self.setAcceptedMouseButtons(Qt.NoButton)
         self.setZValue(GHOST_NODE_Z)
         self.setVisible(False)
@@ -427,6 +465,36 @@ class _SocketGhostPreview(QGraphicsItem):
 
     def _direction(self) -> int:
         return 1 if self._socket.sock_def.kind == "output" else -1
+
+    def set_candidates(self, candidates: list) -> None:
+        """Refreshes the ranked candidate list for a fresh hover — always
+        starts unselected (index -1) even if the list content is unchanged,
+        so re-hovering the same socket never silently resumes a previous
+        pick the user might not even remember making."""
+        self._candidates = candidates
+        self._candidate_index = -1
+        self.update()
+
+    def cycle_candidate(self, direction: int) -> None:
+        """Moves the selection by ``direction`` (+1/-1), wrapping around;
+        a no-op when there's nothing to cycle (cold start, or a param
+        socket, which never gets any candidates at all)."""
+        if not self._candidates:
+            return
+        if self._candidate_index == -1:
+            self._candidate_index = 0 if direction > 0 else len(self._candidates) - 1
+        else:
+            self._candidate_index = (self._candidate_index + direction) % len(self._candidates)
+        self.update()
+
+    def selected_candidate_payload(self) -> Optional[dict]:
+        """The command payload currently selected via side-button cycling,
+        or None — the one source of truth NodeScene.mouseReleaseEvent reads
+        to decide whether a click/drag-release here spawns that node
+        directly instead of opening the search menu."""
+        if 0 <= self._candidate_index < len(self._candidates):
+            return self._candidates[self._candidate_index]["payload"]
+        return None
 
     def reset_to_hover_position(self) -> None:
         """Fixed hover-only placement, at the ghost's own default size —
@@ -581,12 +649,44 @@ class _SocketGhostPreview(QGraphicsItem):
         painter.setBrush(QBrush(QColor(*GHOST_NODE_HEADER_RGBA)))
         painter.drawRect(self._header_rect())
 
-        painter.setPen(QPen(QColor(*GHOST_NODE_BORDER_RGBA), GHOST_NODE_BORDER_WIDTH, Qt.DashLine))
+        # A selected candidate (side-button cycling) gets a brighter, solid
+        # border instead of the generic dashed one — "this is now a specific
+        # choice, not just a placeholder shape" — plus its real title and a
+        # position counter (see _draw_candidate_label).
+        if self._candidate_index != -1:
+            painter.setPen(QPen(QColor(NODE_SELECTED_COLOR), GHOST_NODE_BORDER_WIDTH * 1.5, Qt.SolidLine))
+        else:
+            painter.setPen(QPen(QColor(*GHOST_NODE_BORDER_RGBA), GHOST_NODE_BORDER_WIDTH, Qt.DashLine))
         painter.setBrush(Qt.NoBrush)
         painter.drawRect(rect)
 
         self._draw_socket_diamond(painter, sock_pos)
         self._draw_socket_diamond(painter, other_pos)
+        self._draw_candidate_label(painter, rect)
+
+    def _draw_candidate_label(self, painter: QPainter, rect: QRectF) -> None:
+        """When side-button cycling has landed on a candidate, replaces the
+        generic no-title silhouette with its real display name (elided to
+        fit the header) plus a small "n/N" counter — the only way the ghost
+        can tell the user *which* node a plain click/drag-release would
+        spawn right now."""
+        payload = self.selected_candidate_payload()
+        if payload is None:
+            return
+
+        header = self._header_rect().adjusted(6, 0, -6, 0)
+        font = QFont(UI_FONT_FAMILY, NODE_LABEL_FONT_SIZE)
+        painter.setFont(font)
+        elided = QFontMetrics(font).elidedText(payload.get("display", ""), Qt.ElideRight, int(header.width()))
+        painter.setPen(QColor(NODE_SELECTED_COLOR))
+        painter.drawText(header, int(Qt.AlignVCenter | Qt.AlignLeft), elided)
+
+        counter_font = QFont(UI_FONT_FAMILY, max(NODE_LABEL_FONT_SIZE - 2, 6))
+        painter.setFont(counter_font)
+        painter.setPen(QColor(*GHOST_SOCKET_RGBA))
+        counter_rect = rect.adjusted(0, rect.height() - 16, -4, -2)
+        painter.drawText(counter_rect, int(Qt.AlignRight | Qt.AlignBottom),
+                          f"{self._candidate_index + 1}/{len(self._candidates)}")
 
 
 class Connection(QGraphicsPathItem):

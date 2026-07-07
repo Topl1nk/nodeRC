@@ -21,6 +21,8 @@ from configuration import (
 )
 from ui.search_menu import SearchMenuDialog
 from ui.graph_items import Connection, SocketItem, MetaNode, GroupFrameItem, snap_to_grid
+from ui.search_ranking import usage_key, context_key_for_socket
+from core.app_prefs import record_search_usage
 
 
 class NodeScene(QGraphicsScene):
@@ -542,6 +544,13 @@ class NodeScene(QGraphicsScene):
             # still honors a collision that was already there from hover.
             ghost = source_socket._ghost if source_socket is not None else None
             collision_target = ghost._collision_target if ghost is not None else None
+            # Read off the ghost before _cancel_connection_drag() below wipes
+            # it (a fresh _show_ghost() call resets candidate selection) —
+            # side-button cycling (SocketItem.mousePressEvent) may have
+            # landed the ghost on a specific next-node pick; a target/
+            # collision (an existing socket to wire straight into) still
+            # takes priority over it below.
+            candidate_payload = ghost.selected_candidate_payload() if ghost is not None else None
             target        = self._find_compatible_socket(event.scenePos()) or collision_target
             original_dest = self._drag_original_dest
             press_pos     = self._drag_press_scene_pos
@@ -594,11 +603,18 @@ class NodeScene(QGraphicsScene):
                         spawn_pos = source_socket.ghost_spawn_pos()
                     else:
                         spawn_pos = event.scenePos()
-                    self.show_node_creation_menu(
-                        spawn_pos, event.screenPos(),
-                        source_socket=source_socket,
-                        original_dest=final_original_dest
-                    )
+                    if candidate_payload is not None:
+                        # Side-button cycling already picked a specific node
+                        # and the ghost was showing it — honor that promise
+                        # and spawn it straight away instead of reopening the
+                        # search menu to ask the same question again.
+                        self._spawn_ghost_candidate(spawn_pos, candidate_payload, source_socket, final_original_dest)
+                    else:
+                        self.show_node_creation_menu(
+                            spawn_pos, event.screenPos(),
+                            source_socket=source_socket,
+                            original_dest=final_original_dest
+                        )
         else:
             super().mouseReleaseEvent(event)
             moved = self._reconcile_dragged_node_state()
@@ -752,45 +768,76 @@ class NodeScene(QGraphicsScene):
         if result == QDialog.Accepted:
             win._block_undo_push = True
             try:
-                payload = dialog.payload
-
-                new_node = None
-                if isinstance(payload, dict) and "command" in payload:
-                    new_node = win.add_command_node(scene_pos, payload)
-                elif isinstance(payload, dict) and "param_type" in payload:
-                    new_node = win.add_param_node(scene_pos, payload)
-
-                target_socket = None
-                if new_node and source_socket:
-                    for s in new_node.sockets.values():
-                        if s.socket_type != source_socket.socket_type and s.sock_def.is_exec == source_socket.sock_def.is_exec:
-                            target_socket = s
-                            break
-                if target_socket:
-                    if source_socket.socket_type == "output":
-                        out_sock, in_sock = source_socket, target_socket
-                    else:
-                        out_sock, in_sock = target_socket, source_socket
-                    self.enforce_connection_rules(out_sock, in_sock)
-                    conn = Connection(out_sock, in_sock)
-                    self.addItem(conn)
-                    win.connections.append(conn)
-
-                    if original_dest:
-                        c_out_sock = None
-                        for s in new_node.sockets.values():
-                            if s.socket_type == source_socket.socket_type and s.sock_def.is_exec == source_socket.sock_def.is_exec:
-                                c_out_sock = s
-                                break
-                        if c_out_sock:
-                            if original_dest.socket_type == "input":
-                                self.enforce_connection_rules(c_out_sock, original_dest)
-                                conn2 = Connection(c_out_sock, original_dest)
-                            else:
-                                self.enforce_connection_rules(original_dest, c_out_sock)
-                                conn2 = Connection(original_dest, c_out_sock)
-                            self.addItem(conn2)
-                            win.connections.append(conn2)
+                self._spawn_node_payload(scene_pos, dialog.payload, source_socket, original_dest)
             finally:
                 win._block_undo_push = False
             win.push_undo_state()
+
+    def _spawn_node_payload(self, scene_pos: QPointF, payload, source_socket=None, original_dest=None):
+        """Places ``payload`` (a command or param spec) at ``scene_pos`` and,
+        given a ``source_socket``, wires it in exactly like accepting it
+        from the search menu — the one path both the dialog's Accepted
+        branch and the ghost's side-button quick-spawn (mouseReleaseEvent's
+        candidate_payload branch) funnel through, so a node placed either
+        way ends up wired identically."""
+        win = self.nodeEditorWindow
+        if not win:
+            return None
+        new_node = None
+        if isinstance(payload, dict) and "command" in payload:
+            new_node = win.add_command_node(scene_pos, payload)
+        elif isinstance(payload, dict) and "param_type" in payload:
+            new_node = win.add_param_node(scene_pos, payload)
+
+        target_socket = None
+        if new_node and source_socket:
+            for s in new_node.sockets.values():
+                if s.socket_type != source_socket.socket_type and s.sock_def.is_exec == source_socket.sock_def.is_exec:
+                    target_socket = s
+                    break
+        if target_socket:
+            if source_socket.socket_type == "output":
+                out_sock, in_sock = source_socket, target_socket
+            else:
+                out_sock, in_sock = target_socket, source_socket
+            self.enforce_connection_rules(out_sock, in_sock)
+            conn = Connection(out_sock, in_sock)
+            self.addItem(conn)
+            win.connections.append(conn)
+
+            if original_dest:
+                c_out_sock = None
+                for s in new_node.sockets.values():
+                    if s.socket_type == source_socket.socket_type and s.sock_def.is_exec == source_socket.sock_def.is_exec:
+                        c_out_sock = s
+                        break
+                if c_out_sock:
+                    if original_dest.socket_type == "input":
+                        self.enforce_connection_rules(c_out_sock, original_dest)
+                        conn2 = Connection(c_out_sock, original_dest)
+                    else:
+                        self.enforce_connection_rules(original_dest, c_out_sock)
+                        conn2 = Connection(original_dest, c_out_sock)
+                    self.addItem(conn2)
+                    win.connections.append(conn2)
+        return new_node
+
+    def _spawn_ghost_candidate(self, scene_pos: QPointF, payload: dict, source_socket, original_dest=None):
+        """Places the node the ghost was showing via side-button cycling —
+        same spawn+connect path as accepting it from the search menu
+        (_spawn_node_payload), just without ever opening the dialog. Records
+        the pick the same way a menu selection does (SearchMenuDialog.
+        _on_item_activated), so this path feeds the same ranking data back
+        instead of being invisible to it."""
+        win = self.nodeEditorWindow
+        if not win:
+            return
+        win._block_undo_push = True
+        try:
+            self._spawn_node_payload(scene_pos, payload, source_socket, original_dest)
+        finally:
+            win._block_undo_push = False
+        win.push_undo_state()
+        key = usage_key(payload)
+        if key:
+            record_search_usage(key, context_key_for_socket(source_socket))
