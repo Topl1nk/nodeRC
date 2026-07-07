@@ -33,7 +33,7 @@ from diagnostics import log_and_explain
 # exists and nothing in the UI's node-creation path (Phase 6 scope) tags a
 # node with anything else. Ст.12: explicit, reasoned placeholder, not a
 # silent assumption.
-_DEFAULT_PACK_ID = "realitycapture"
+_DEFAULT_PACK_ID = "realityscan"
 
 
 def _pack_id_for_node(node: NodeModel) -> str:
@@ -192,7 +192,12 @@ class GraphExecutor:
         for segment in segment_chain_by_pack(chain):
             if cancel_check and cancel_check():
                 break
-            runs.append(self._run_segment(graph, segment, cancel_check))
+            
+            run = self._run_segment(graph, segment, cancel_check)
+            runs.append(run)
+            if not run.result.ok:
+                break
+                
         return runs
 
     def _run_segment(self, graph: GraphModel, segment: Segment,

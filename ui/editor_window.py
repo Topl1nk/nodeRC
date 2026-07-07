@@ -45,12 +45,12 @@ from ui.keymap import (
 from diagnostics import log_and_explain
 
 try:
-    # The realitycapture pack is optional like any other discovered pack
+    # The realityscan pack is optional like any other discovered pack
     # (Доктрина III.1) — a system without it installed must still launch,
     # not crash on this import, so the command palette just starts empty
     # instead (still fully usable: any other installed pack still merges in
     # below, and RC's own nodes simply aren't offered).
-    from packs.realitycapture.command_database import load_command_database
+    from packs.realityscan.command_database import load_command_database
 except ImportError as _rc_import_error:
     log_and_explain("RealityCapture pack not installed — command palette starts empty",
                     _rc_import_error)
@@ -128,17 +128,21 @@ class NodeEditorWindow(QMainWindow):
 
         # RealityCapture keeps its own richer loader (falls back to a small
         # built-in command set when no local RC docs were parsed — see
-        # packs/realitycapture/command_database.py). Any other installed
+        # packs/realityscan/command_database.py). Any other installed
         # pack contributes only what its own commands_source JSON declares
         # (core/pack_catalog.py) — no pack Python code runs to build the
         # palette (Доктрина III.1: only core/pack_executor.py ever runs a
         # pack's code, and only in its own process).
-        self.command_categories, self.command_defs = load_command_database()
-        other_packs = [p for p in installed_packs if p.manifest.pack_id != "realitycapture"]
+        rc_categories, self.command_defs = load_command_database()
+        self.command_categories = {"RealityScan": rc_categories}
+        
+        other_packs = [p for p in installed_packs if p.manifest.pack_id != "realityscan"]
         if other_packs:
-            extra_categories = merge_catalogs(*(load_pack_catalog(p) for p in other_packs))
-            self.command_categories = merge_catalogs(self.command_categories, extra_categories)
-            self.command_defs = self.command_defs + flatten_commands(extra_categories)
+            for p in other_packs:
+                pack_cat = load_pack_catalog(p)
+                if pack_cat:
+                    self.command_categories[p.manifest.display_name] = pack_cat
+                    self.command_defs.extend(flatten_commands(pack_cat))
 
         # Segment-by-pack incremental execution (Доктрина V) — one
         # GraphExecutor per window, its cache lives for the process lifetime

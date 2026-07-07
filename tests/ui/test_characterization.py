@@ -977,7 +977,7 @@ def test_command_node_def_gives_duplicate_named_params_unique_sockets():
 # ── param type inference: axis suffix vs. lookalike words ──────────────────────
 
 def test_infer_param_type_distinguishes_real_axis_from_lookalike_words():
-    from packs.realitycapture.rc_documentation_extractor import _infer_param_type
+    from packs.realityscan.rs_documentation_extractor import _infer_param_type
     assert _infer_param_type("x") == "float"
     assert _infer_param_type("offsetX") == "float"
     assert _infer_param_type("rotateX") == "float"

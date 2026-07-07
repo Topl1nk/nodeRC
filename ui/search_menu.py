@@ -175,17 +175,18 @@ class SearchMenuDialog(QDialog):
                 "haystack": f"{title} {ptype} {desc}".lower(),
             })
 
-        for subsections in self.command_categories.values():
-            for commands in subsections.values():
-                for cmd in commands:
-                    label = cmd["display"]
-                    parts = (label, cmd.get("command", ""), cmd.get("action", ""),
-                             cmd.get("action_word", ""),
-                             cmd.get("description") or cmd.get("desc") or "")
-                    self._entries.append({
-                        "payload": cmd, "label": label,
-                        "haystack": " ".join(parts).lower(),
-                    })
+        for pack_sections in self.command_categories.values():
+            for subsections in pack_sections.values():
+                for commands in subsections.values():
+                    for cmd in commands:
+                        label = cmd["display"]
+                        parts = (label, cmd.get("command", ""), cmd.get("action", ""),
+                                 cmd.get("action_word", ""),
+                                 cmd.get("description") or cmd.get("desc") or "")
+                        self._entries.append({
+                            "payload": cmd, "label": label,
+                            "haystack": " ".join(parts).lower(),
+                        })
 
     def _render_browse(self):
         """Empty query: the full, browsable category tree (params, then commands)."""
@@ -199,17 +200,18 @@ class SearchMenuDialog(QDialog):
             item.setData(0, Qt.UserRole, payload)
             self._all_items.append(item)
 
-        cmd_cat = QTreeWidgetItem(self.tree, [f"[Cmd] {t('lbl_commands')}"])
-        cmd_cat.setExpanded(True)
-        for sec_name, subsections in self.command_categories.items():
-            sec_item = QTreeWidgetItem(cmd_cat, [sec_name])
-            for subsec_name, commands in subsections.items():
-                parent_item = sec_item if subsec_name == "__root__" \
-                    else QTreeWidgetItem(sec_item, [subsec_name])
-                for cmd in commands:
-                    item = QTreeWidgetItem(parent_item, [f"  • {cmd['display']}"])
-                    item.setData(0, Qt.UserRole, cmd)
-                    self._all_items.append(item)
+        for pack_name, pack_sections in self.command_categories.items():
+            pack_item = QTreeWidgetItem(self.tree, [f"[Cmd] {pack_name}"])
+            pack_item.setExpanded(True)
+            for sec_name, subsections in pack_sections.items():
+                sec_item = QTreeWidgetItem(pack_item, [sec_name])
+                for subsec_name, commands in subsections.items():
+                    parent_item = sec_item if subsec_name == "__root__" \
+                        else QTreeWidgetItem(sec_item, [subsec_name])
+                    for cmd in commands:
+                        item = QTreeWidgetItem(parent_item, [f"  • {cmd['display']}"])
+                        item.setData(0, Qt.UserRole, cmd)
+                        self._all_items.append(item)
 
     def _render_results(self, query):
         """Non-empty query: a flat list ranked best-first, category noise removed."""

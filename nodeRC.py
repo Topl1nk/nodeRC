@@ -44,11 +44,11 @@ if __name__ == "__main__":
 
     try:
         # Both imports live in the try, not at module level (Доктрина III.1):
-        # the realitycapture pack is optional like any other, and a system
+        # the realityscan pack is optional like any other, and a system
         # without it installed must still launch, not crash on this import.
-        from packs.realitycapture.config import COMMAND_DB_JSON, RC_HELP_HTML
-        from packs.realitycapture.rc_documentation_extractor import rebuild_command_database_from_html
-        rebuild_command_database_from_html(RC_HELP_HTML, COMMAND_DB_JSON)
+        from packs.realityscan.config import COMMAND_DB_JSON, RS_HELP_HTML
+        from packs.realityscan.rs_documentation_extractor import rebuild_command_database_from_html
+        rebuild_command_database_from_html(RS_HELP_HTML)
     except (Exception, SystemExit) as exc:
         _logger.warning("Documentation refresh skipped: %s", exc)
 

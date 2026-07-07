@@ -1211,6 +1211,7 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         # (full- or header-only-scoped) always reads as "this node's own
         # color" from its silhouette alone, not just its header band.
         only_header = bool(self._color_override) and self._color_only_header
+        body_border_brush = None
         if self._color_override:
             header_color = QColor(self._color_override)
             header_edge = brightened_for_canvas(header_color)
@@ -1218,15 +1219,26 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
                 body_color = QColor(d.body_color)
                 body_color.setAlpha(header_color.alpha())
                 header_edge.setAlpha(header_color.alpha())
-                body_border_color = header_edge
+                
+                gradient = QLinearGradient(0, 0, 0, d.body_height)
+                gradient.setColorAt(0.0, header_edge)
+                gradient.setColorAt(1.0, QColor(NODE_BORDER_COLOR))
+                body_border_brush = QBrush(gradient)
             else:
                 body_color = header_color.darker(TINT_BODY_DARKEN)
-                body_border_color = header_edge
+                body_border_brush = QBrush(header_edge)
         else:
             header_color = QColor(d.header_color)
             header_edge = QColor(NODE_BORDER_COLOR)
             body_color = QColor(d.body_color)
-            body_border_color = QColor(NODE_BORDER_COLOR)
+            
+            if self._color_only_header:
+                gradient = QLinearGradient(0, 0, 0, d.body_height)
+                gradient.setColorAt(0.0, header_color)
+                gradient.setColorAt(1.0, QColor(NODE_BORDER_COLOR))
+                body_border_brush = QBrush(gradient)
+            else:
+                body_border_brush = QBrush(QColor(NODE_BORDER_COLOR))
 
         hovered_socket = next((s for s in self.sockets.values() if s._hovered), None)
 
@@ -1254,7 +1266,7 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
             # header or the body.
             border_pen = QPen(QColor(NODE_HOVER_COLOR), NODE_HOVER_BORDER_WIDTH)
         else:
-            border_pen = QPen(body_border_color, 1.0)
+            border_pen = QPen(body_border_brush, 1.0)
 
         body_rect   = QRectF(0, 0, d.width, d.body_height)
         header_rect = QRectF(0, 0, d.width, NODE_HEADER_HEIGHT)

@@ -1,10 +1,10 @@
 {
-    "pack_id": "realitycapture",
-    "display_name": "RealityCapture",
+    "pack_id": "realityscan",
+    "display_name": "RealityScan",
     "version": "1.0.0",
     "protocol_version": 1,
-    "entry_point": "rc_pack.py",
-    "commands_source": "rc_commands.json",
+    "entry_point": "rs_pack.py",
+    "commands_source": "rs_commands.json",
     "declares": {
         "executable": true,
         "filesystem": ["read", "write"],

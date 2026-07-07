@@ -1,8 +1,8 @@
 """
-rc_documentation_extractor.py — RealityCapture HTML Documentation Parser
+rc_documentation_extractor.py — RealityScan HTML Documentation Parser
 Parses allcommands.htm and writes:
-  • rc_commands.json — rich format with categories, display names, typed params
-  • rc_commands.txt  — legacy flat format for backward compatibility
+  • rs_commands.json — rich format with categories, display names, typed params
+  • rs_commands.txt  — legacy flat format for backward compatibility
 
 JSON schema per command:
   {
@@ -24,7 +24,7 @@ import json
 import logging
 from typing import Dict, List, Optional, Set, Tuple
 
-from packs.realitycapture.config import RC_HELP_HTML, COMMAND_DB_JSON
+from packs.realityscan.config import RS_HELP_HTML, COMMAND_DB_JSON
 
 _logger = logging.getLogger("nodeRC")
 
@@ -371,7 +371,7 @@ def _add_undocumented_commands(categories: CommandCategoryTree) -> None:
 def _write_json_database(categories: CommandCategoryTree, path: str) -> int:
     total = sum(len(c) for s in categories.values() for c in s.values())
     # Write-then-replace: a crash or kill mid-write must never leave a
-    # truncated rc_commands.json on disk for the next startup's json.load to
+    # truncated rs_commands.json on disk for the next startup's json.load to
     # choke on (see core.command_database.load_command_database, which now
     # falls back to builtin_command_defaults() on exactly that failure — but
     # only if this file itself isn't the thing that's corrupt).
@@ -385,7 +385,7 @@ def _write_json_database(categories: CommandCategoryTree, path: str) -> int:
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def rebuild_command_database_from_html(
-    html_path: str      = RC_HELP_HTML,
+    html_path: str      = RS_HELP_HTML,
     json_output: str    = COMMAND_DB_JSON,
 ) -> bool:
     """
@@ -413,5 +413,5 @@ def rebuild_command_database_from_html(
 
 if __name__ == "__main__":
     import sys
-    path = sys.argv[1] if len(sys.argv) > 1 else RC_HELP_HTML
+    path = sys.argv[1] if len(sys.argv) > 1 else RS_HELP_HTML
     sys.exit(0 if rebuild_command_database_from_html(path) else 1)

@@ -1,5 +1,5 @@
-from packs.realitycapture.config import RC_EXECUTABLE
-from packs.realitycapture.rc_pack import build_command_tokens, run_request
+from packs.realityscan.config import RS_EXECUTABLE
+from packs.realityscan.rs_pack import build_command_tokens, run_request
 
 COMMAND_PAYLOAD = {
     "command": "-exportModel",
@@ -31,7 +31,7 @@ def test_run_request_reports_success(monkeypatch):
         stderr = ""
 
     monkeypatch.setattr(
-        "packs.realitycapture.rc_pack.subprocess.run",
+        "packs.realityscan.rs_pack.subprocess.run",
         lambda *a, **k: FakeCompletedProcess(),
     )
 
@@ -47,7 +47,7 @@ def test_run_request_reports_nonzero_exit(monkeypatch):
         stderr = "RC could not find the input file"
 
     monkeypatch.setattr(
-        "packs.realitycapture.rc_pack.subprocess.run",
+        "packs.realityscan.rs_pack.subprocess.run",
         lambda *a, **k: FakeCompletedProcess(),
     )
 
@@ -59,9 +59,9 @@ def test_run_request_reports_nonzero_exit(monkeypatch):
 
 def test_run_request_reports_launch_failure(monkeypatch):
     def _raise(*a, **k):
-        raise OSError("RealityCapture.exe not found")
+        raise OSError("RealityScan.exe not found")
 
-    monkeypatch.setattr("packs.realitycapture.rc_pack.subprocess.run", _raise)
+    monkeypatch.setattr("packs.realityscan.rs_pack.subprocess.run", _raise)
 
     response = run_request({"commands": [{"command": {"command": "-quit"}, "params": {}}]})
 
@@ -84,7 +84,7 @@ def test_run_request_launches_rc_once_with_every_command_concatenated(monkeypatc
         captured_tokens.extend(tokens)
         return FakeCompletedProcess()
 
-    monkeypatch.setattr("packs.realitycapture.rc_pack.subprocess.run", _fake_run)
+    monkeypatch.setattr("packs.realityscan.rs_pack.subprocess.run", _fake_run)
 
     run_request({
         "commands": [

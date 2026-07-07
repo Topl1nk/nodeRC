@@ -12,8 +12,8 @@ from core.pack_protocol import (
 )
 
 RC_MANIFEST_PAYLOAD = {
-    "pack_id": "realitycapture",
-    "display_name": "RealityCapture",
+    "pack_id": "realityscan",
+    "display_name": "RealityScan",
     "version": "1.0.0",
     "protocol_version": PROTOCOL_VERSION,
     "declares": {"executable": True, "filesystem": ["read", "write"], "network": False},
@@ -35,7 +35,7 @@ RC_COMMAND_PAYLOAD = {
 
 def test_pack_manifest_round_trip():
     manifest = PackManifest.from_dict(RC_MANIFEST_PAYLOAD)
-    assert manifest.pack_id == "realitycapture"
+    assert manifest.pack_id == "realityscan"
     assert manifest.declares == PackDeclares(executable=True, filesystem=["read", "write"], network=False)
     assert manifest.to_dict() == RC_MANIFEST_PAYLOAD
 

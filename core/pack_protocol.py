@@ -116,30 +116,26 @@ class PackManifest:
 @dataclass(frozen=True)
 class ParamDef:
     """One command parameter. The {name, type, values} shape is the one
-    core/rc_documentation_extractor.py already produces for RealityCapture,
-    generalised — it carries no RC-specific assumption."""
+    core/rs_documentation_extractor.py already produces for RealityScan,
+    generalised — it carries no RS-specific assumption."""
     name: str
     type: str = "string"
     values: List[str] = field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, payload: dict) -> "ParamDef":
-        return cls(
-            name=payload["name"],
-            type=payload.get("type", "string"),
-            values=list(payload.get("values", [])),
-        )
+    def from_dict(cls, data: dict) -> ParamDef:
+        return cls(name=data["name"], type=data.get("type", "string"), values=data.get("values", []))
 
     def to_dict(self) -> dict:
-        return {"name": self.name, "type": self.type, "values": list(self.values)}
+        return {"name": self.name, "type": self.type, "values": self.values}
 
 
 @dataclass(frozen=True)
 class CommandDef:
     """One invocable operation a pack exposes as a node. Mirrors the JSON
-    shape rc_documentation_extractor.py already writes to rc_commands.json
+    shape rs_documentation_extractor.py already writes to rs_commands.json
     (command, display, action, required/optional param lists, section,
-    subsection) — unchanged, so RC's existing catalog needs no transformation
+    subsection) — unchanged, so RS's existing catalog needs no transformation
     when it becomes the first pack's commands_source (Phase 3)."""
     command: str
     display: str = ""

@@ -1,9 +1,9 @@
-"""rc_pack.py — RealityCapture Pack Entry Point
+"""rs_pack.py — RealityScan Pack Entry Point
 
 The subprocess core/pack_executor.py launches for every execution segment:
 one JSON request on stdin, one JSON response on stdout (see PackExecutor in
 core/pack_protocol.py). All commands of a segment become a single
-RealityCapture.exe invocation — RC keeps a project loaded in memory across
+RealityScan.exe invocation — RS keeps a project loaded in memory across
 its CLI flags (-load/-align/-exportModel), so splitting a segment into one
 process per command would silently lose that state.
 
@@ -18,14 +18,14 @@ import subprocess
 import sys
 
 try:
-    from packs.realitycapture.config import RC_EXECUTABLE
+    from packs.realityscan.config import RS_EXECUTABLE
 except ImportError:
     # Launched directly as a script (the executor invokes this file by path,
     # so the repo root may not be on sys.path) — fall back to the sibling
     # module import that works from inside the pack folder.
     import os
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from config import RC_EXECUTABLE  # type: ignore
+    from config import RS_EXECUTABLE  # type: ignore
 
 
 def build_command_tokens(command_payload: dict, params: dict) -> list:
@@ -33,7 +33,7 @@ def build_command_tokens(command_payload: dict, params: dict) -> list:
     parameter value in declaration order (required first, then optional).
     An empty/missing value is skipped, not passed as an empty token; a
     vector value ("1.0 2.0 3.0") splits into one token per component —
-    RealityCapture's CLI takes vector components as separate arguments.
+    RealityScan's CLI takes vector components as separate arguments.
     """
     tokens = [command_payload["command"]]
     declared = list(command_payload.get("required", [])) + list(command_payload.get("optional", []))
@@ -47,12 +47,12 @@ def build_command_tokens(command_payload: dict, params: dict) -> list:
 
 def run_request(request: dict) -> dict:
     """Execute one segment request: every command concatenated into a single
-    RealityCapture invocation. Any failure — launch error, non-zero exit —
+    RealityScan invocation. Any failure — launch error, non-zero exit —
     comes back as ok=False with a human-readable error, never an exception
     (the editor-side contract in core/pack_executor.py expects exactly the
     {ok, output, error} shape).
     """
-    tokens = [RC_EXECUTABLE]
+    tokens = [RS_EXECUTABLE]
     for entry in request.get("commands", []):
         tokens.extend(build_command_tokens(entry["command"], entry.get("params", {})))
 
@@ -61,10 +61,16 @@ def run_request(request: dict) -> dict:
     except OSError as exc:
         return {"ok": False, "output": "", "error": str(exc)}
 
+    error_msg = completed.stderr
+    if completed.returncode != 0 and not error_msg:
+        error_msg = f"RealityScan exited with code {completed.returncode}."
+        if completed.stdout.strip():
+            error_msg += f"\nOutput:\n{completed.stdout.strip()}"
+
     return {
         "ok": completed.returncode == 0,
         "output": completed.stdout,
-        "error": completed.stderr,
+        "error": error_msg,
     }
 
 

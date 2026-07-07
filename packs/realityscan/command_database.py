@@ -1,6 +1,6 @@
-"""command_database.py — RealityCapture Command Catalog Access
+"""command_database.py — RealityScan Command Catalog Access
 
-Loads the categorized command catalog produced by rc_documentation_extractor,
+Loads the categorized command catalog produced by rs_documentation_extractor,
 falling back to a minimal built-in set when no local documentation was parsed —
 the command palette must never be empty.
 """
@@ -10,15 +10,15 @@ import json
 import os
 from typing import Dict, List, Tuple
 
-from packs.realitycapture.config import COMMAND_DB_JSON
-from packs.realitycapture.rc_documentation_extractor import command_display_name, command_action_word
+from packs.realityscan.config import COMMAND_DB_JSON
+from packs.realityscan.rs_documentation_extractor import command_display_name, command_action_word
 from diagnostics import log_and_explain
 
 CommandCategoryTree = Dict[str, Dict[str, List[dict]]]
 
 
 def builtin_command_defaults() -> List[dict]:
-    """Minimal offline command set that keeps the editor functional without RC.
+    """Minimal offline command set that keeps the editor functional without RS.
 
     Why: guarantees a non-empty command palette so the UI never silently
     degrades to unusable.
@@ -64,7 +64,7 @@ def load_command_database() -> Tuple[CommandCategoryTree, List[dict]]:
             # below. Either way the palette must never come up empty — see
             # module docstring — so fall through to the built-in set instead
             # of taking the whole app down on a corrupted or stale-shaped
-            # rc_commands.json.
+            # only if this file itself isn't the thing that's corrupt).
             log_and_explain(f"Ignoring unreadable {COMMAND_DB_JSON}", exc)
 
     defaults = builtin_command_defaults()

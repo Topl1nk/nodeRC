@@ -74,7 +74,7 @@ def test_segment_chain_by_pack_groups_consecutive_command_nodes():
     segments = segment_chain_by_pack(chain)
 
     assert len(segments) == 1
-    assert segments[0].pack_id == "realitycapture"
+    assert segments[0].pack_id == "realityscan"
     assert [n.uid for n in segments[0].nodes] == ["a", "b"]
 
 
@@ -132,7 +132,7 @@ def _simple_graph(filepath_value="C:/out.obj"):
 
 
 def _executor_factory(fake):
-    return lambda pack_id: fake if pack_id == "realitycapture" else None
+    return lambda pack_id: fake if pack_id == "realityscan" else None
 
 
 def test_execute_runs_one_segment_and_reports_success():
@@ -142,7 +142,7 @@ def test_execute_runs_one_segment_and_reports_success():
     runs = executor.execute(_simple_graph())
 
     assert len(runs) == 1
-    assert runs[0].pack_id == "realitycapture"
+    assert runs[0].pack_id == "realityscan"
     assert runs[0].result.ok is True
     assert runs[0].cache_hit is False
     assert len(fake.calls) == 1
@@ -150,7 +150,7 @@ def test_execute_runs_one_segment_and_reports_success():
 
 def test_execute_never_caches_a_pack_that_did_not_opt_in():
     """The bug this guards against: a pack that launches an interactive
-    program (RealityCapture's own window) must run again on every Launch
+    program (RealityScan's own window) must run again on every Launch
     click, even with an identical graph — treating "unchanged inputs" as
     "safe to skip" is only true for a pure batch computation. Default
     (no is_pack_cacheable given) must behave the same as an explicit
@@ -225,7 +225,7 @@ def test_execute_reports_missing_pack_without_raising():
     runs = executor.execute(_simple_graph())
 
     assert runs[0].result.ok is False
-    assert "realitycapture" in runs[0].result.error
+    assert "realityscan" in runs[0].result.error
 
 
 def test_execute_stops_at_cancel_check_before_running_any_segment():
