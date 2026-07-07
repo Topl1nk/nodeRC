@@ -60,3 +60,32 @@ def set_session_restore_always(value: bool) -> None:
     prefs = load_prefs()
     prefs["session_restore_always"] = value
     save_prefs(prefs)
+
+
+def get_search_usage() -> dict:
+    """{entry_key: pick_count} — how often each search-menu entry has ever
+    been chosen, across every context. Backs the search menu's "Suggested"
+    shortlist and its overall ranking (see ui/search_menu.py)."""
+    return load_prefs().get("search_usage", {})
+
+
+def get_search_usage_after() -> dict:
+    """{context_key: {entry_key: pick_count}} — which entries tend to get
+    picked right after a given exec context (a command, or "start"), so the
+    search menu can rank "what usually follows this node" above raw
+    popularity."""
+    return load_prefs().get("search_usage_after", {})
+
+
+def record_search_usage(key: str, after_key: str = None) -> None:
+    """Bumps ``key``'s overall pick count, and — when the search opened off
+    an exec socket (``after_key`` identifies its owning node) — its
+    follow-up count for that context too."""
+    prefs = load_prefs()
+    usage = prefs.setdefault("search_usage", {})
+    usage[key] = usage.get(key, 0) + 1
+    if after_key:
+        after = prefs.setdefault("search_usage_after", {})
+        bucket = after.setdefault(after_key, {})
+        bucket[key] = bucket.get(key, 0) + 1
+    save_prefs(prefs)

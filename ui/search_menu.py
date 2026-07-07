@@ -9,31 +9,43 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QTreeWidget, QTreeWidgetItem, QLabel, QGraphicsView, QGraphicsScene, QSizePolicy, QFrame, QWidget, QApplication
 )
 from PyQt5.QtCore import Qt, QEvent, QTimer
-from PyQt5.QtGui import QPainter
+from PyQt5.QtGui import QPainter, QColor
 
 from configuration import (
     SEARCH_DIALOG_WIDTH,
     SEARCH_DIALOG_HEIGHT, SEARCH_RESULTS_LIMIT,
-    SEARCH_DIALOG_X_OFFSET,
 )
-from ui.theme import NODE_BORDER_COLOR, SEARCH_DIALOG_STYLESHEET, apply_field_placeholder_palette
+from ui.theme import NODE_BORDER_COLOR, TEXT_MUTED_COLOR, SEARCH_DIALOG_STYLESHEET, apply_field_placeholder_palette
 from localization import t
 from ui.param_nodes import PARAM_NODE_TYPES
 from ui.command_nodes import CommandNode
+from core.node_blueprint import resolve_param_type
+from core.app_prefs import get_search_usage, get_search_usage_after, record_search_usage
 from diagnostics import log_and_explain
+
+SUGGESTION_LIMIT = 6
 
 
 
 class SearchMenuDialog(QDialog):
-    def __init__(self, command_categories, parent=None):
+    def __init__(self, command_categories, parent=None, source_socket=None):
         super().__init__(parent, Qt.Popup | Qt.FramelessWindowHint)
         self.setStyleSheet(SEARCH_DIALOG_STYLESHEET)
         self.resize(SEARCH_DIALOG_WIDTH, SEARCH_DIALOG_HEIGHT)
-        
+
         self.payload = None
         self.command_categories = command_categories
         self._all_items = []
+        self._suggestion_items = []
         self._anchor_screen_pos = None
+
+        # The socket this menu was opened from (drag-release / click-to-spawn)
+        # drives all context ranking below — None for a plain right-click on
+        # empty canvas, which gets no ranking bias at all.
+        self.source_socket = source_socket
+        self._context_key = self._compute_context_key(source_socket)
+        self._usage = get_search_usage()
+        self._usage_after = get_search_usage_after()
 
         self.main_layout = QHBoxLayout(self)
         self.main_layout.setContentsMargins(10, 10, 10, 10)
@@ -115,23 +127,6 @@ class SearchMenuDialog(QDialog):
 
     def set_anchor_pos(self, pos):
         self._anchor_screen_pos = pos
-        screen = QApplication.screenAt(pos)
-        if screen:
-            screen_geom = screen.availableGeometry()
-            self.main_layout.removeWidget(self.info_widget)
-            self.main_layout.removeWidget(self.separator)
-            self.main_layout.removeWidget(self.search_frame)
-            
-            # Why: Swaps layout components if near the right screen edge to keep the pop-up fully visible.
-            if pos.x() + SEARCH_DIALOG_X_OFFSET > screen_geom.right():
-                self.main_layout.addWidget(self.info_widget)
-                self.main_layout.addWidget(self.separator)
-                self.main_layout.addWidget(self.search_frame)
-            else:
-                self.main_layout.addWidget(self.search_frame)
-                self.main_layout.addWidget(self.separator)
-                self.main_layout.addWidget(self.info_widget)
-                
         self._adjust_position()
 
     def resizeEvent(self, event):
@@ -140,10 +135,105 @@ class SearchMenuDialog(QDialog):
             self._adjust_position()
 
     def _adjust_position(self):
+        # Search bar + tree always sit on the left, preview + description
+        # always on the right (the fixed order main_layout was built with in
+        # __init__) — this used to swap sides near the right screen edge,
+        # which made the menu land in a different spot every time and broke
+        # the muscle memory of "type immediately, look right for the
+        # preview". Clamping the window position instead keeps that layout
+        # fixed and just slides the whole popup back on-screen.
         search_frame_pos = self.search_frame.pos()
         new_x = self._anchor_screen_pos.x() - search_frame_pos.x()
         new_y = self._anchor_screen_pos.y() - search_frame_pos.y()
+        screen = QApplication.screenAt(self._anchor_screen_pos)
+        if screen:
+            geom = screen.availableGeometry()
+            new_x = max(geom.left(), min(new_x, geom.right() - self.width()))
+            new_y = max(geom.top(), min(new_y, geom.bottom() - self.height()))
         self.move(new_x, new_y)
+
+    @staticmethod
+    def _compute_context_key(source_socket):
+        """Identifies "what this menu was opened from", for the usage-after
+        bigram: the owning command's name for an exec socket, "start" for
+        the chain root, or None for a param socket / plain right-click —
+        param context is ranked by type compatibility instead (see
+        _is_compatible), which needs no history."""
+        if source_socket is None or not source_socket.sock_def.is_exec:
+            return None
+        node = source_socket.meta_node
+        cmd_def = getattr(node, "cmd_def", None)
+        if cmd_def:
+            return f"cmd:{cmd_def.get('command', '')}"
+        return "start"
+
+    @staticmethod
+    def _usage_key(payload):
+        if "command" in payload:
+            return f"cmd:{payload.get('command', '')}"
+        if "param_type" in payload:
+            return f"param:{payload['param_type']}"
+        return None
+
+    @staticmethod
+    def _payload_param_types(payload):
+        """Every data type this command's required/optional params accept —
+        derived straight from cmd_def, no node instantiation needed."""
+        types = set()
+        for key in ("required", "optional"):
+            for param in payload.get(key, []):
+                name = param if isinstance(param, str) else param.get("name", "")
+                types.add(resolve_param_type(name, param) if isinstance(param, dict) else "string")
+        return types
+
+    def _is_compatible(self, payload):
+        """Whether ``payload`` matches the drag source's data type — only
+        meaningful for a param (non-exec) source, where sockets carry a real
+        type; an exec source (chain flow) reports every command compatible,
+        since virtually all of them are, and lets usage ranking sort instead."""
+        if self.source_socket is None or self.source_socket.sock_def.is_exec:
+            return True
+        src_type = self.source_socket.sock_def.param_type
+        if self.source_socket.sock_def.kind == "output":
+            return "command" not in payload or src_type in self._payload_param_types(payload)
+        return payload.get("param_type") == src_type
+
+    def _score_components(self, payload):
+        """(usage_score, compat_bonus) for one entry. usage_score reflects
+        prior picks — raw popularity plus the "usually follows this node"
+        bigram for the current exec context; compat_bonus rewards a real
+        data-type match on a param source. Kept apart because the two
+        callers weight them differently: the Suggested shortlist only fires
+        on real usage_score (so a fresh install shows nothing rather than an
+        arbitrary top-N), while search ranking blends both into one score."""
+        usage_score = 0.0
+        key = self._usage_key(payload)
+        if key:
+            usage_score += min(self._usage.get(key, 0), 20) * 3
+            if self._context_key:
+                usage_score += min(self._usage_after.get(self._context_key, {}).get(key, 0), 20) * 15
+        compat_bonus = 40.0 if self._is_compatible(payload) else 0.0
+        return usage_score, compat_bonus
+
+    def _rank_bonus(self, payload):
+        usage_score, compat_bonus = self._score_components(payload)
+        return usage_score + compat_bonus
+
+    def _ranked_suggestions(self, limit=SUGGESTION_LIMIT):
+        scored = []
+        for entry in self._entries:
+            usage_score, compat_bonus = self._score_components(entry["payload"])
+            if usage_score > 0:
+                scored.append((usage_score + compat_bonus, entry))
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        return [entry for _, entry in scored[:limit]]
+
+    def _apply_compat_style(self, item, payload):
+        """Dims an entry whose data type can't actually feed the drag
+        source — a passive hint, never a filter; every node stays clickable."""
+        if (self.source_socket is not None and not self.source_socket.sock_def.is_exec
+                and not self._is_compatible(payload)):
+            item.setForeground(0, QColor(TEXT_MUTED_COLOR))
 
     def _collect_entries(self):
         """Build the flat, searchable record set once: each entry carries its node
@@ -189,15 +279,30 @@ class SearchMenuDialog(QDialog):
                         })
 
     def _render_browse(self):
-        """Empty query: the full, browsable category tree (params, then commands)."""
+        """Empty query: a Suggested shortlist (only once there's usage
+        history for this context) on top, then the full browsable category
+        tree (params, then commands) as before."""
         self.tree.clear()
         self._all_items = []
+        self._suggestion_items = []
+
+        suggestions = self._ranked_suggestions()
+        if suggestions:
+            sug_cat = QTreeWidgetItem(self.tree, [f"★ {t('tree_header_suggested')}"])
+            sug_cat.setExpanded(True)
+            for idx, entry in enumerate(suggestions):
+                item = QTreeWidgetItem(sug_cat, [f"  {idx + 1}  {entry['label']}"])
+                item.setData(0, Qt.UserRole, entry["payload"])
+                self._apply_compat_style(item, entry["payload"])
+                self._all_items.append(item)
+                self._suggestion_items.append(item)
 
         param_cat = QTreeWidgetItem(self.tree, [f"[Prm] {t('tree_header_params')}"])
         param_cat.setExpanded(True)
         for label, payload in self._param_specs:
             item = QTreeWidgetItem(param_cat, [f"  {label}"])
             item.setData(0, Qt.UserRole, payload)
+            self._apply_compat_style(item, payload)
             self._all_items.append(item)
 
         for pack_name, pack_sections in self.command_categories.items():
@@ -211,15 +316,22 @@ class SearchMenuDialog(QDialog):
                     for cmd in commands:
                         item = QTreeWidgetItem(parent_item, [f"  • {cmd['display']}"])
                         item.setData(0, Qt.UserRole, cmd)
+                        self._apply_compat_style(item, cmd)
                         self._all_items.append(item)
 
+        if suggestions:
+            self._select_first_match()
+
     def _render_results(self, query):
-        """Non-empty query: a flat list ranked best-first, category noise removed."""
+        """Non-empty query: a flat list ranked best-first, category noise
+        removed. Usage/compatibility nudge the ranking but never hide a
+        match — the compat dimming still marks the unlikely ones."""
+        self._suggestion_items = []
         scored = []
         for entry in self._entries:
             score = self._score(query, entry["label"].lower(), entry["haystack"])
             if score is not None:
-                scored.append((score, entry))
+                scored.append((score + self._rank_bonus(entry["payload"]), entry))
         scored.sort(key=lambda pair: pair[0], reverse=True)
 
         self.tree.clear()
@@ -227,6 +339,7 @@ class SearchMenuDialog(QDialog):
         for _, entry in scored[:SEARCH_RESULTS_LIMIT]:
             item = QTreeWidgetItem(self.tree, [f"  {entry['label']}"])
             item.setData(0, Qt.UserRole, entry["payload"])
+            self._apply_compat_style(item, entry["payload"])
             self._all_items.append(item)
 
         if self._all_items:
@@ -325,6 +438,14 @@ class SearchMenuDialog(QDialog):
             if event.key() == Qt.Key_Up:
                 self._move_selection(-1)
                 return True
+            # A bare digit (1-6) instantly places the matching Suggested
+            # entry — only while the search bar is still empty, so it never
+            # steals a digit the user is actually typing into a query.
+            if not self.search_bar.text() and self._suggestion_items:
+                digit = event.key() - Qt.Key_1
+                if 0 <= digit < len(self._suggestion_items):
+                    self._on_item_activated(self._suggestion_items[digit], 0)
+                    return True
         return super().eventFilter(obj, event)
 
     def _on_item_hovered(self, item, column):
@@ -377,4 +498,7 @@ class SearchMenuDialog(QDialog):
         item_payload = item.data(0, Qt.UserRole)
         if item_payload:
             self.payload = item_payload
+            key = self._usage_key(item_payload)
+            if key:
+                record_search_usage(key, self._context_key)
             self.accept()

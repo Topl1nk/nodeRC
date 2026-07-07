@@ -730,7 +730,7 @@ class NodeScene(QGraphicsScene):
         if not win:
             return
 
-        dialog = SearchMenuDialog(win.command_categories, win)
+        dialog = SearchMenuDialog(win.command_categories, win, source_socket=source_socket)
         dialog.set_anchor_pos(screen_pos)
 
         result = dialog.exec_()

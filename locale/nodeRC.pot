@@ -406,6 +406,10 @@ msgstr ""
 msgid "search_description"
 msgstr ""
 
+#. Suggested
+msgid "tree_header_suggested"
+msgstr ""
+
 #. Parameters (Inputs)
 msgid "tree_header_params"
 msgstr ""

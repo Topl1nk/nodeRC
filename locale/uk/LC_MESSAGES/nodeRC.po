@@ -407,6 +407,10 @@ msgstr "Пошук команд..."
 msgid "search_description"
 msgstr "Пошук категорій та ключових дій..."
 
+#. Suggested
+msgid "tree_header_suggested"
+msgstr "Рекомендовані"
+
 #. Parameters (Inputs)
 msgid "tree_header_params"
 msgstr "Параметри (Входи)"

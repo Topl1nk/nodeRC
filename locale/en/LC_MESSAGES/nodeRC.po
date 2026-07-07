@@ -408,6 +408,10 @@ msgstr "Search Commands..."
 msgid "search_description"
 msgstr "Search categories and action words..."
 
+#. Suggested
+msgid "tree_header_suggested"
+msgstr "Suggested"
+
 #. Parameters (Inputs)
 msgid "tree_header_params"
 msgstr "Parameters (Inputs)"
