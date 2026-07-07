@@ -94,7 +94,7 @@ class SearchMenuDialog(QDialog):
         self.search_bar.installEventFilter(self)
         search_layout.addWidget(self.search_bar)
 
-        from ui.widgets import UnifiedScrollBar
+        from ui.scrollbar import UnifiedScrollBar
         self.tree = QTreeWidget()
         self.tree.setVerticalScrollBar(UnifiedScrollBar())
         self.tree.setHeaderHidden(True)

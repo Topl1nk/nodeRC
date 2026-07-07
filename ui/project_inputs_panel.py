@@ -447,7 +447,7 @@ class ProjectInputsPanel(QWidget):
         outer.addWidget(title_bar)
 
         from PyQt5.QtWidgets import QScrollArea
-        from ui.widgets import UnifiedScrollBar
+        from ui.scrollbar import UnifiedScrollBar
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QScrollArea.NoFrame)
@@ -467,6 +467,12 @@ class ProjectInputsPanel(QWidget):
         outer.addWidget(scroll_area, 1)
 
         self._grip = _ResizeGrip(self)
+
+        # Closed by default (ст. 0.2) — an unpinned panel that starts open
+        # eats canvas space before the user asked for it; the hover reveal
+        # (ProjectInputsHoverFilter) and Q/Ctrl+I toggle both still work
+        # against a hidden widget.
+        self.setVisible(False)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)

@@ -195,6 +195,13 @@ def test_color_popup_disables_only_header_checkbox_for_project_input(window):
 
 # ── Phase D: hotkey, pin, hover-reveal ───────────────────────────────────────
 
+def test_panel_is_closed_at_startup(window):
+    """The Project Inputs panel must not be open before the user asked for
+    it (ст. 0.2) — hover-reveal and the Q/Ctrl+I toggle still work against a
+    hidden widget."""
+    assert window.project_inputs_panel.isVisibleTo(window) is False
+
+
 def test_ctrl_i_toggles_panel_visibility(window):
     panel = window.project_inputs_panel
     before = panel.isVisibleTo(window)

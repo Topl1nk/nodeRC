@@ -196,6 +196,17 @@ SCROLLBAR_BTN_MARGIN = 5   # gap from view edge
 SCROLLBAR_BTN_OFFSET = 18  # clearance past the Qt scrollbar track width
 SCROLLBAR_BTN_SIZE   = 22  # square edge of the toggle button
 
+# Canvas scrollbar inset from the view edge, applied as a QSS margin on the
+# scrollbar's own groove (not setGeometry — see ui/scrollbar.py docstring for
+# why an external setGeometry desyncs QAbstractScrollArea's scroll range).
+CANVAS_SCROLLBAR_EDGE_MARGIN = 6
+
+# UnifiedScrollBar (ui/scrollbar.py) colors — every scrollbar in the app
+# (canvas, side panels, search tree, combo boxes) shares these three colors.
+SCROLLBAR_HANDLE_COLOR        = "#1e2c40"  # handle, at rest
+SCROLLBAR_HANDLE_ACTIVE_COLOR = "#3c7ed1"  # handle, hovered
+SCROLLBAR_TRACK_COLOR         = "#04152b"  # groove/track background
+
 # ── View zoom ──────────────────────────────────────────────────────────────────
 VIEW_ZOOM_STEP = 1.20  # multiplicative zoom per wheel notch
 VIEW_ZOOM_MIN  = 0.15  # furthest zoom-out (scale factor) — keeps the graph from vanishing

@@ -5,7 +5,7 @@ connections). They can be used by any graph item or dialog.
 """
 from __future__ import annotations
 
-from PyQt5.QtWidgets import QCheckBox, QStyle, QScrollBar
+from PyQt5.QtWidgets import QCheckBox, QStyle
 from PyQt5.QtGui import QPainter, QPen, QBrush, QColor
 from PyQt5.QtCore import QRect, Qt
 
@@ -80,59 +80,4 @@ class InsetFillCheckBox(QCheckBox):
         painter.setPen(QPen(QColor(TEXT_COLOR)))
         painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, self.text())
 
-class UnifiedScrollBar(QScrollBar):
-    """
-    A globally reused, indestructible scrollbar primitive.
-    Uses dynamic stylesheet updates on enter/leave to guarantee TRUE layout
-    width expansion (4px -> 8px) so no dead background space is left behind.
-    Optionally allows fixed-width (expand_on_hover=False) for main views.
-    """
-    def __init__(self, orientation=Qt.Vertical, expand_on_hover: bool = True, parent=None):
-        super().__init__(orientation, parent)
-        self.expand_on_hover = expand_on_hover
-        self.setCursor(Qt.ArrowCursor)
-        self._hovered = False
-        self._apply_style()
 
-    def enterEvent(self, event):
-        self._hovered = True
-        self._apply_style()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        self._hovered = False
-        self._apply_style()
-        super().leaveEvent(event)
-
-    def _apply_style(self):
-        size = 8 if (self._hovered or not self.expand_on_hover) else 4
-        handle_bg = NODE_SELECTED_COLOR if self._hovered else NODE_BORDER_COLOR
-        self.setStyleSheet(f"""
-            QScrollBar:vertical {{
-                border: none;
-                background: {DEFAULT_FIELD_BG};
-                width: {size}px;
-                margin: 0px;
-            }}
-            QScrollBar::handle:vertical {{
-                background: {handle_bg};
-                min-height: 20px;
-                border-radius: 0px;
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}
-
-            QScrollBar:horizontal {{
-                border: none;
-                background: {DEFAULT_FIELD_BG};
-                height: {size}px;
-                margin: 0px;
-            }}
-            QScrollBar::handle:horizontal {{
-                background: {handle_bg};
-                min-width: 20px;
-                border-radius: 0px;
-            }}
-            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0px; }}
-            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background: none; }}
-        """)

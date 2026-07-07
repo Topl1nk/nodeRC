@@ -1263,7 +1263,7 @@ class NodeComboBox(QComboBox):
     """
 
     def __init__(self, node: MetaNode):
-        from ui.widgets import UnifiedScrollBar
+        from ui.scrollbar import UnifiedScrollBar
         from PyQt5.QtWidgets import QListView
         from PyQt5.QtCore import Qt
         super().__init__()

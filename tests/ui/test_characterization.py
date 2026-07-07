@@ -98,6 +98,29 @@ def test_file_save_load_preserves_graph(window, tmp_path):
     assert _nodes_of(window, IntParamNode)[0].get_value_state() == 7
 
 
+def test_load_project_centers_view_on_last_added_node(window, tmp_path):
+    """Opening a save file must scroll the canvas to whichever node was
+    created most recently (highest MetaNode.uid), not wherever the view
+    happened to be left — _load_into_tab -> _center_on_last_added_node."""
+    _param(window, "string", x=0, y=0)
+    newest = _param(window, "integer", x=900, y=700)
+    assert newest.uid == max(n.uid for n in _nodes_of(window, MetaNode))
+
+    path = tmp_path / "proj.json"
+    path.write_text(json.dumps(serialize_graph(window.scene, window.connections)))
+
+    window.view.centerOn(0, 0)
+    tab = window.active_tab
+    tab.project_path = None
+    tab.dirty = False
+    assert window._load_into_tab(tab, str(path)) is True
+
+    center = window.view.mapToScene(window.view.viewport().rect().center())
+    node_center = newest.sceneBoundingRect().center()
+    assert abs(center.x() - node_center.x()) < 10
+    assert abs(center.y() - node_center.y()) < 10
+
+
 # ── clipboard ───────────────────────────────────────────────────────────────────
 
 def test_copy_paste_duplicates_param_nodes(window):

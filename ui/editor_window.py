@@ -794,6 +794,25 @@ class NodeEditorWindow(QMainWindow):
         on_top = local.y() <= m
         on_bottom = local.y() >= rect.height() - m
 
+        # A click that lands on a canvas scrollbar must never be stolen by a
+        # resize hit code — the scrollbar and the resize band fight over the
+        # same pixel column/row.  Map the scrollbars' view-local geometry into
+        # window coordinates and bail out early if the cursor is over either.
+        # This is the single authoritative guard; no other callsite needs it
+        # (ст. 14.3: fix in the one common source, not at each resize branch).
+        mgr = getattr(getattr(self, "view", None), "_scrollbar_manager", None)
+        if mgr is not None and (on_right or on_bottom or on_left or on_top):
+            view = self.view
+            view_origin = view.mapTo(self, QPoint(0, 0))
+            for bar in (mgr.vbar, mgr.hbar):
+                if not bar.isVisible():
+                    continue
+                bg = bar.geometry()  # view-local
+                # translate to window-local
+                bar_rect_win = bg.translated(view_origin)
+                if bar_rect_win.contains(local):
+                    return None  # HTCLIENT — let Qt process the scrollbar click
+
         if on_top and on_left:
             return _HTTOPLEFT
         if on_top and on_right:
@@ -1158,7 +1177,23 @@ class NodeEditorWindow(QMainWindow):
         tab.history_index = -1
         self.push_undo_state()
         self._set_dirty(False)
+        self._center_on_last_added_node()
         return True
+
+    def _center_on_last_added_node(self) -> None:
+        """Scroll the canvas to whichever node was created most recently.
+
+        MetaNode.uid is a monotonic counter assigned at construction and
+        preserved verbatim through save/load (_observe_uid fast-forwards the
+        allocator past it), so the loaded node with the highest uid is
+        exactly the one the project's author added last — regardless of the
+        arbitrary order scene.items() returns them in.
+        """
+        nodes = [i for i in self.scene.items() if isinstance(i, MetaNode)]
+        if not nodes:
+            return
+        newest = max(nodes, key=lambda n: n.uid)
+        self.view.centerOn(newest)
 
     def _restore(self, payload: dict, restore_selection: bool):
         self._linked_group = []

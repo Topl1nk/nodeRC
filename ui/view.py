@@ -11,12 +11,9 @@ from PyQt5.QtCore import Qt, QEvent, QPoint, QRect, QRectF, QTimer
 from localization import t
 from ui.graph_items import MetaNode
 from configuration import (
-    CANVAS_BACKGROUND_COLOR, SCROLLBAR_TOGGLE_BG, SCROLLBAR_TOGGLE_HOVER,
-    VIGNETTE_COLOR, VIGNETTE_RADIUS, SCROLLBAR_BTN_MARGIN, SCROLLBAR_BTN_OFFSET,
-    SCROLLBAR_BTN_SIZE, VIEW_ZOOM_STEP, VIEW_ZOOM_MIN, VIEW_ZOOM_MAX,
+    CANVAS_BACKGROUND_COLOR, VIGNETTE_COLOR, VIGNETTE_RADIUS,
+    VIEW_ZOOM_STEP, VIEW_ZOOM_MIN, VIEW_ZOOM_MAX,
     VIEW_FRAME_MARGIN, NODE_HOVER_POLL_INTERVAL_MS, NODE_LOD_DETAIL_SCALE,
-    SCROLLBAR_TOGGLE_SHOW_GLYPH, SCROLLBAR_TOGGLE_HIDE_GLYPH,
-    TITLE_BAR_RESIZE_MARGIN,
 )
 
 
@@ -36,25 +33,13 @@ class GraphicsView(QGraphicsView):
         self.setViewportUpdateMode(QGraphicsView.SmartViewportUpdate)
         self._vignette_brush: Optional[QBrush] = None
 
-        from ui.widgets import UnifiedScrollBar
-        self.setVerticalScrollBar(UnifiedScrollBar(Qt.Vertical, expand_on_hover=False))
-        self.setHorizontalScrollBar(UnifiedScrollBar(Qt.Horizontal, expand_on_hover=False))
-        # Qt's own QAbstractScrollArea re-lays these out (flush against the
-        # viewport edges) on more than just a widget resize — toggling
-        # ScrollBarAlwaysOff/AsNeeded (_toggle_scrollbar_visibility) and a
-        # scene-rect change (zoom, node move) both trigger it too. Watching
-        # the scrollbars' own Resize/Move events, not just this view's
-        # resizeEvent, is what makes _position_scrollbars' inset survive all
-        # of those instead of only the plain-resize case.
-        self.verticalScrollBar().installEventFilter(self)
-        self.horizontalScrollBar().installEventFilter(self)
+        from ui.scrollbar import UnifiedScrollBar
+        self._scrollbar_manager = UnifiedScrollBar.install_on_view(self)
 
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
         self.setDragMode(QGraphicsView.RubberBandDrag)
-        self.setStyleSheet(f"background:{CANVAS_BACKGROUND_COLOR}; border:none;")
+        self.setStyleSheet(f"QGraphicsView {{ background:{CANVAS_BACKGROUND_COLOR}; border:none; }}")
 
         self._panning     = False
         self._pan_origin: Optional[QPoint] = None
@@ -83,18 +68,7 @@ class GraphicsView(QGraphicsView):
         self._hover_poll_timer.timeout.connect(self._poll_hover)
         self._hover_poll_timer.start()
 
-        self._scrollbar_toggle_btn = QPushButton(SCROLLBAR_TOGGLE_SHOW_GLYPH, self)
-        self._scrollbar_toggle_btn.setFixedSize(SCROLLBAR_BTN_SIZE, SCROLLBAR_BTN_SIZE)
-        self._scrollbar_toggle_btn.setToolTip(t("tooltip_toggle_scrollbars"))
-        self._scrollbar_toggle_btn.setStyleSheet(f"""
-            QPushButton {{
-                background:{SCROLLBAR_TOGGLE_BG};color:white;
-                border:none;border-radius:4px;font-size:13px;
-            }}
-            QPushButton:hover{{background:{SCROLLBAR_TOGGLE_HOVER};}}
-        """)
-        self._scrollbar_toggle_btn.clicked.connect(self._toggle_scrollbar_visibility)
-        self._scrollbars_visible = False
+
 
         # Which embedded combo box's dropdown is currently open, if any —
         # set/cleared by NodeComboBox.showPopup/hidePopup (ui/graph_items.py)
@@ -431,49 +405,22 @@ class GraphicsView(QGraphicsView):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._build_vignette_brush()
-        self._scrollbar_toggle_btn.move(
-            self.width()  - self._scrollbar_toggle_btn.width() - SCROLLBAR_BTN_MARGIN - SCROLLBAR_BTN_OFFSET,
-            self.height() - self._scrollbar_toggle_btn.height() - SCROLLBAR_BTN_MARGIN - SCROLLBAR_BTN_OFFSET,
-        )
-        self._position_scrollbars()
+        self._scrollbar_manager.on_view_resize()
 
     def eventFilter(self, obj, event):
-        if event.type() in (QEvent.Resize, QEvent.Move) and obj in (
-                self.verticalScrollBar(), self.horizontalScrollBar()):
-            # Self-correcting: Qt's own layout pass that just fired this
-            # Resize/Move already moved the scrollbar back flush against the
-            # edge; re-applying our inset here is idempotent (same target
-            # geometry every time), so this settles in one extra pass rather
-            # than looping.
-            self._position_scrollbars()
         return super().eventFilter(obj, event)
 
-    def _position_scrollbars(self) -> None:
-        """Inset the canvas scrollbars from the view's edges — only while
-        the window is in its normal (non-maximized) state, where those
-        edges double as the native resize-grab band (TITLE_BAR_RESIZE_MARGIN,
-        the WM_NCHITTEST edge width in editor_window.py). A maximized window
-        has no such band, so the scrollbars sit flush there, same as before.
-        Qt's own QAbstractScrollArea layout already placed them flush against
-        these edges as part of the super().resizeEvent() call above — this
-        just nudges that default geometry inward.
-        """
-        top_level = self.window()
-        margin = 0 if (top_level is not None and top_level.isMaximized()) else TITLE_BAR_RESIZE_MARGIN
-
-        vbar = self.verticalScrollBar()
-        vbar.setGeometry(self.width() - vbar.width() - margin, margin,
-                         vbar.width(), self.height() - 2 * margin)
-
-        hbar = self.horizontalScrollBar()
-        hbar.setGeometry(margin, self.height() - hbar.height() - margin,
-                         self.width() - 2 * margin, hbar.height())
-
     def _toggle_scrollbar_visibility(self):
-        self._scrollbars_visible = not self._scrollbars_visible
-        policy = Qt.ScrollBarAsNeeded if self._scrollbars_visible else Qt.ScrollBarAlwaysOff
-        self.setHorizontalScrollBarPolicy(policy)
-        self.setVerticalScrollBarPolicy(policy)
-        self._scrollbar_toggle_btn.setText(
-            SCROLLBAR_TOGGLE_HIDE_GLYPH if self._scrollbars_visible
-            else SCROLLBAR_TOGGLE_SHOW_GLYPH)
+        self._scrollbar_manager.toggle_scrollbar_visibility()
+
+    @property
+    def _scrollbars_visible(self) -> bool:
+        return self._scrollbar_manager.scrollbars_visible
+
+    @_scrollbars_visible.setter
+    def _scrollbars_visible(self, value: bool) -> None:
+        self._scrollbar_manager.scrollbars_visible = value
+
+    @property
+    def _scrollbar_toggle_btn(self):
+        return self._scrollbar_manager.toggle_btn

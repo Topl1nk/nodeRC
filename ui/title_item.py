@@ -17,7 +17,12 @@ from ui.keymap import KEY_COMMIT_EDIT, KEY_CANCEL_EDIT
 
 def editor_window_of(item):
     """The editor window owning a scene item, or None when it is unparented."""
-    scene = item.scene()
+    if item is None:
+        return None
+    try:
+        scene = item.scene()
+    except RuntimeError:
+        return None
     return getattr(scene, "nodeEditorWindow", None) if scene else None
 
 
