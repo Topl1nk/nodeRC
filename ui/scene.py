@@ -448,7 +448,7 @@ class NodeScene(QGraphicsScene):
             ghost.set_splice_target(None)
             self._set_splice_hidden(None)
         else:
-            ray_socket = self._ghost_ray_socket(source)
+            ray_socket = self._ghost_ray_socket(source, cursor_scene_pos)
             if ray_socket is not None:
                 ghost.set_ray_target(ray_socket)
                 ghost.set_splice_target(None)
@@ -463,7 +463,20 @@ class NodeScene(QGraphicsScene):
         if ghost.isVisible():
             source._force_ghost_repaint()
         else:
-            source._show_ghost()
+            # Just the first-activation reveal — NOT SocketItem._show_ghost()
+            # itself, which would redo its own near-collision detection
+            # against the ghost's *own current rect*. That rect was only
+            # just set above (set_collision_target/set_ray_target adopt the
+            # target node's exact geometry onto the ghost) — re-running that
+            # check would trivially "detect" a collision with whatever
+            # target's geometry the ghost just adopted, clobbering a
+            # ray_target back into a collision_target on the very same node
+            # and effectively locking the ghost onto it: cursor_scene_pos no
+            # longer had any say once that happened, since every later call
+            # would keep re-detecting the same stale self-collision.
+            ghost.setVisible(True)
+            ghost.set_candidates(source._ranked_ghost_candidates())
+            source._force_ghost_repaint()
 
     def _ghost_collision_socket(self, source: SocketItem, ghost_rect: QRectF) -> Optional[SocketItem]:
         """The first compatible socket on a node whose own footprint
@@ -483,15 +496,30 @@ class NodeScene(QGraphicsScene):
                     return s
         return None
 
-    def _ghost_ray_socket(self, source: SocketItem) -> Optional[SocketItem]:
+    def _ghost_ray_socket(self, source: SocketItem, cursor_scene_pos: Optional[QPointF] = None) -> Optional[SocketItem]:
         """A compatible socket on a node further out along the same row
         than _ghost_collision_socket's own near rect reaches — scanning
         outward in the drag direction (right off an output socket, left off
         an input one) for the *closest* node whose own exec row sits within
-        GHOST_RAY_Y_TOLERANCE of the source's. Restricted to nodes at least
-        partially inside the current viewport — an off-screen node has no
-        visual confirmation of what "hits" it, so hovering never reaches
-        across a huge scene to one the user can't actually see land.
+        GHOST_RAY_Y_TOLERANCE of ``cursor_scene_pos`` (falling back to the
+        source socket's own Y when there's no cursor to speak of — the
+        plain-hover, no-drag case, SocketItem._show_ghost). Restricted to
+        nodes at least partially inside the current viewport — an
+        off-screen node has no visual confirmation of what "hits" it, so
+        hovering never reaches across a huge scene to one the user can't
+        actually see land.
+
+        Checking against the *cursor's* row (not always the source's own,
+        fixed one) matters once an actual drag is under way
+        (NodeScene._update_drag_ghost passes its cursor_scene_pos through):
+        a match found once must let go the moment the user drags away from
+        that row to place a plain new node elsewhere — otherwise, any node
+        merely sitting in-line down the row from the source would keep the
+        ghost locked onto it regardless of where the cursor actually moved,
+        with no way to drag a fresh node out instead. A plain hover has no
+        such cursor to track, so it keeps matching by the source's own row,
+        exactly as before.
+
         Connecting to one found this way additionally snaps its Y to the
         source's row (_align_ray_target); a near collision never does."""
         view = self.views()[0] if self.views() else None
@@ -499,6 +527,7 @@ class NodeScene(QGraphicsScene):
             return None
         visible_rect = view.mapToScene(view.viewport().rect()).boundingRect()
         source_center = source.scene_center()
+        reference_y = cursor_scene_pos.y() if cursor_scene_pos is not None else source_center.y()
         direction = 1 if source.sock_def.kind == "output" else -1
 
         best_socket: Optional[SocketItem] = None
@@ -510,7 +539,7 @@ class NodeScene(QGraphicsScene):
             if not visible_rect.intersects(node_rect):
                 continue
             node_exec_y = node.pos().y() + NODE_HEADER_HEIGHT / 2.0
-            if abs(node_exec_y - source_center.y()) > GHOST_RAY_Y_TOLERANCE:
+            if abs(node_exec_y - reference_y) > GHOST_RAY_Y_TOLERANCE:
                 continue
             near_edge_x = node.pos().x() if direction > 0 else node.pos().x() + node.node_def.width
             if (near_edge_x - source_center.x()) * direction <= 0:
