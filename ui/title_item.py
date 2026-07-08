@@ -5,7 +5,7 @@ dependency between the two when they live in separate modules.
 """
 from __future__ import annotations
 
-from PyQt5.QtWidgets import QGraphicsTextItem
+from PyQt5.QtWidgets import QGraphicsTextItem, QMenu
 from PyQt5.QtGui import QColor, QPainterPath, QFont, QTextCursor
 from PyQt5.QtCore import Qt
 
@@ -13,6 +13,7 @@ from configuration import (
     UI_FONT_FAMILY, NODE_RENAME_FONT_SIZE, TEXT_COLOR, NODE_SOCKET_Z,
 )
 from ui.keymap import KEY_COMMIT_EDIT, KEY_CANCEL_EDIT
+from ui.theme import CONTEXT_MENU_STYLESHEET
 
 
 def editor_window_of(item):
@@ -37,6 +38,39 @@ def selected_of_type_including(item, cls):
     if item not in selected:
         selected.append(item)
     return selected
+
+
+def run_context_menu(event, actions) -> None:
+    """The one right-click-menu builder for both MetaNode and GroupFrameItem
+    (Ст.14.3/Ст.1.1) — before this, GroupFrameItem's own contextMenuEvent
+    reimplemented a menu ad hoc: no hotkey-hint column, and a hardcoded
+    if/elif dispatch instead of this shared tuple-list convention, so its
+    menu structurally drifted from every node's. One QSS, one hint
+    convention, one dispatch mechanism now backs both.
+
+    Each entry in ``actions`` is either:
+      - ``(label, callback, enabled)`` or ``(label, callback, enabled, hint)``
+        — a normal action; ``hint`` (e.g. "Ctrl+D") is shown right-aligned,
+        display-only — see HOTKEY_HINTS in configuration.py
+      - ``None``                       — a visual separator
+    """
+    menu = QMenu()
+    menu.setStyleSheet(CONTEXT_MENU_STYLESHEET)
+    handlers = {}
+    for item in actions:
+        if item is None:
+            menu.addSeparator()
+            continue
+        label, callback, enabled, *rest = item
+        hint = rest[0] if rest else None
+        text = f"{label}\t{hint}" if hint else label
+        entry = menu.addAction(text)
+        entry.setEnabled(enabled and callback is not None)
+        handlers[entry] = callback
+    chosen = menu.exec_(event.screenPos())
+    if chosen is not None and handlers.get(chosen):
+        handlers[chosen]()
+    event.accept()
 
 
 def _merge_hsv_component(current_hex: str, picked_hex: str,

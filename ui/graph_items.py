@@ -13,10 +13,10 @@ from PyQt5.QtWidgets import (
     QGraphicsObject, QGraphicsItem, QGraphicsTextItem,
     QGraphicsProxyWidget, QLineEdit, QCheckBox,
     QSpinBox, QComboBox, QGraphicsPathItem, QWidget,
-    QToolButton, QMenu, QPushButton,
+    QToolButton, QPushButton,
 )
 from PyQt5.QtGui import (
-    QPen, QBrush, QColor, QPainterPath, QFont, QFontMetrics, QPainter, QPolygonF,
+    QPen, QBrush, QColor, QPainterPath, QPainterPathStroker, QFont, QFontMetrics, QPainter, QPolygonF,
     QCursor, QRadialGradient, QLinearGradient,
 )
 from PyQt5.QtCore import QRectF, Qt, QPoint, QPointF, QSizeF, QTimer
@@ -37,7 +37,8 @@ from configuration import (
     GHOST_CONNECTION_RGBA, GHOST_CONNECTION_WIDTH,
     CANVAS_BACKGROUND_COLOR, SOCKET_UNCONNECTED_CENTER_COLOR,
     CONNECTION_EXEC_WIDTH, CONNECTION_EXEC_SELECTED_WIDTH,
-    CONNECTION_PARAM_WIDTH, CONNECTION_PARAM_SELECTED_WIDTH,
+    CONNECTION_PARAM_WIDTH, CONNECTION_PARAM_SELECTED_WIDTH, CONNECTION_HIT_WIDTH,
+    CONNECTION_HOVER_HALO_WIDTH, CONNECTION_HOVER_TRIM_WIDTH,
     GRID_SIZE_SMALL, NODE_POPUP_Z, NODE_COMBO_POPUP_PROXY_Z,
     NODE_WIDTH_MIN_CELLS, NODE_WIDTH_MAX_CELLS,
     VECTOR_COLLAPSE_GLYPH, VECTOR_COLLAPSE_GLYPH_MIRRORED, VECTOR_EXPAND_GLYPH, VECTOR_TOGGLE_WIDTH,
@@ -51,7 +52,7 @@ from ui.theme import (
     NODE_BORDER_COLOR,
     relative_luminance, brightened_for_canvas,
     DEFAULT_WIDGET_QSS, widget_stylesheets, tinted_widget_palette,
-    VECTOR_TOGGLE_QSS, CONTEXT_MENU_STYLESHEET,
+    VECTOR_TOGGLE_QSS,
     apply_field_placeholder_palette,
 )
 from core.node_blueprint import NodeDef, SocketDef, html_title, command_node_def, _snap_dimension
@@ -62,6 +63,7 @@ from ui.search_ranking import context_key_for_socket, collect_command_entries, r
 from ui.title_item import (                                          # noqa: F401
     _EditableTitleItem, RenamableTitleMixin,
     editor_window_of, _merge_hsv_component, selected_of_type_including,
+    run_context_menu,
 )
 from ui.group_frame import GroupFrameItem                            # noqa: F401
 from ui.widgets import InsetFillCheckBox, suppress_default_selection_chrome  # noqa: F401
@@ -855,7 +857,30 @@ class Connection(QGraphicsPathItem):
             self._pen_selected = QPen(QColor(CONNECTION_SELECTED_COLOR), CONNECTION_PARAM_SELECTED_WIDTH, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
         self.setZValue(CONNECTION_Z)
         self.setFlag(QGraphicsItem.ItemIsSelectable, True)
+        self.setAcceptHoverEvents(True)
+        self._hovered = False
         self.refresh()
+
+    def hoverEnterEvent(self, event):
+        self._hovered = True
+        self.update()
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self._hovered = False
+        self.update()
+        super().hoverLeaveEvent(event)
+
+    def shape(self) -> QPainterPath:
+        # QGraphicsPathItem's default shape() strokes at the item's own
+        # (thin, especially CONNECTION_PARAM_WIDTH's 1.8px) visual pen width
+        # — nearly unclickable/unhoverable. Widening just the hit-test
+        # stroke (never the painted one) is the standard "generous invisible
+        # hitbox around a thin visible line" fix, without changing how the
+        # wire actually looks.
+        stroker = QPainterPathStroker()
+        stroker.setWidth(CONNECTION_HIT_WIDTH)
+        return stroker.createStroke(self.path())
 
     def refresh(self):
         try:
@@ -880,14 +905,51 @@ class Connection(QGraphicsPathItem):
 
     def paint(self, painter, option, widget=None):
         suppress_default_selection_chrome(option)
+        painter.setRenderHint(QPainter.Antialiasing)
         pen = self._pen_selected if self.isSelected() else self._pen
+        # Hovering the wire's own body directly — a white halo drawn UNDER
+        # the wire's own normal-colored pen, never replacing it: the wire's
+        # color is meaningful (source socket type), unlike a node body, so
+        # unlike MetaNode.paint's plain _hovered border this must not
+        # override it, just outline it. Selection still wins over this.
+        # The halo is sandwiched between two 1px canvas-background-colored
+        # trim rings — one outside it, one between it and the wire's own
+        # color — the same outer-trim/band/inner-trim convention
+        # SocketItem.paint uses for its own ring, so the white band reads
+        # as a crisp outline on BOTH edges instead of just blurring into
+        # whatever's behind it on the outside while bleeding straight into
+        # the wire's color on the inside. Four passes, widest first: outer
+        # trim, halo, inner trim, then (below) the wire's own normal pen.
+        if not self.isSelected() and self._hovered:
+            halo_width = pen.widthF() + CONNECTION_HOVER_HALO_WIDTH * 2
+
+            outer_trim_pen = QPen(pen)
+            outer_trim_pen.setColor(QColor(CANVAS_BACKGROUND_COLOR))
+            outer_trim_pen.setWidthF(halo_width + CONNECTION_HOVER_TRIM_WIDTH * 2)
+            painter.setPen(outer_trim_pen)
+            painter.drawPath(self.path())
+
+            halo_pen = QPen(pen)
+            halo_pen.setColor(QColor(NODE_HOVER_COLOR))
+            halo_pen.setWidthF(halo_width)
+            painter.setPen(halo_pen)
+            painter.drawPath(self.path())
+
+            inner_trim_pen = QPen(pen)
+            inner_trim_pen.setColor(QColor(CANVAS_BACKGROUND_COLOR))
+            inner_trim_pen.setWidthF(pen.widthF() + CONNECTION_HOVER_TRIM_WIDTH * 2)
+            painter.setPen(inner_trim_pen)
+            painter.drawPath(self.path())
         # Whichever endpoint currently has its socket hovered (SocketItem.
         # _hovered) lights the wire up white on that end, fading to fully
         # transparent at the far end — the wire's own counterpart to
         # MetaNode.paint's border gradient, so hovering a connected socket
         # highlights the exact wire it owns instead of just the socket dot.
-        # Selection's own solid highlight color takes priority over this.
-        if not self.isSelected():
+        # Selection's own solid highlight color takes priority over this;
+        # a direct wire hover (above) already outlines the whole thing, so
+        # this softer directional glow only adds anything when neither
+        # applies.
+        if not self.isSelected() and not self._hovered:
             hovered_end = self.source if self.source._hovered else (
                 self.dest if self.dest._hovered else None)
             if hovered_end is not None:
@@ -906,7 +968,6 @@ class Connection(QGraphicsPathItem):
                     gradient.setColorAt(1.0, white)
                 pen.setBrush(QBrush(gradient))
         self.setPen(pen)
-        painter.setRenderHint(QPainter.Antialiasing)
         super().paint(painter, option, widget)
 
 
@@ -2012,31 +2073,11 @@ class MetaNode(RenamableTitleMixin, QGraphicsObject):
         return self.sockets.get(name)
 
     def _run_context_menu(self, event, actions):
-        """Show a node context menu.
-
-        Each entry in `actions` is either:
-          - ``(label, callback, enabled)`` or ``(label, callback, enabled, hint)``
-            — a normal action; ``hint`` (e.g. "Ctrl+D") is shown right-aligned,
-            display-only — see HOTKEY_HINTS in configuration.py
-          - ``None``                       — a visual separator
-        """
-        menu = QMenu()
-        menu.setStyleSheet(CONTEXT_MENU_STYLESHEET)
-        handlers = {}
-        for item in actions:
-            if item is None:
-                menu.addSeparator()
-                continue
-            label, callback, enabled, *rest = item
-            hint = rest[0] if rest else None
-            text = f"{label}\t{hint}" if hint else label
-            entry = menu.addAction(text)
-            entry.setEnabled(enabled and callback is not None)
-            handlers[entry] = callback
-        chosen = menu.exec_(event.screenPos())
-        if chosen is not None and handlers.get(chosen):
-            handlers[chosen]()
-        event.accept()
+        """Thin instance-method wrapper — the real implementation is the
+        module-level run_context_menu (ui/title_item.py), shared verbatim
+        with GroupFrameItem (Ст.1.1/Ст.14.3). Kept as a method since
+        CommandNode/ParamNode subclasses already call self._run_context_menu(...)."""
+        run_context_menu(event, actions)
 
     def _delete_self(self):
         win = editor_window_of(self)

@@ -32,17 +32,19 @@ on the node itself.
 """
 from __future__ import annotations
 
+import math
 from typing import Dict, List, Optional
 
 from PyQt5.QtWidgets import QApplication, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
-from PyQt5.QtGui import QBrush, QColor, QCursor, QPainter, QPen, QLinearGradient
+from PyQt5.QtGui import QBrush, QColor, QCursor, QPainter, QPainterPath, QPen, QLinearGradient
 from PyQt5.QtCore import QEvent, QObject, QPoint, QPointF, Qt
 
 from localization import t
 from configuration import (
     NODE_PARAM_SOCKET_RADIUS, PROJECT_INPUTS_FIELD_WIDTH,
     PROJECT_INPUTS_PANEL_BACKGROUND_COLOR, PROJECT_INPUTS_PANEL_BORDER_COLOR,
-    PROJECT_INPUTS_PANEL_HOVER_HIDE_MARGIN, PROJECT_INPUTS_PANEL_HOVER_REVEAL_MARGIN,
+    PROJECT_INPUTS_PANEL_HOVER_HIDE_MARGIN,
+    PROJECT_INPUTS_PANEL_HOVER_REVEAL_MARGIN_MIN, PROJECT_INPUTS_PANEL_HOVER_REVEAL_MARGIN_MAX,
     PROJECT_INPUTS_PANEL_MAX_WIDTH, PROJECT_INPUTS_PANEL_MIN_WIDTH,
     PROJECT_INPUTS_PANEL_RESIZE_GRIP_WIDTH, PROJECT_INPUTS_PANEL_WIDTH,
     SOCKET_BORDER_DARKEN, SOCKET_BORDER_WIDTH, SOCKET_HOVER_COLOR, TEXT_COLOR, TEXT_MUTED_COLOR,
@@ -370,8 +372,20 @@ class ProjectInputsShadow(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedWidth(15)
         panel.installEventFilter(self)
-        if not panel.isVisibleTo(panel.parentWidget()):
-            self.hide()
+        # Always hidden at construction, unconditionally — panel.isVisibleTo()
+        # is unreliable here: it answers "has this widget ever been
+        # explicitly hidden", not "is it currently on screen", so on a
+        # freshly constructed panel that hasn't been through its own
+        # setVisible(False) yet (see ProjectInputsPanel.__init__, which
+        # constructs this shadow BEFORE that call) it reports True — the
+        # shadow then never hides, and since a widget that was never shown
+        # doesn't fire a Hide event when setVisible(False) finally does run
+        # on it, the shadow was staying visible for the panel's entire
+        # closed-by-default lifetime until the very first real Show/Hide
+        # cycle. The panel always starts closed (Ст.0.2) — there's no
+        # legitimate case for the shadow to start visible ahead of a real
+        # Show event from it.
+        self.hide()
 
     def eventFilter(self, obj, event):
         if obj is self.panel:
@@ -518,6 +532,15 @@ class ProjectInputsPanel(QWidget):
     def is_pinned(self) -> bool:
         return self._pinned
 
+    def set_pinned(self, value: bool) -> None:
+        """The one entry point for changing pin state from outside the
+        panel (NodeEditorWindow's Q/Ctrl+I toggle, ProjectInputsHoverFilter's
+        title-bar-click collapse) — routes through the checkbox itself so
+        its own toggled signal (already wired to _set_pinned above) stays
+        the only writer of self._pinned, and the checkbox's visual state
+        never drifts from what an external caller just set (Ст.1.1)."""
+        self._pin_check.setChecked(value)
+
     def is_interacting(self) -> bool:
         """True if the user is currently resizing the panel or dragging a row to reorder."""
         return self._dragging_node is not None or self._grip._dragging
@@ -562,18 +585,101 @@ class ProjectInputsPanel(QWidget):
         self._layout.setRowStretch(self._stretch_row, 1)
 
 
+def _reveal_margin_at(y: float, height: float) -> float:
+    """The left-edge reveal hitbox's width at a ``y`` relative to the
+    *canvas* (window.view — never the whole window, whose top TITLE_BAR_HEIGHT
+    px belong to the title bar, not the canvas the panel actually overlays)
+    — a "drop" shape: narrowest at the canvas's own top/bottom edges
+    (PROJECT_INPUTS_PANEL_HOVER_REVEAL_MARGIN_MIN) and widest at its
+    vertical center (..._MAX). sin(pi * t) traces the same symmetric
+    raised-cosine hump as y = cos(x) on [-pi/2, pi/2] shifted to sit on
+    [0, 1] — zero slope at both edges and at the peak, so there's no
+    visible seam where the curve starts or turns over. A cursor drifting
+    along the canvas edge toward its top/bottom corner is far less likely
+    to clip the panel open than one aimed at the vertical middle, which is
+    the much more common "I want the panel" gesture."""
+    if height <= 0:
+        return PROJECT_INPUTS_PANEL_HOVER_REVEAL_MARGIN_MIN
+    t = max(0.0, min(1.0, y / height))
+    bump = math.sin(math.pi * t)
+    span = PROJECT_INPUTS_PANEL_HOVER_REVEAL_MARGIN_MAX - PROJECT_INPUTS_PANEL_HOVER_REVEAL_MARGIN_MIN
+    return PROJECT_INPUTS_PANEL_HOVER_REVEAL_MARGIN_MIN + span * bump
+
+
+# Ст.12: explicit, temporary debug aid — flip to True to draw the actual
+# reveal hitbox (see _reveal_margin_at) instead of guessing at the two
+# margin constants' effect. Off by default; the shape's tuning is confirmed.
+_DEBUG_SHOW_HOVER_ZONE = False
+
+
+class _HoverZoneDebugOverlay(QWidget):
+    """Click-through outline of the reveal "drop" shape along the canvas's
+    left edge — debug-only (_DEBUG_SHOW_HOVER_ZONE), created lazily per
+    window by ProjectInputsHoverFilter and kept sized/positioned to match
+    window.view exactly (same parent as the view — central — so its
+    geometry needs no coordinate translation to line up)."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WA_NoSystemBackground)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        height = self.height()
+        path = QPainterPath()
+        path.moveTo(0, 0)
+        steps = 64
+        for i in range(steps + 1):
+            y = height * i / steps
+            path.lineTo(_reveal_margin_at(y, height), y)
+        path.lineTo(0, height)
+        path.closeSubpath()
+        painter.setPen(QPen(QColor(255, 90, 200, 220), 1.5))
+        painter.setBrush(QBrush(QColor(255, 90, 200, 60)))
+        painter.drawPath(path)
+
+
 class ProjectInputsHoverFilter(QObject):
     """Install once on the QApplication instance (see nodeRC.py) — reveals an
     unpinned Project Inputs panel when the cursor nears the window's left
     edge, and hides it again once the cursor clears the panel (Ст.0.2: the
     panel is available without a click, but doesn't sit open eating canvas
-    space when nobody asked for it).
+    space when nobody asked for it). Also collapses the panel — pinned or
+    not — the instant any click lands anywhere on the title bar, since
+    that's a strong "I'm doing something else now" signal (dragging the
+    window, switching tabs, opening the project menu) the hover-driven
+    close alone wouldn't catch.
     """
 
     def eventFilter(self, obj, event):
         if event.type() == QEvent.MouseMove:
             self._sync_all_windows()
+        elif event.type() == QEvent.MouseButtonPress:
+            self._collapse_on_title_bar_click()
         return super().eventFilter(obj, event)
+
+    @staticmethod
+    def _collapse_on_title_bar_click():
+        from ui.editor_window import NodeEditorWindow  # deferred: avoids an import cycle
+
+        app = QApplication.instance()
+        if not app:
+            return
+        global_pos = QCursor.pos()
+        for widget in app.topLevelWidgets():
+            if not isinstance(widget, NodeEditorWindow):
+                continue
+            panel = getattr(widget, "project_inputs_panel", None)
+            title_bar = getattr(widget, "title_bar", None)
+            if panel is None or title_bar is None or not panel.isVisibleTo(widget):
+                continue
+            local = title_bar.mapFromGlobal(global_pos)
+            if title_bar.rect().contains(local):
+                panel.set_pinned(False)
+                panel.setVisible(False)
 
     @staticmethod
     def _sync_all_windows():
@@ -587,7 +693,27 @@ class ProjectInputsHoverFilter(QObject):
                 ProjectInputsHoverFilter._sync_window(widget)
 
     @staticmethod
+    def _ensure_debug_overlay(window, view):
+        overlay = getattr(window, "_hover_zone_debug_overlay", None)
+        if overlay is None:
+            # Parented to view's own parent (central), the same widget the
+            # view itself is laid out in — so view.geometry() is already in
+            # the right coordinate space for the overlay with no manual
+            # title-bar-height offset to get wrong.
+            overlay = _HoverZoneDebugOverlay(view.parentWidget())
+            window._hover_zone_debug_overlay = overlay
+            overlay.show()
+            overlay.raise_()
+        if overlay.geometry() != view.geometry():
+            overlay.setGeometry(view.geometry())
+
+    @staticmethod
     def _sync_window(window):
+        view = getattr(window, "view", None)
+        if view is None:
+            return
+        if _DEBUG_SHOW_HOVER_ZONE:
+            ProjectInputsHoverFilter._ensure_debug_overlay(window, view)
         panel = getattr(window, "project_inputs_panel", None)
         if panel is None or panel.is_pinned() or panel.is_interacting():
             return
@@ -599,13 +725,20 @@ class ProjectInputsHoverFilter(QObject):
         # individually (ст. 14.3: one common guard, not patches per drag kind).
         if QApplication.mouseButtons() != Qt.NoButton:
             return
-        local = window.mapFromGlobal(QCursor.pos())
-        if not window.rect().contains(local):
+        # Measured against the canvas (view), not the whole window — the
+        # title bar sits above it and isn't part of "the left edge of the
+        # canvas" the panel actually overlays, so hovering the title bar
+        # must never count toward revealing the panel, and the "drop"
+        # shape's own top/bottom must taper across the canvas's real
+        # vertical span, not get skewed by TITLE_BAR_HEIGHT of dead space
+        # baked into the top of the curve.
+        local = view.mapFromGlobal(QCursor.pos())
+        if not view.rect().contains(local):
             return
         if panel.isVisibleTo(window):
             focus_widget = QApplication.focusWidget()
             focus_inside_panel = focus_widget is not None and panel.isAncestorOf(focus_widget)
             if local.x() > panel.width() + PROJECT_INPUTS_PANEL_HOVER_HIDE_MARGIN and not focus_inside_panel:
                 panel.setVisible(False)
-        elif local.x() <= PROJECT_INPUTS_PANEL_HOVER_REVEAL_MARGIN:
+        elif local.x() <= _reveal_margin_at(local.y(), view.height()):
             panel.setVisible(True)

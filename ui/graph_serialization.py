@@ -139,9 +139,22 @@ def serialize_graph(scene, connections: List[Connection], *,
     node_records: List[dict] = []
     group_records: List[dict] = []
 
+    # A selected frame pulls its own member nodes into the selection too —
+    # copying/duplicating "the frame" without what's visually inside it
+    # would silently leave the contents behind. GroupFrameItem's own
+    # _group_members is already the one source of truth for "what's in
+    # this frame" (kept in sync by commit_members on every drag/resize),
+    # reused here rather than re-deriving membership geometrically (Ст.1.1).
+    members_of_selected_frames = set()
+    if only_selected:
+        for item in scene.items(_UNORDERED):
+            if isinstance(item, GroupFrameItem) and item.isSelected():
+                members_of_selected_frames.update(item._group_members)
+
     for idx, item in enumerate(scene.items(_UNORDERED)):
         if isinstance(item, MetaNode):
-            if only_selected and (not item.isSelected() or isinstance(item, StartNode)):
+            included = item.isSelected() or item in members_of_selected_frames
+            if only_selected and (not included or isinstance(item, StartNode)):
                 continue
             node_id_map[item] = idx
             pos = item.scenePos()

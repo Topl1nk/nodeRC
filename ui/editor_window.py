@@ -13,10 +13,13 @@ import sys
 from typing import Dict, List, Optional, Tuple
 
 from PyQt5.QtWidgets import (
-    QApplication, QFileDialog, QMainWindow, QVBoxLayout, QWidget,
+    QApplication, QFileDialog, QGraphicsOpacityEffect, QLabel, QMainWindow, QVBoxLayout, QWidget,
 )
 from PyQt5.QtGui import QCursor
-from PyQt5.QtCore import QEvent, QPoint, QPointF, Qt, QThread, QTimer
+from PyQt5.QtCore import (
+    QEasingCurve, QEvent, QParallelAnimationGroup, QPoint, QPointF, QPropertyAnimation,
+    QRect, Qt, QThread, QTimer,
+)
 
 from localization import available_languages, get_language, set_language, t
 from configuration import (
@@ -106,6 +109,13 @@ _WM_NCLBUTTONUP = 0x00A2
 # either side of it, since DefWindowProc owns everything in between (see
 # NodeEditorWindow._native_caption_drag_active).
 _WM_EXITSIZEMOVE = 0x0232
+
+# How long the outgoing canvas takes to shrink/fade into the "+" button on
+# new_tab() (see NodeEditorWindow._play_new_tab_minimize_animation) — matches
+# ui/title_bar.py's TAB_SLIDE_ANIM_MS-style local constant convention rather
+# than a configuration.py entry, since nothing outside this one animation
+# reads it.
+NEW_TAB_MINIMIZE_ANIM_MS = 260
 
 
 class NodeEditorWindow(QMainWindow):
@@ -419,7 +429,12 @@ class NodeEditorWindow(QMainWindow):
         scene = NodeScene(self)
         scene.nodeEditorWindow = self
         tab = ProjectTab(scene)
-        self.tabs.append(tab)
+        # Newest tab leftmost, not rightmost (Chrome-style append is the
+        # opposite of what this app wants) — every tab-creating path (new_tab,
+        # duplicate_tab, close_tab's last-tab replacement, reopen_closed_tab
+        # via _restore_tab_from_envelope) shares this one insertion point
+        # (Ст.1.1), so none of them need their own ordering logic.
+        self.tabs.insert(0, tab)
         self._add_start_node(scene)
         return tab
 
@@ -433,6 +448,7 @@ class NodeEditorWindow(QMainWindow):
 
     def new_tab(self, path: Optional[str] = None) -> ProjectTab:
         """Open a fresh tab, optionally loading ``path`` into it."""
+        self._play_new_tab_minimize_animation()
         tab = self._create_tab()
         if path is None:
             tab.untitled_number = self._next_untitled_number()
@@ -444,6 +460,67 @@ class NodeEditorWindow(QMainWindow):
             self._set_dirty(False)
         self._refresh_tab_strip()
         return tab
+
+    def _play_new_tab_minimize_animation(self) -> None:
+        """Purely decorative: the outgoing canvas shrinks and fades toward
+        the "+" new-tab button, like a window minimizing to the taskbar/dock
+        — a frozen snapshot of the current view animates on top while the
+        real self.view underneath switches to the new tab's (already-blank)
+        scene instantly, so the "reveal" reads as the new tab already being
+        there the moment the shrinking snapshot clears it.
+
+        Must be called BEFORE _create_tab()/switch_to_tab() swap the view's
+        scene — it grabs whatever is on screen right now. Never blocks tab
+        creation: the animation runs fully async and self-deletes.
+
+        The overlay is a child of the canvas (self.view) itself, not of
+        the window — Qt clips a child to its parent's own rect by default,
+        so even though the shrink target sits inside the title bar (above
+        the canvas's top edge), the animation is cropped clean at that edge
+        the whole way there instead of visibly spilling onto the title bar.
+        """
+        view = self.view
+        if not view.isVisible() or view.width() <= 0 or view.height() <= 0:
+            return  # nothing meaningful to snapshot (window not shown yet)
+
+        overlay = QLabel(view)
+        overlay.setPixmap(view.grab())
+        overlay.setGeometry(0, 0, view.width(), view.height())
+        overlay.setAttribute(Qt.WA_TransparentForMouseEvents)
+        overlay.setScaledContents(True)
+        overlay.show()
+        overlay.raise_()
+
+        opacity_effect = QGraphicsOpacityEffect(overlay)
+        overlay.setGraphicsEffect(opacity_effect)
+
+        new_btn = self.title_bar.tab_strip.new_btn
+        central = view.parentWidget()
+        target_in_central = new_btn.mapTo(central, new_btn.rect().center())
+        target_local = target_in_central - view.pos()  # central-relative -> view-local
+        target_rect = QRect(target_local.x() - 2, target_local.y() - 2, 4, 4)
+
+        geo_anim = QPropertyAnimation(overlay, b"geometry", overlay)
+        geo_anim.setDuration(NEW_TAB_MINIMIZE_ANIM_MS)
+        geo_anim.setStartValue(overlay.geometry())
+        geo_anim.setEndValue(target_rect)
+        geo_anim.setEasingCurve(QEasingCurve.InCubic)
+
+        fade_anim = QPropertyAnimation(opacity_effect, b"opacity", overlay)
+        fade_anim.setDuration(NEW_TAB_MINIMIZE_ANIM_MS)
+        fade_anim.setStartValue(1.0)
+        fade_anim.setEndValue(0.0)
+        fade_anim.setEasingCurve(QEasingCurve.InCubic)
+
+        group = QParallelAnimationGroup(overlay)
+        group.addAnimation(geo_anim)
+        group.addAnimation(fade_anim)
+        # overlay is the animations'/group's own parent, so overlay.deleteLater()
+        # already tears down every QPropertyAnimation attached to it — the
+        # group needs no separate cleanup, and nothing here needs a Python-side
+        # reference kept alive: Qt's own parent-child ownership does it.
+        group.finished.connect(overlay.deleteLater)
+        group.start()
 
     def switch_to_tab(self, tab: ProjectTab):
         if tab is self.active_tab:
@@ -483,7 +560,11 @@ class NodeEditorWindow(QMainWindow):
             self.view.setScene(replacement.scene)
             self.push_undo_state()
         elif was_active:
-            self.active_tab = self.tabs[-1]
+            # tabs[0] is the newest surviving tab now that _create_tab()
+            # inserts leftmost instead of appending — closing the active
+            # tab jumps to it, same "most recently opened other tab" intent
+            # this always had, just on the other end of the list.
+            self.active_tab = self.tabs[0]
             self.view.setScene(self.active_tab.scene)
             self.project_inputs_panel.reload()
         self._update_title()
@@ -528,7 +609,11 @@ class NodeEditorWindow(QMainWindow):
         self._restore(payload, restore_selection=False)
         self.push_undo_state()
         self._set_dirty(True)
-        self.reorder_tab(new, self.tabs.index(tab) + 1)
+        # Sits immediately to tab's left (the newer side, now that new tabs
+        # land leftmost) — -1, not +1: self.tabs.index(tab) is measured
+        # while `new` still occupies index 0, so removing it inside
+        # reorder_tab shifts tab's own index down by one first.
+        self.reorder_tab(new, self.tabs.index(tab) - 1)
 
     def _refresh_tab_strip(self):
         self.title_bar.tab_strip.rebuild(self.tabs, self.active_tab)
@@ -984,12 +1069,10 @@ class NodeEditorWindow(QMainWindow):
             self.duplicate_nodes()
             event.accept()
         elif key == KEY_TOGGLE_PROJECT_INPUTS_PANEL and mods == MOD_CTRL:
-            panel = self.project_inputs_panel
-            panel.setVisible(not panel.isVisibleTo(self))
+            self._toggle_project_inputs_panel_pin()
             event.accept()
         elif key == KEY_TOGGLE_PROJECT_INPUTS_PANEL_ALT and mods == MOD_NONE:
-            panel = self.project_inputs_panel
-            panel.setVisible(not panel.isVisibleTo(self))
+            self._toggle_project_inputs_panel_pin()
             event.accept()
         elif key == KEY_FULLSCREEN:
             if self.isFullScreen():
@@ -1479,6 +1562,18 @@ class NodeEditorWindow(QMainWindow):
         panel = self.project_inputs_panel
         top = self.title_bar.height()
         panel.setGeometry(0, top, panel.width(), self.centralWidget().height() - top)
+
+    def _toggle_project_inputs_panel_pin(self):
+        """Q / Ctrl+I: a single true/false latch, not an independent
+        show/hide — "q" -> true pins the panel open (immune to
+        ProjectInputsHoverFilter's own hover-driven hide, see is_pinned()),
+        the next "q" -> false unpins AND closes it in the same action, so
+        pin state and visibility can never drift apart (e.g. pinned-but-
+        hidden, which would silently block the hover-reveal path forever)."""
+        panel = self.project_inputs_panel
+        pin = not panel.is_pinned()
+        panel.set_pinned(pin)
+        panel.setVisible(pin)
 
     def changeEvent(self, event):
         if event.type() == QEvent.WindowStateChange:

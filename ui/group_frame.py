@@ -10,7 +10,6 @@ from typing import Optional
 
 from PyQt5.QtWidgets import (
     QGraphicsItem, QGraphicsRectItem, QGraphicsTextItem,
-    QMenu,
 )
 from PyQt5.QtGui import (
     QPen, QBrush, QColor, QPainter, QPainterPath, QFont, QFontMetrics, QCursor,
@@ -25,13 +24,15 @@ from configuration import (
     GROUP_FRAME_TITLE_FONT, GROUP_FRAME_TITLE_FONT_SIZE, GROUP_FRAME_TITLE_MARGIN,
     GROUP_FRAME_HEADER_HEIGHT, GROUP_FRAME_HEADER_DARKEN,
     GROUP_FRAME_HANDLE, GROUP_FRAME_MIN_SIZE, GROUP_FRAME_BORDER_INSET,
+    HOTKEY_HINTS,
 )
 from ui.theme import (
-    GROUP_FRAME_BORDER_COLOR, brightened_for_canvas, CONTEXT_MENU_STYLESHEET,
+    GROUP_FRAME_BORDER_COLOR, brightened_for_canvas,
 )
 from ui.title_item import (
     _EditableTitleItem, RenamableTitleMixin,
     editor_window_of, _merge_hsv_component, selected_of_type_including,
+    run_context_menu,
 )
 from ui.color_picker import ColorPickerPopup
 from ui.widgets import suppress_default_selection_chrome
@@ -181,11 +182,24 @@ class GroupFrameItem(RenamableTitleMixin, QGraphicsRectItem):
 
     # ── Frame color ───────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _effective_color(color_hex: str) -> QColor:
+        """``color_hex`` as the QColor the frame actually renders with —
+        short "#RRGGBB" (the default/reset form) always means
+        GROUP_FRAME_FILL_ALPHA, never the QColor default of fully opaque.
+        The one place that decides this, so _apply_color/_pick_color/
+        apply_color_to_all (an H/S/V-only edit merging into the *current*
+        color) can never disagree about a frame's real effective alpha —
+        which they used to: _merge_hsv_component read alpha straight off
+        QColor(short_hex), got 255, and silently baked that into the merged
+        9-char result the instant only H/S/V changed (Ст.14.3)."""
+        c = QColor(color_hex)
+        if len(color_hex) < 9:
+            c.setAlpha(GROUP_FRAME_FILL_ALPHA)
+        return c
+
     def _apply_color(self):
-        c = QColor(self._color)
-        fill = QColor(c)
-        if len(self._color) < 9:
-            fill.setAlpha(GROUP_FRAME_FILL_ALPHA)
+        fill = self._effective_color(self._color)
         self.setBrush(QBrush(fill))
         self.setPen(QPen(Qt.NoPen))
 
@@ -212,7 +226,8 @@ class GroupFrameItem(RenamableTitleMixin, QGraphicsRectItem):
 
         def apply_color_to_all(c, only_header, changed_component=None):
             for frame in selected_frames:
-                merged = _merge_hsv_component(frame._color, c, changed_component)
+                current_hex = self._effective_color(frame._color).name(QColor.HexArgb)
+                merged = _merge_hsv_component(current_hex, c, changed_component)
                 frame.set_color(merged, record_undo=False)
 
         def reset_all():
@@ -220,9 +235,7 @@ class GroupFrameItem(RenamableTitleMixin, QGraphicsRectItem):
                 frame.set_color(GROUP_FRAME_BORDER_COLOR, record_undo=False)
             return GROUP_FRAME_BORDER_COLOR, False
 
-        current = QColor(self._color)
-        if len(self._color) < 9:
-            current.setAlpha(GROUP_FRAME_FILL_ALPHA)
+        current = self._effective_color(self._color)
 
         popup = ColorPickerPopup(
             on_color_selected=apply_color_to_all,
@@ -474,28 +487,30 @@ class GroupFrameItem(RenamableTitleMixin, QGraphicsRectItem):
             super().contextMenuEvent(event)
             return
 
-        menu = QMenu()
-        menu.setStyleSheet(CONTEXT_MENU_STYLESHEET)
-
-        rename_act = menu.addAction(t("ctx_rename_group"))
-        color_act  = menu.addAction(t("ctx_change_color"))
-        menu.addSeparator()
-        remove_frame_act = menu.addAction(t("ctx_remove_frame"))
-        clear_frame_act  = menu.addAction(t("ctx_clear_frame"))
-        delete_group_act = menu.addAction(t("ctx_delete_group"))
-
-        chosen = menu.exec_(event.screenPos())
-        if chosen == rename_act:
-            self._begin_rename()
-        elif chosen == color_act:
-            self._pick_color()
-        elif chosen == remove_frame_act:
-            self._remove_frame()
-        elif chosen == clear_frame_act:
-            self._clear_frame()
-        elif chosen == delete_group_act:
-            self._delete_group()
-        event.accept()
+        # Rename/Duplicate/Copy/Paste share the exact same label, hint and
+        # callback shape MetaNode.contextMenuEvent uses (ui/graph_items.py)
+        # — not frame-specific stand-ins: F2 (editor_window.py's
+        # KEY_RENAME_NODE handler) already calls _begin_rename() on ANY
+        # single selected item that has it, GroupFrameItem included, via
+        # the RenamableTitleMixin both classes share (ui/title_item.py) —
+        # so a separate "Rename Group" label with no hint was never
+        # reflecting a real behavioral difference, just an inconsistent
+        # menu. Likewise Duplicate/Copy/Paste: serialize_graph's
+        # only_selected path now pulls a selected frame's own members along
+        # with it (see core's copy/duplicate fix), making these genuinely
+        # the same operation for a frame as for a node.
+        run_context_menu(event, [
+            (t("ctx_rename"),         self._begin_rename,                    True, HOTKEY_HINTS["rename"]),
+            (t("ctx_change_color"),   self._pick_color,                      True),
+            None,
+            (t("ctx_duplicate"),      getattr(win, "duplicate_nodes", None), True, HOTKEY_HINTS["duplicate"]),
+            (t("ctx_copy"),           getattr(win, "copy_nodes",      None), True, HOTKEY_HINTS["copy"]),
+            (t("ctx_paste"),          getattr(win, "paste_nodes",     None), True, HOTKEY_HINTS["paste"]),
+            None,
+            (t("ctx_remove_frame"),   self._remove_frame, True),
+            (t("ctx_clear_frame"),    self._clear_frame,  True),
+            (t("ctx_delete_group"),   self._delete_group, True),
+        ])
 
     def _remove_frame(self):
         scene = self.scene()

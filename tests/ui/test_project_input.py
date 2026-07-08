@@ -15,7 +15,7 @@ from ui.color_picker import ColorPickerPopup
 from ui.param_nodes import StringParamNode, Float3ParamNode
 from ui.project_inputs_panel import ProjectInputsHoverFilter
 from configuration import (
-    PROJECT_INPUTS_PANEL_HOVER_HIDE_MARGIN, PROJECT_INPUTS_PANEL_HOVER_REVEAL_MARGIN,
+    PROJECT_INPUTS_PANEL_HOVER_HIDE_MARGIN, PROJECT_INPUTS_PANEL_HOVER_REVEAL_MARGIN_MIN,
 )
 
 
@@ -218,7 +218,7 @@ def test_ctrl_i_toggles_panel_visibility(window):
 def test_hover_filter_reveals_panel_near_left_edge(window, monkeypatch):
     panel = window.project_inputs_panel
     panel.setVisible(False)
-    local = QPoint(PROJECT_INPUTS_PANEL_HOVER_REVEAL_MARGIN, 100)
+    local = QPoint(PROJECT_INPUTS_PANEL_HOVER_REVEAL_MARGIN_MIN, 100)
     monkeypatch.setattr(QCursor, "pos", staticmethod(lambda: window.mapToGlobal(local)))
 
     ProjectInputsHoverFilter._sync_window(window)

@@ -1,19 +1,20 @@
 from __future__ import annotations
-from typing import Optional
+from typing import List, Optional
 
 from PyQt5.QtWidgets import (
-    QGraphicsView, QGraphicsProxyWidget, QPushButton, QApplication, QWidget,
+    QGraphicsView, QGraphicsProxyWidget, QGraphicsPathItem, QPushButton, QApplication, QWidget,
     QAbstractSpinBox, QComboBox,
 )
-from PyQt5.QtGui import QPainter, QColor, QRadialGradient, QBrush, QCursor
-from PyQt5.QtCore import Qt, QEvent, QPoint, QRect, QRectF, QTimer
+from PyQt5.QtGui import QPainter, QColor, QRadialGradient, QBrush, QCursor, QPainterPath, QPen
+from PyQt5.QtCore import Qt, QEvent, QPoint, QPointF, QRect, QRectF, QTimer
 
 from localization import t
-from ui.graph_items import MetaNode
+from ui.graph_items import Connection, GroupFrameItem, MetaNode
 from configuration import (
     CANVAS_BACKGROUND_COLOR, VIGNETTE_COLOR, VIGNETTE_RADIUS,
     VIEW_ZOOM_STEP, VIEW_ZOOM_MIN, VIEW_ZOOM_MAX,
     VIEW_FRAME_MARGIN, NODE_HOVER_POLL_INTERVAL_MS, NODE_LOD_DETAIL_SCALE,
+    LASSO_Z, LASSO_BORDER_COLOR, LASSO_BORDER_WIDTH, LASSO_FILL_RGBA,
 )
 
 
@@ -44,6 +45,13 @@ class GraphicsView(QGraphicsView):
         self._panning     = False
         self._pan_origin: Optional[QPoint] = None
         self._suppress_redelivered_click = False
+
+        # Freeform lasso (Alt + left-drag) — a second selection tool
+        # alongside Qt's own rectangular RubberBandDrag (plain left-drag,
+        # unchanged), not a replacement for it.
+        self._lasso_active = False
+        self._lasso_scene_points: List[QPointF] = []
+        self._lasso_item: Optional[QGraphicsPathItem] = None
         self._hovered_node: Optional[MetaNode] = None
         self._hovered_widget: Optional[QWidget] = None
         # Last poll's (cursor pos, window-active, view transform, scroll
@@ -224,7 +232,10 @@ class GraphicsView(QGraphicsView):
         painter.restore()
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MiddleButton:
+        if event.button() == Qt.LeftButton and (event.modifiers() & Qt.AltModifier):
+            self._start_lasso(event.pos())
+            event.accept()
+        elif event.button() == Qt.MiddleButton:
             self._panning    = True
             self._pan_origin = event.pos()
             self.viewport().setCursor(Qt.ClosedHandCursor)
@@ -235,7 +246,10 @@ class GraphicsView(QGraphicsView):
             super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.MiddleButton:
+        if self._lasso_active and event.button() == Qt.LeftButton:
+            self._finish_lasso(event.modifiers())
+            event.accept()
+        elif event.button() == Qt.MiddleButton:
             self._panning    = False
             self._pan_origin = None
             self.viewport().setCursor(Qt.ArrowCursor)
@@ -247,7 +261,11 @@ class GraphicsView(QGraphicsView):
             super().mouseReleaseEvent(event)
 
     def mouseMoveEvent(self, event):
-        if self._panning and self._pan_origin is not None:
+        if self._lasso_active:
+            self._lasso_scene_points.append(self.mapToScene(event.pos()))
+            self._update_lasso_path()
+            event.accept()
+        elif self._panning and self._pan_origin is not None:
             delta            = event.pos() - self._pan_origin
             self._pan_origin = event.pos()
             self.horizontalScrollBar().setValue(
@@ -269,6 +287,61 @@ class GraphicsView(QGraphicsView):
                 # the previous frame's rubber-band pixels are actually gone,
                 # not just scheduled to maybe be redrawn.
                 self.viewport().update()
+
+    # ── Freeform lasso selection ─────────────────────────────────────────────
+    # Alt + left-drag draws a free-form outline instead of Qt's rectangular
+    # RubberBandDrag (plain left-drag, still the default/unchanged) — closed
+    # on release, then every node/frame/connection whose center (or, for a
+    # wire, its stroked hit-shape) falls inside becomes the new selection.
+
+    def _start_lasso(self, view_pos: QPoint) -> None:
+        self._lasso_active = True
+        self._lasso_scene_points = [self.mapToScene(view_pos)]
+        self._lasso_item = QGraphicsPathItem()
+        self._lasso_item.setZValue(LASSO_Z)
+        self._lasso_item.setPen(QPen(QColor(LASSO_BORDER_COLOR), LASSO_BORDER_WIDTH, Qt.DashLine))
+        self._lasso_item.setBrush(QBrush(QColor(LASSO_FILL_RGBA)))
+        if self.scene() is not None:
+            self.scene().addItem(self._lasso_item)
+        self._update_lasso_path()
+
+    def _update_lasso_path(self) -> None:
+        path = QPainterPath()
+        points = self._lasso_scene_points
+        if points:
+            path.moveTo(points[0])
+            for pt in points[1:]:
+                path.lineTo(pt)
+            path.closeSubpath()
+        if self._lasso_item is not None:
+            self._lasso_item.setPath(path)
+
+    def _finish_lasso(self, modifiers) -> None:
+        self._lasso_active = False
+        path = self._lasso_item.path() if self._lasso_item is not None else QPainterPath()
+        scene = self.scene()
+        if self._lasso_item is not None and scene is not None:
+            scene.removeItem(self._lasso_item)
+        self._lasso_item = None
+        self._lasso_scene_points = []
+        if scene is None or path.isEmpty():
+            return
+
+        # Shift/Ctrl held: add to the existing selection (matching this
+        # app's other selection gestures) instead of replacing it.
+        if not (modifiers & (Qt.ShiftModifier | Qt.ControlModifier)):
+            scene.clearSelection()
+        for item in scene.items():
+            if isinstance(item, (MetaNode, GroupFrameItem)):
+                if path.contains(item.sceneBoundingRect().center()):
+                    item.setSelected(True)
+            elif isinstance(item, Connection):
+                # A wire has no area of its own to test a center point
+                # against — use its already-widened hit shape (see
+                # Connection.shape()) so "the lasso crosses this wire"
+                # reads the same as "the lasso would have let you click it".
+                if path.intersects(item.shape()):
+                    item.setSelected(True)
 
     def _poll_hover(self):
         # Geometric containment against the real OS cursor, not underMouse():

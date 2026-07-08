@@ -42,6 +42,16 @@ PARAM_NODE_HEADER_FROM_SOCKET = True
 NODE_SELECTED_COLOR = "#FFFFFF"
 NODE_HOVER_COLOR = "#FFFFFF"          # outline shown while the cursor is over a node, unselected
 NODE_HOVER_BORDER_WIDTH = 1.5         # thinner than the 2.0 selected border so selection still reads stronger
+# A wire's own hover halo (see Connection.paint) — its own width, not
+# NODE_HOVER_BORDER_WIDTH, since a thin wire needs a visibly thicker band
+# than a node's own border to read clearly at the same zoom level.
+CONNECTION_HOVER_HALO_WIDTH = 3.0
+# A wire's hover halo gets a second, 1px trim ring in the canvas's own
+# background color around both its outer and inner edge — the same
+# dark-trim-crisps-up-a-bright-ring convention SOCKET_RING_TRIM_WIDTH already
+# uses (ui/graph_items.py SocketItem.paint), reused here so the white halo
+# doesn't just blur into whatever's behind it or the wire's own color.
+CONNECTION_HOVER_TRIM_WIDTH = 1.0
 # How often the view polls the real cursor position for the hover outline (ms).
 # Driven by a timer rather than mouse-move events because QGraphicsProxyWidget
 # does not reliably deliver mouse-move to the view once a focusable/editable
@@ -132,6 +142,11 @@ CONNECTION_EXEC_WIDTH             = 3.0
 CONNECTION_EXEC_SELECTED_WIDTH    = 3.5
 CONNECTION_PARAM_WIDTH            = 1.8
 CONNECTION_PARAM_SELECTED_WIDTH   = 2.2
+# Connection.shape()'s hit-test stroke width — wider than the thin visual
+# pens above (especially CONNECTION_PARAM_WIDTH's 1.8px) so a wire is
+# actually easy to click/hover, the same "generous invisible hitbox around a
+# thin visible line" convention most node editors use.
+CONNECTION_HIT_WIDTH              = 10.0
 
 # ── Exec socket hover: grow + "+"/"-" glyph + ghost node preview ────────────────
 SOCKET_EXEC_HOVER_GROW   = 3     # px added to an exec socket's radius while hovered
@@ -404,10 +419,18 @@ PROJECT_INPUTS_PANEL_BORDER_COLOR = "#1a385f"
 # width, so every row's name/value boundary lines up on one straight column —
 # matches ParamNode._widget_width() for the common 200px-wide param node.
 PROJECT_INPUTS_FIELD_WIDTH = 172
-# Cursor within this many px of the window's left edge reveals the panel;
+# Cursor within this many px of the canvas's left edge reveals the panel;
 # once open, it hides again only after the cursor clears the panel width plus
 # this much slack, so crossing back over the panel itself never flickers it shut.
-PROJECT_INPUTS_PANEL_HOVER_REVEAL_MARGIN = 8
+# The reveal margin isn't flat top-to-bottom — it's a "drop" shape that
+# tapers to MIN (effectively a point, not a floor — see
+# ui/project_inputs_panel.py's _reveal_margin_at) at the canvas's own
+# top/bottom edges and widens to MAX at vertical center: ▁▁▂▃▅█▅▃▂▁▁ — so a
+# cursor near the canvas's top/bottom corner all but can't reveal the panel,
+# while the much more common "aim for the middle of the left edge" gesture
+# gets a generous hitbox.
+PROJECT_INPUTS_PANEL_HOVER_REVEAL_MARGIN_MIN = 0
+PROJECT_INPUTS_PANEL_HOVER_REVEAL_MARGIN_MAX = 36
 PROJECT_INPUTS_PANEL_HOVER_HIDE_MARGIN = 40
 
 # ── Color picker popup geometry ───────────────────────────────────────────────
@@ -487,6 +510,13 @@ SCENE_INITIAL_HEIGHT = 1000
 DRAG_PREVIEW_LINE_WIDTH = 2.0
 NODE_DRAG_Z = 10000.0
 CONNECTION_Z = -1.0
+
+# ── Freeform lasso selection (Alt + left-drag; plain left-drag stays the
+# rectangular Qt RubberBandDrag) ─────────────────────────────────────────────
+LASSO_Z = 20000.0
+LASSO_BORDER_COLOR = "#FFFFFF"
+LASSO_BORDER_WIDTH = 1.5
+LASSO_FILL_RGBA = "#33FFFFFF"  # translucent white wash, ARGB hex
 
 WINDOW_INITIAL_X = 100
 WINDOW_INITIAL_Y = 100
