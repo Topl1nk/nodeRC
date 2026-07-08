@@ -125,9 +125,12 @@ def segment_chain_by_pack(chain: List[NodeModel]) -> List[Segment]:
     return segments
 
 
-def _segment_commands(graph: GraphModel, segment: Segment):
+def segment_commands(graph: GraphModel, segment: Segment):
     """[(CommandDef, resolved params), ...] for every node in the segment,
-    in order — the exact payload run_commands() needs."""
+    in order — the exact payload run_commands()/render_export() need. Public
+    (not local to this module) because core/graph_export.py's text-rendering
+    path needs the identical resolved-parameter list a real run would use,
+    not a second implementation of the same resolution logic (Ст.1.1)."""
     commands = []
     for node in segment.nodes:
         command = CommandDef.from_dict(node.cmd_def)
@@ -203,7 +206,7 @@ class GraphExecutor:
     def _run_segment(self, graph: GraphModel, segment: Segment,
                       cancel_check: Optional[Callable[[], bool]]) -> SegmentRun:
         node_uids = [n.uid for n in segment.nodes]
-        commands = _segment_commands(graph, segment)
+        commands = segment_commands(graph, segment)
         cacheable = self._is_pack_cacheable(segment.pack_id)
         cache_key = None
 

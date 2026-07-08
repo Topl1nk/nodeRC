@@ -9,5 +9,9 @@
         "executable": true,
         "filesystem": ["read", "write"],
         "network": false
-    }
+    },
+    "exporters": [
+        {"format_id": "bat", "display_name": "Batch Script", "extension": ".bat"},
+        {"format_id": "rscmd", "display_name": "RealityScan Command Sequence", "extension": ".rscmd"}
+    ]
 }

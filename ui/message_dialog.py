@@ -32,3 +32,7 @@ class MessageDialog(FramelessDialogBase):
     @staticmethod
     def warning(parent, title: str, text: str):
         MessageDialog(title, text, parent).exec_()
+
+    @staticmethod
+    def information(parent, title: str, text: str):
+        MessageDialog(title, text, parent).exec_()

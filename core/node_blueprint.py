@@ -71,6 +71,33 @@ PARAM_TITLE_KEY: Dict[str, str] = {
     "path": "param_path_title", "keyvalue": "param_keyvalue_title",
 }
 
+# Param type -> the NodeModel.node_type / saved "type" string materialize_graph
+# expects (core/graph_serialization.py's own dispatch reads it off the real
+# ParamNode class names in ui/param_nodes.py). Kept as its own Qt-free table,
+# not derived from ui.param_nodes.PARAM_NODE_TYPES, because core/ must not
+# import that module at all (Ст.3 — it imports PyQt5 at module scope) even
+# just to read a plain string off it; a deliberate, explicit duplication
+# (Ст.1.2) rather than a hidden coupling, used by core/graph_import.py to
+# build importable node data headlessly.
+PARAM_NODE_TYPE_NAMES: Dict[str, str] = {
+    "string": "StringParamNode", "bool": "BoolParamNode", "integer": "IntParamNode",
+    "float": "FloatParamNode", "float2": "Float2ParamNode", "float3": "Float3ParamNode",
+    "enum": "EnumParamNode", "enum_int": "EnumParamNode",
+    "filepath": "FileParamNode", "dirpath": "DirParamNode", "keyvalue": "KeyValueParamNode",
+}
+
+# Param type -> the output socket name that type's ParamNode exposes (see
+# ui/param_nodes.py's per-class SocketDef declarations) — every type uses
+# "value_out" except FileParamNode's "path_out". Needed headlessly by
+# core/graph_import.py to wire a freshly-built ParamNode's output into the
+# CommandNode input socket matching the param's own name.
+PARAM_OUTPUT_SOCKETS: Dict[str, str] = {
+    "string": "value_out", "bool": "value_out", "integer": "value_out",
+    "float": "value_out", "float2": "value_out", "float3": "value_out",
+    "enum": "value_out", "enum_int": "value_out",
+    "filepath": "path_out", "dirpath": "value_out", "keyvalue": "value_out",
+}
+
 
 def resolve_color_schema(socket_type: str) -> dict:
     schema = SOCKET_COLOR_SCHEMA.get(socket_type.lower(), SOCKET_COLOR_SCHEMA["any"])

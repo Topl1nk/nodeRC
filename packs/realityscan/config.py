@@ -17,9 +17,20 @@ from pathlib import Path
 
 _PACK_DIR = Path(__file__).resolve().parent
 
-RS_HELP_HTML = os.environ.get(
-    "NODERC_RS_HELP_HTML",
-    r"C:\ProgramData\Epic\RealityScan\LanguagePack\help\en-US\appbasics\allcommands.htm")
+# Tried in order until one resolves — a local install can land in any of
+# these depending on which installer put RealityScan/RealityCapture there
+# (Epic's ProgramData language pack, a custom Epic Games Launcher drive, or
+# neither if the app isn't installed at all), so rebuild_command_database_from_html
+# falls through the list instead of hardcoding a single path. The last entry
+# is Capturing Reality's own hosted copy of the same page, tried over the
+# network only after every local candidate has failed.
+RS_HELP_HTML_CANDIDATES = [p for p in [
+    os.environ.get("NODERC_RS_HELP_HTML", ""),
+    r"C:\ProgramData\Epic\RealityScan\LanguagePack\help\en-US\appbasics\allcommands.htm",
+    r"D:\Epic Games\RealityScan_2.2\Help\en-US\appbasics\allcommands.htm",
+    "https://rshelp.capturingreality.com/en-US/appbasics/allcommands.htm",
+] if p]
+RS_HELP_HTML = RS_HELP_HTML_CANDIDATES[0]
 RS_EXECUTABLE = os.environ.get(
     "NODERC_RS_EXECUTABLE",
     r"D:\Epic Games\RealityScan_2.2\RealityScan.exe")

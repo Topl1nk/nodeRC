@@ -46,9 +46,9 @@ if __name__ == "__main__":
         # Both imports live in the try, not at module level (Доктрина III.1):
         # the realityscan pack is optional like any other, and a system
         # without it installed must still launch, not crash on this import.
-        from packs.realityscan.config import COMMAND_DB_JSON, RS_HELP_HTML
+        from packs.realityscan.config import COMMAND_DB_JSON, RS_HELP_HTML_CANDIDATES
         from packs.realityscan.rs_documentation_extractor import rebuild_command_database_from_html
-        rebuild_command_database_from_html(RS_HELP_HTML)
+        rebuild_command_database_from_html(RS_HELP_HTML_CANDIDATES)
     except (Exception, SystemExit) as exc:
         _logger.warning("Documentation refresh skipped: %s", exc)
 

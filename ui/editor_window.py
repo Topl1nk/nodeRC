@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from PyQt5.QtWidgets import (
     QApplication, QFileDialog, QMainWindow, QVBoxLayout, QWidget,
@@ -70,8 +70,11 @@ from ui.graph_serialization import (
 )
 from ui.project_inputs_panel import ProjectInputsPanel
 from core.graph_executor import GraphExecutor, build_exec_chain
+from core.graph_export import render_graph_export
+from core.graph_import import build_graph_from_script
 from core.pack_catalog import flatten_commands, load_pack_catalog, merge_catalogs
 from core.pack_executor import build_executor_factory, pack_cacheable_lookup, pack_version_lookup
+from core.pack_protocol import ExporterDef
 from core.pack_registry import default_pack_search_dirs, discover_packs
 from ui.graph_execution_worker import GraphExecutionWorker
 from core import autosave, app_prefs, session
@@ -125,6 +128,12 @@ class NodeEditorWindow(QMainWindow):
             extend_frame_into_client_area(self)
 
         installed_packs = discover_packs(default_pack_search_dirs())
+        # Kept for export_chain_script(), which needs every installed
+        # pack's manifest.exporters to build the Export dialog's format
+        # list (and build_executor_factory to actually render one) —
+        # everything execute_chain() already resolves ahead of it via
+        # self._graph_executor, just not stored on its own before now.
+        self._installed_packs = installed_packs
 
         # RealityCapture keeps its own richer loader (falls back to a small
         # built-in command set when no local RC docs were parsed — see
@@ -1146,6 +1155,119 @@ class NodeEditorWindow(QMainWindow):
         self.active_tab.project_path = path
         self.active_tab.untitled_number = None
         self._set_dirty(False)
+        self._refresh_tab_strip()
+
+    def _pack_export_formats(self) -> Dict[str, Tuple[str, ExporterDef]]:
+        """{format_id: (pack_id, ExporterDef)} across every installed pack's
+        PackManifest.exporters — the same formats double as import formats
+        (a pack that can render one can parse it back), so both
+        export_chain_script and import_chain_script build their file-dialog
+        filter from this one place instead of each hardcoding RealityScan's
+        .bat/.rscmd (Ст.1.1)."""
+        formats: Dict[str, Tuple[str, ExporterDef]] = {}
+        for pack in self._installed_packs:
+            for exp in pack.manifest.exporters:
+                formats.setdefault(exp.format_id, (pack.manifest.pack_id, exp))
+        return formats
+
+    def export_chain_script(self):
+        """Renders the active tab's exec chain to one of the formats any
+        installed pack declares (PackManifest.exporters) and saves it to
+        disk — a plain text file the pack's own real-world tool can run
+        without nodeRC (RealityScan's .bat/.rscmd today), built via the
+        exact same segment-by-pack/param-resolution path execute_chain()
+        uses for a real run (core/graph_export.py), just rendered to text
+        instead of actually launched.
+        """
+        graph = scene_to_graph_model(self.scene, self.connections)
+        chain = build_exec_chain(graph)
+        if not chain or len(chain) < 2:
+            MessageDialog.warning(self, t("dialog_incomplete_chain_title"), t("msg_incomplete_chain_desc"))
+            return
+
+        formats = self._pack_export_formats()
+        if not formats:
+            MessageDialog.warning(self, t("dialog_export_title"), t("msg_no_matching_nodes"))
+            return
+
+        filter_by_label = {f"{exp.display_name} (*{exp.extension})": exp for _, exp in formats.values()}
+        path, selected_filter = QFileDialog.getSaveFileName(
+            self, t("dialog_export_title"), "", ";;".join(filter_by_label))
+        if not path:
+            return
+        exp = filter_by_label.get(selected_filter)
+        if exp is None:
+            # The user typed a filename without picking a filter row, or the
+            # OS dialog didn't echo one back — fall back to whichever
+            # exporter's extension actually matches what they typed.
+            exp = next((e for _, e in formats.values() if path.endswith(e.extension)), None)
+        if exp is None:
+            exp = next(iter(formats.values()))[1]
+        if not path.endswith(exp.extension):
+            path += exp.extension
+
+        result = render_graph_export(graph, exp.format_id, build_executor_factory(self._installed_packs))
+        if not result.ok:
+            MessageDialog.critical(self, t("dialog_export_title"),
+                                    log_and_explain(t("msg_export_failed"), RuntimeError(result.error)))
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(result.output)
+        except Exception as exc:
+            MessageDialog.critical(self, t("dialog_save_error_title"), log_and_explain(t("msg_save_failed"), exc))
+            return
+        MessageDialog.information(self, t("dialog_export_title"), t("msg_saved_script").format(path))
+
+    def import_chain_script(self):
+        """The reverse of export_chain_script: reads a script file in one of
+        the same pack-declared formats and materializes the commands it
+        recovers as a brand-new tab's exec chain (core/graph_import.py) —
+        a new tab, not a merge into the active one, since the recovered
+        chain brings its own Start node and this app's exec-chain model
+        only ever follows the first one it finds (core.graph_executor.
+        build_exec_chain).
+        """
+        formats = self._pack_export_formats()
+        if not formats:
+            MessageDialog.warning(self, t("dialog_import_title"), t("msg_no_matching_nodes"))
+            return
+
+        filter_by_label = {f"{exp.display_name} (*{exp.extension})": (pack_id, exp)
+                            for pack_id, exp in formats.values()}
+        path, selected_filter = QFileDialog.getOpenFileName(
+            self, t("dialog_import_title"), "", ";;".join(filter_by_label))
+        if not path:
+            return
+        picked = filter_by_label.get(selected_filter)
+        if picked is None:
+            picked = next(((pid, e) for pid, e in formats.values() if path.endswith(e.extension)), None)
+        if picked is None:
+            picked = next(iter(formats.values()))
+        pack_id, exp = picked
+
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+        except Exception as exc:
+            MessageDialog.critical(self, t("dialog_load_error_title"), log_and_explain(t("msg_load_failed"), exc))
+            return
+
+        graph, error = build_graph_from_script(text, exp.format_id, pack_id, build_executor_factory(self._installed_packs))
+        if graph is None:
+            MessageDialog.critical(self, t("dialog_import_title"),
+                                    log_and_explain(t("msg_import_failed"), RuntimeError(error)))
+            return
+
+        tab = self._create_tab()
+        tab.untitled_number = self._next_untitled_number()
+        self.switch_to_tab(tab)
+        self._restore(graph.to_dict(), restore_selection=False)
+        tab.history = []
+        tab.history_index = -1
+        self.push_undo_state()
+        self._set_dirty(True)
+        self._center_on_last_added_node()
         self._refresh_tab_strip()
 
     def load_project(self):

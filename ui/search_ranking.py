@@ -101,7 +101,8 @@ def ranked_candidates(entries: list, source_socket, context_key: Optional[str],
     """``entries`` ranked by real usage signal only (never an arbitrary
     top-N with no history behind it) — empty on a fresh install, filling in
     as the user picks things. Reads current usage stats itself, so callers
-    never have to thread them through."""
+    never have to thread them through.
+    """
     usage = get_search_usage()
     usage_after = get_search_usage_after()
     scored = []

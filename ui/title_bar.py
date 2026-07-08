@@ -319,7 +319,8 @@ class TabStripWidget(QWidget):
                  on_reorder: Callable, on_close_others: Callable,
                  on_close_to_right: Callable, on_close_to_left: Callable,
                  on_reopen_closed: Callable, on_duplicate: Callable,
-                 on_open: Callable, on_save: Callable, on_save_as: Callable, parent=None):
+                 on_open: Callable, on_save: Callable, on_save_as: Callable,
+                 on_export: Callable, on_import: Callable, parent=None):
         super().__init__(parent)
         self.setObjectName("TabStripWidget")
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -336,6 +337,8 @@ class TabStripWidget(QWidget):
         self._on_open = on_open
         self._on_save = on_save
         self._on_save_as = on_save_as
+        self._on_export = on_export
+        self._on_import = on_import
         self._buttons: List[TabButton] = []
         self._dragging_btn: Optional[TabButton] = None
         self._drag_press_local_x = 0
@@ -367,6 +370,9 @@ class TabStripWidget(QWidget):
         _add_action_with_hint(menu, t("btn_open"), HOTKEY_HINTS["open"], self._on_open)
         _add_action_with_hint(menu, t("btn_save"), HOTKEY_HINTS["save"], self._on_save)
         _add_action_with_hint(menu, t("btn_save_as"), HOTKEY_HINTS["save_as"], self._on_save_as)
+        menu.addSeparator()
+        _add_action_with_hint(menu, t("menu_export"), None, self._on_export)
+        _add_action_with_hint(menu, t("menu_import"), None, self._on_import)
         menu.exec_(self.menu_btn.mapToGlobal(self.menu_btn.rect().bottomLeft()))
         self._resettle_hover(self.menu_btn)
 
@@ -669,6 +675,8 @@ class TitleBarWidget(QWidget):
             on_open=window.load_project,
             on_save=window.save_project,
             on_save_as=lambda: window.save_project(save_as=True),
+            on_export=window.export_chain_script,
+            on_import=window.import_chain_script,
             parent=self,
         )
         layout.addWidget(self.tab_strip, 1)

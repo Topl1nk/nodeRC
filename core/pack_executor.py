@@ -26,7 +26,7 @@ import sys
 import time
 from typing import Callable, Dict, List, Optional, Tuple
 
-from core.pack_protocol import CommandDef, ExecutionResult, PackExecutor
+from core.pack_protocol import CommandDef, ExecutionResult, ImportResult, PackExecutor
 from core.pack_registry import InstalledPack
 from diagnostics import log_and_explain
 
@@ -56,11 +56,59 @@ class ProcessPackExecutor(PackExecutor):
 
     def run_commands(self, commands: List[Tuple[CommandDef, Dict[str, str]]], *,
                       cancel_check: Optional[Callable[[], bool]] = None) -> ExecutionResult:
+        request = {"commands": [{"command": command.to_dict(), "params": params} for command, params in commands]}
+        return self._invoke(request, cancel_check=cancel_check)
+
+    def render_export(self, commands: List[Tuple[CommandDef, Dict[str, str]]],
+                       format_id: str) -> ExecutionResult:
+        # Same {ok, output, error} response shape as run_commands (see
+        # rs_pack.py's render_export/run_request, both dispatched by
+        # main()'s "mode" field) — pure text formatting, but still launched
+        # through the identical subprocess boundary (Ст.4.2), just a
+        # different request payload, hence sharing _invoke wholesale
+        # instead of a second copy of the launch/poll/parse plumbing (Ст.1.1).
+        request = {
+            "mode": "export",
+            "format_id": format_id,
+            "commands": [{"command": command.to_dict(), "params": params} for command, params in commands],
+        }
+        return self._invoke(request)
+
+    def parse_import(self, text: str, format_id: str) -> ImportResult:
+        # Same subprocess boundary again, this time returning a structured
+        # {ok, commands, error} response instead of {ok, output, error} —
+        # _invoke_raw carries the launch/poll/parse plumbing every mode
+        # shares; only how the parsed JSON gets wrapped differs per call
+        # shape (Ст.1.1).
+        request = {"mode": "import", "format_id": format_id, "text": text}
+        response = self._invoke_raw(request)
+        return ImportResult(
+            ok=bool(response.get("ok", False)),
+            commands=response.get("commands", []),
+            error=response.get("error", ""),
+        )
+
+    def _invoke(self, request: dict, *,
+                cancel_check: Optional[Callable[[], bool]] = None) -> ExecutionResult:
+        response = self._invoke_raw(request, cancel_check=cancel_check)
+        return ExecutionResult(
+            ok=bool(response.get("ok", False)),
+            output=response.get("output", ""),
+            error=response.get("error", ""),
+        )
+
+    def _invoke_raw(self, request: dict, *,
+                     cancel_check: Optional[Callable[[], bool]] = None) -> dict:
+        """Launches the pack subprocess, feeds it ``request`` as JSON on
+        stdin, and returns its parsed JSON response verbatim — or, on any
+        harness-level failure (launch error, timeout, cancellation,
+        malformed response), a same-shaped {"ok": False, "error": ...} dict
+        so every caller (run_commands/render_export/parse_import) can
+        always read .get("ok")/.get("error") the same way regardless of
+        which of those actually happened."""
         pack_id = self._installed.manifest.pack_id
         entry_path = self._installed.pack_dir / self._installed.manifest.entry_point
-        request = json.dumps({
-            "commands": [{"command": command.to_dict(), "params": params} for command, params in commands]
-        })
+        request_json = json.dumps(request)
 
         try:
             proc = subprocess.Popen(
@@ -70,10 +118,10 @@ class ProcessPackExecutor(PackExecutor):
             )
         except OSError as exc:
             reason = log_and_explain(f"Pack '{pack_id}' failed to launch", exc)
-            return ExecutionResult(ok=False, error=reason)
+            return {"ok": False, "error": reason}
 
         try:
-            proc.stdin.write(request)
+            proc.stdin.write(request_json)
             proc.stdin.close()
         except (BrokenPipeError, OSError):
             pass  # the process already exited (e.g. missing entry_point) — its exit code/stderr still apply below
@@ -88,7 +136,7 @@ class ProcessPackExecutor(PackExecutor):
                 if cancel_check and cancel_check():
                     _kill_process_tree(proc.pid)
                     proc.communicate()
-                    return ExecutionResult(ok=False, error=f"Pack '{pack_id}' cancelled")
+                    return {"ok": False, "error": f"Pack '{pack_id}' cancelled"}
                 if self._timeout is not None and time.monotonic() - started > self._timeout:
                     _kill_process_tree(proc.pid)
                     proc.communicate()
@@ -96,26 +144,20 @@ class ProcessPackExecutor(PackExecutor):
                         f"Pack '{pack_id}' timed out",
                         subprocess.TimeoutExpired(str(entry_path), self._timeout),
                     )
-                    return ExecutionResult(ok=False, error=reason)
+                    return {"ok": False, "error": reason}
 
         if proc.returncode != 0:
             reason = log_and_explain(
                 f"Pack '{pack_id}' exited with code {proc.returncode}",
                 RuntimeError(stderr.strip() or "no stderr output"),
             )
-            return ExecutionResult(ok=False, error=reason)
+            return {"ok": False, "error": reason}
 
         try:
-            response = json.loads(stdout)
+            return json.loads(stdout)
         except json.JSONDecodeError as exc:
             reason = log_and_explain(f"Pack '{pack_id}' returned a malformed response", exc)
-            return ExecutionResult(ok=False, error=reason)
-
-        return ExecutionResult(
-            ok=bool(response.get("ok", False)),
-            output=response.get("output", ""),
-            error=response.get("error", ""),
-        )
+            return {"ok": False, "error": reason}
 
 
 def build_executor_factory(installed_packs: List[InstalledPack], *,

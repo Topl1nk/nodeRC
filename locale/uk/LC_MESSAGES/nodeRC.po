@@ -29,6 +29,10 @@ msgstr "&Файл"
 msgid "menu_export"
 msgstr "Експорт скрипту..."
 
+#. Import Script...
+msgid "menu_import"
+msgstr "Імпорт скрипту..."
+
 #. Quit
 msgid "menu_quit"
 msgstr "Вихід"
@@ -97,9 +101,9 @@ msgstr "Керування та гарячі клавіші..."
 msgid "dialog_controls_title"
 msgstr "Керування та гарячі клавіші"
 
-#. Export RealityCapture Script
+#. Export Script
 msgid "dialog_export_title"
-msgstr "Експорт RealityCapture скрипту"
+msgstr "Експорт скрипту"
 
 #. RealityCapture Script (*.bat)
 msgid "dialog_export_filter"
@@ -114,6 +118,14 @@ msgstr ""
 #. Export Failed
 msgid "msg_export_failed"
 msgstr "Помилка експорту"
+
+#. Import Script
+msgid "dialog_import_title"
+msgstr "Імпорт скрипту"
+
+#. Import Failed
+msgid "msg_import_failed"
+msgstr "Помилка імпорту"
 
 #. Exported script to clipboard.
 msgid "msg_exported_clipboard"

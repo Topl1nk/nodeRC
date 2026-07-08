@@ -22,9 +22,10 @@ import os
 import re
 import json
 import logging
+import urllib.request
 from typing import Dict, List, Optional, Set, Tuple
 
-from packs.realityscan.config import RS_HELP_HTML, COMMAND_DB_JSON
+from packs.realityscan.config import RS_HELP_HTML_CANDIDATES, COMMAND_DB_JSON
 
 _logger = logging.getLogger("nodeRC")
 
@@ -384,34 +385,63 @@ def _write_json_database(categories: CommandCategoryTree, path: str) -> int:
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
+def _read_html_source(source: str, *, timeout: float = 10.0) -> Optional[str]:
+    """The raw HTML text for one candidate path/URL, or None if it can't be
+    reached — never raises, so rebuild_command_database_from_html can just
+    move on to the next candidate instead of the whole rebuild failing
+    because e.g. the network fallback timed out."""
+    if source.startswith("http://") or source.startswith("https://"):
+        try:
+            with urllib.request.urlopen(source, timeout=timeout) as resp:
+                return resp.read().decode("utf-8", errors="replace")
+        except Exception as exc:
+            _logger.warning("Could not fetch documentation from %s: %s", source, exc)
+            return None
+    if not os.path.exists(source):
+        return None
+    with open(source, "r", encoding="utf-8", errors="replace") as fh:
+        return fh.read()
+
+
 def rebuild_command_database_from_html(
-    html_path: str      = RS_HELP_HTML,
-    json_output: str    = COMMAND_DB_JSON,
+    html_path=None,
+    json_output: str = COMMAND_DB_JSON,
 ) -> bool:
     """
-    Parse html_path and write rich JSON output database.
-    Returns True on success, False if html_path not found.
+    Parses the first reachable candidate in ``html_path`` (a single path/URL,
+    or a list tried in order — defaults to RS_HELP_HTML_CANDIDATES, so a
+    missing local install falls through to Capturing Reality's own hosted
+    copy of the same page) and writes the rich JSON output database. Returns
+    True on success, False if no candidate was reachable or none contained
+    any commands.
     """
-    if not os.path.exists(html_path):
-        _logger.warning("Documentation file not found: %s", html_path)
+    candidates = [html_path] if isinstance(html_path, str) else (html_path or RS_HELP_HTML_CANDIDATES)
+
+    html_text = None
+    used = None
+    for candidate in candidates:
+        html_text = _read_html_source(candidate)
+        if html_text is not None:
+            used = candidate
+            break
+    if html_text is None:
+        _logger.warning("Documentation not found in any of: %s", candidates)
         return False
 
-    with open(html_path, "r", encoding="utf-8", errors="replace") as fh:
-        soup = BeautifulSoup(fh, "html.parser")
-
+    soup = BeautifulSoup(html_text, "html.parser")
     categories = _extract_categories(soup)
     if not categories:
-        _logger.warning("No commands found in documentation.")
+        _logger.warning("No commands found in documentation (%s).", used)
         return False
 
     _add_undocumented_commands(categories)
 
     n_json = _write_json_database(categories, json_output)
-    _logger.info("%d commands successfully extracted to %s", n_json, json_output)
+    _logger.info("%d commands successfully extracted from %s to %s", n_json, used, json_output)
     return True
 
 
 if __name__ == "__main__":
     import sys
-    path = sys.argv[1] if len(sys.argv) > 1 else RS_HELP_HTML
+    path = sys.argv[1] if len(sys.argv) > 1 else None
     sys.exit(0 if rebuild_command_database_from_html(path) else 1)

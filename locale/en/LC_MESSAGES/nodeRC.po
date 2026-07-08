@@ -30,6 +30,10 @@ msgstr "&File"
 msgid "menu_export"
 msgstr "Export Script..."
 
+#. Import Script...
+msgid "menu_import"
+msgstr "Import Script..."
+
 #. Quit
 msgid "menu_quit"
 msgstr "Quit"
@@ -98,9 +102,9 @@ msgstr "Controls & Shortcuts..."
 msgid "dialog_controls_title"
 msgstr "Controls & Shortcuts"
 
-#. Export RealityCapture Script
+#. Export Script
 msgid "dialog_export_title"
-msgstr "Export RealityCapture Script"
+msgstr "Export Script"
 
 #. RealityCapture Script (*.bat)
 msgid "dialog_export_filter"
@@ -115,6 +119,14 @@ msgstr ""
 #. Export Failed
 msgid "msg_export_failed"
 msgstr "Export Failed"
+
+#. Import Script
+msgid "dialog_import_title"
+msgstr "Import Script"
+
+#. Import Failed
+msgid "msg_import_failed"
+msgstr "Import Failed"
 
 #. Exported script to clipboard.
 msgid "msg_exported_clipboard"

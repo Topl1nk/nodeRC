@@ -47,6 +47,30 @@ class PackDeclares:
 
 
 @dataclass(frozen=True)
+class ExporterDef:
+    """One text format a pack can render its commands into (see
+    PackExecutor.render_export) — e.g. RealityScan's own ``.bat``/``.rscmd``.
+    Declared in pack.json's "exporters" list so the editor's Export dialog
+    can build its format filter from every installed pack without knowing
+    what any of them actually are (Ст.4.2: an extension slot, not a
+    hardcoded RealityScan-specific menu item)."""
+    format_id: str
+    display_name: str
+    extension: str
+
+    @classmethod
+    def from_dict(cls, payload: dict) -> "ExporterDef":
+        return cls(
+            format_id=payload["format_id"],
+            display_name=payload.get("display_name", payload["format_id"]),
+            extension=payload.get("extension", ""),
+        )
+
+    def to_dict(self) -> dict:
+        return {"format_id": self.format_id, "display_name": self.display_name, "extension": self.extension}
+
+
+@dataclass(frozen=True)
 class PackManifest:
     """One pack's identity and how the registry launches it. Loaded from a
     pack.json living at the root of each drop-in pack folder (Phase 2)."""
@@ -57,6 +81,7 @@ class PackManifest:
     entry_point: str
     declares: PackDeclares
     commands_source: Optional[str] = None
+    exporters: List[ExporterDef] = field(default_factory=list)
     # Doctrine V's segment cache assumes re-running with the same resolved
     # inputs is safe to skip — true for a pure batch computation, false for
     # a pack that launches an interactive program (RealityCapture's own
@@ -84,6 +109,7 @@ class PackManifest:
             entry_point=payload["entry_point"],
             declares=PackDeclares.from_dict(payload.get("declares", {})),
             commands_source=payload.get("commands_source"),
+            exporters=[ExporterDef.from_dict(e) for e in payload.get("exporters", [])],
             cacheable=bool(payload.get("cacheable", False)),
         )
 
@@ -99,6 +125,8 @@ class PackManifest:
         }
         if self.commands_source is not None:
             d["commands_source"] = self.commands_source
+        if self.exporters:
+            d["exporters"] = [e.to_dict() for e in self.exporters]
         return d
 
     def check_protocol_compatible(self) -> None:
@@ -182,6 +210,21 @@ class ExecutionResult:
     error: str = ""
 
 
+@dataclass(frozen=True)
+class ImportResult:
+    """What a pack's executor hands back for parse_import — a structured
+    list, not text (ExecutionResult.output), since the caller
+    (core/graph_import.py) needs each recovered command's own CommandDef +
+    params to build real graph nodes, not a string to reparse itself. Each
+    entry is {"command": CommandDef.to_dict()-shaped dict, "params": {name:
+    value}} — the exact shape run_commands/render_export already accept as
+    input, so a round-tripped import is trivially re-exportable/re-runnable
+    without any reshaping."""
+    ok: bool
+    commands: List[dict] = field(default_factory=list)
+    error: str = ""
+
+
 class PackExecutor:
     """Abstract interface every pack's runtime implements. Concrete
     implementations (Phase 4) launch the pack in its own process per
@@ -210,3 +253,24 @@ class PackExecutor:
         """Convenience for the common one-command case — not a second
         implementation (Ст.1.2), just a call-shape adapter over run_commands."""
         return self.run_commands([(command, params)], cancel_check=cancel_check)
+
+    def render_export(self, commands: List[Tuple[CommandDef, Dict[str, str]]],
+                       format_id: str) -> ExecutionResult:
+        """Renders one segment's commands as text in one of this pack's own
+        PackManifest.exporters formats — result.output carries the text on
+        success. A pure formatting call, not a real run (no cancel_check:
+        nothing here launches an external, killable process on the scale
+        run_commands does), but still routed through the exact same
+        one-boundary contract pack_protocol/pack_registry already enforce
+        (Ст.4.2) rather than any other module importing a pack's code
+        directly. A pack that declares no exporters never has this called."""
+        raise NotImplementedError
+
+    def parse_import(self, text: str, format_id: str) -> ImportResult:
+        """The reverse of render_export: recovers structured commands from
+        previously-exported (or hand-written) text in one of this pack's
+        own PackManifest.exporters formats — the same formats double as
+        import formats, since a pack that can render one can parse it back.
+        A pure parsing call, same non-cancel-check reasoning as
+        render_export."""
+        raise NotImplementedError

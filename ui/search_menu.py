@@ -153,7 +153,7 @@ class SearchMenuDialog(QDialog):
         self.tree.itemEntered.connect(self._on_item_hovered)
         self.tree.itemActivated.connect(self._on_item_activated)
         search_layout.addWidget(self.tree)
-        
+
         self.main_layout.addWidget(self.search_frame)
         self.main_layout.addWidget(self.separator)
         self.main_layout.addWidget(self.info_widget)
