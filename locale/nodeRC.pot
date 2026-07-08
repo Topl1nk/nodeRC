@@ -126,6 +126,10 @@ msgstr ""
 msgid "msg_import_failed"
 msgstr ""
 
+#. All Supported Scripts
+msgid "dialog_import_filter_all"
+msgstr ""
+
 #. Exported script to clipboard.
 msgid "msg_exported_clipboard"
 msgstr ""

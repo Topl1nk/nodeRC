@@ -1235,8 +1235,16 @@ class NodeEditorWindow(QMainWindow):
 
         filter_by_label = {f"{exp.display_name} (*{exp.extension})": (pack_id, exp)
                             for pack_id, exp in formats.values()}
+        # Listed first (Qt preselects whichever filter comes first when no
+        # explicit initial filter is given) so every importable extension
+        # shows up in one browse, not needing a manual dropdown switch
+        # between them — the actual format is still resolved per-file by
+        # extension below, this only changes what the Explorer view shows.
+        combined_exts = " ".join(f"*{exp.extension}" for _, exp in formats.values())
+        combined_label = f"{t('dialog_import_filter_all')} ({combined_exts})"
+        filters = [combined_label] + list(filter_by_label)
         path, selected_filter = QFileDialog.getOpenFileName(
-            self, t("dialog_import_title"), "", ";;".join(filter_by_label))
+            self, t("dialog_import_title"), "", ";;".join(filters))
         if not path:
             return
         picked = filter_by_label.get(selected_filter)

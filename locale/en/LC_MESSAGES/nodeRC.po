@@ -128,6 +128,10 @@ msgstr "Import Script"
 msgid "msg_import_failed"
 msgstr "Import Failed"
 
+#. All Supported Scripts
+msgid "dialog_import_filter_all"
+msgstr "All Supported Scripts"
+
 #. Exported script to clipboard.
 msgid "msg_exported_clipboard"
 msgstr "Exported script to clipboard."
